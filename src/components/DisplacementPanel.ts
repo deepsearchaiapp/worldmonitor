@@ -20,6 +20,21 @@ export class DisplacementPanel extends Panel {
       infoTooltip: t('components.displacement.infoTooltip'),
     });
     this.showLoading(t('common.loadingDisplacement'));
+
+    this.content.addEventListener('click', (e) => {
+      const tab = (e.target as HTMLElement).closest<HTMLElement>('.panel-tab');
+      if (tab?.dataset.tab) {
+        this.activeTab = tab.dataset.tab as DisplacementTab;
+        this.renderContent();
+        return;
+      }
+      const row = (e.target as HTMLElement).closest<HTMLElement>('.disp-row');
+      if (row) {
+        const lat = Number(row.dataset.lat);
+        const lon = Number(row.dataset.lon);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) this.onCountryClick?.(lat, lon);
+      }
+    });
   }
 
   public setCountryClickHandler(handler: (lat: number, lon: number) => void): void {
@@ -120,20 +135,5 @@ export class DisplacementPanel extends Panel {
         </div>
       </div>
     `);
-
-    this.content.querySelectorAll('.panel-tab').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.activeTab = (btn as HTMLElement).dataset.tab as DisplacementTab;
-        this.renderContent();
-      });
-    });
-
-    this.content.querySelectorAll('.disp-row').forEach(el => {
-      el.addEventListener('click', () => {
-        const lat = Number((el as HTMLElement).dataset.lat);
-        const lon = Number((el as HTMLElement).dataset.lon);
-        if (Number.isFinite(lat) && Number.isFinite(lon)) this.onCountryClick?.(lat, lon);
-      });
-    });
   }
 }

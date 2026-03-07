@@ -223,7 +223,7 @@ export class CountryIntelManager implements AppModule {
       if (severityDelta !== 0) return severityDelta;
       return new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime();
     });
-    this.ctx.countryBriefPage.updateNews(filteredNews.slice(0, 15));
+    this.ctx.countryBriefPage.updateNews(filteredNews.slice(0, 10));
 
     this.ctx.countryBriefPage.updateInfrastructure(code);
 

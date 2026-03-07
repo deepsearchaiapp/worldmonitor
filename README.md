@@ -1,4 +1,4 @@
-# World Monitor 1
+# World Monitor 2
 
 **Real-time global intelligence dashboard** — AI-powered news aggregation, geopolitical monitoring, and infrastructure tracking in a unified situational awareness interface.
 
@@ -29,7 +29,7 @@
   <a href="https://github.com/koala73/worldmonitor/releases/latest"><strong>All Releases</strong></a>
 </p>
 
-![World Monitor Dashboard](docs/images/new-world-monitor.png)
+![World Monitor Dashboard](docs/images/worldmonitor-7-mar-2026.jpg)
 
 ---
 

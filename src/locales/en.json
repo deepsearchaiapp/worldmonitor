@@ -267,7 +267,8 @@
     "gulfEconomies": "Gulf Economies",
     "gulfIndices": "Gulf Indices",
     "gulfCurrencies": "Gulf Currencies",
-    "gulfOil": "Gulf Oil"
+    "gulfOil": "Gulf Oil",
+    "airlineIntel": "✈️ Airline Intelligence"
   },
   "commands": {
     "prefixes": {
@@ -670,6 +671,20 @@
     },
     "positiveNewsFeed": {
       "noStories": "No stories in this category yet"
+    },
+    "breakthroughsTicker": {
+      "noData": "No science breakthroughs yet"
+    },
+    "airlineIntel": {
+      "noOpsData": "No ops data — loading…",
+      "noFlights": "No flights — select airport in settings.",
+      "noCarrierData": "No carrier data yet.",
+      "noTrackingData": "No aircraft tracking data.",
+      "noNews": "No aviation news.",
+      "enterRoute": "Enter route and search for prices.",
+      "cachedInsight": "Cached insight",
+      "demoMode": "DEMO MODE",
+      "pricesIndicative": "All prices indicative"
     },
     "goodThingsDigest": {
       "noStories": "No stories available",

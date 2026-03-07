@@ -3,8 +3,7 @@
  *
  * Critical constraint: Gamma API is behind Cloudflare JA3 fingerprint detection
  * that blocks server-side TLS connections. The handler tries the fetch and
- * gracefully returns empty on failure -- identical to the existing api/polymarket.js
- * behavior. This is expected, not an error.
+ * gracefully returns empty on failure. JA3 blocking is expected, not an error.
  */
 
 import type {

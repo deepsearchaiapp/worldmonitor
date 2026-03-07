@@ -315,6 +315,26 @@ export async function initLiveChannelsWindow(containerEl?: HTMLElement): Promise
     const currentIds = new Set(channels.map((c) => c.id));
     const term = searchQuery.toLowerCase().trim();
 
+    // Auto-switch to the first tab with matches when searching
+    if (term) {
+      const activeHasMatch = filteredRegions.some(r => {
+        if (r.key !== activeRegionTab) return false;
+        return r.channelIds.some(id => {
+          const ch = optionalChannelMap.get(id);
+          return ch && (ch.name.toLowerCase().includes(term) || ch.handle?.toLowerCase().includes(term));
+        });
+      });
+      if (!activeHasMatch) {
+        const firstMatch = filteredRegions.find(r =>
+          r.channelIds.some(id => {
+            const ch = optionalChannelMap.get(id);
+            return ch && (ch.name.toLowerCase().includes(term) || ch.handle?.toLowerCase().includes(term));
+          }),
+        );
+        if (firstMatch) activeRegionTab = firstMatch.key;
+      }
+    }
+
     // Render tab buttons
     tabBar.innerHTML = '';
     for (const region of filteredRegions) {

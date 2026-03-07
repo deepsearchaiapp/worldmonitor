@@ -50,6 +50,7 @@ export class NewsPanel extends Panel {
     this.createSummarizeButton();
     this.setupActivityTracking();
     this.initWindowedList();
+    this.setupContentDelegation();
   }
 
   private initWindowedList(): void {
@@ -431,7 +432,6 @@ export class NewsPanel extends Panel {
         .map(p => this.renderClusterHtmlSafely(p.cluster, p.isNew, p.shouldHighlight, p.showNewTag))
         .join('');
       this.setContent(html);
-      this.bindRelatedAssetEvents();
     }
   }
 
@@ -579,48 +579,53 @@ export class NewsPanel extends Panel {
     `;
   }
 
-  private bindRelatedAssetEvents(): void {
-    const containers = this.content.querySelectorAll<HTMLDivElement>('.related-assets');
-    containers.forEach((container) => {
-      const clusterId = container.dataset.clusterId;
-      if (!clusterId) return;
-      const context = this.relatedAssetContext.get(clusterId);
-      if (!context) return;
+  private setupContentDelegation(): void {
+    this.content.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
 
-      container.addEventListener('mouseenter', () => {
-        this.onRelatedAssetsFocus?.(context.assets, context.origin.label);
-      });
-
-      container.addEventListener('mouseleave', () => {
-        this.onRelatedAssetsClear?.();
-      });
-    });
-
-    const assetButtons = this.content.querySelectorAll<HTMLButtonElement>('.related-asset');
-    assetButtons.forEach((button) => {
-      button.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const clusterId = button.dataset.clusterId;
-        const assetId = button.dataset.assetId;
-        const assetType = button.dataset.assetType as RelatedAsset['type'] | undefined;
+      const assetBtn = target.closest<HTMLElement>('.related-asset');
+      if (assetBtn) {
+        e.stopPropagation();
+        const clusterId = assetBtn.dataset.clusterId;
+        const assetId = assetBtn.dataset.assetId;
+        const assetType = assetBtn.dataset.assetType as RelatedAsset['type'] | undefined;
         if (!clusterId || !assetId || !assetType) return;
         const context = this.relatedAssetContext.get(clusterId);
         const asset = context?.assets.find(item => item.id === assetId && item.type === assetType);
-        if (asset) {
-          this.onRelatedAssetClick?.(asset);
-        }
-      });
+        if (asset) this.onRelatedAssetClick?.(asset);
+        return;
+      }
+
+      const translateBtn = target.closest<HTMLElement>('.item-translate-btn');
+      if (translateBtn) {
+        e.stopPropagation();
+        const text = translateBtn.dataset.text;
+        if (text) this.handleTranslate(translateBtn, text);
+        return;
+      }
     });
 
-    // Translation buttons
-    const translateBtns = this.content.querySelectorAll<HTMLElement>('.item-translate-btn');
-    translateBtns.forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const text = btn.dataset.text;
-        if (text) this.handleTranslate(btn, text);
-      });
+    this.content.addEventListener('mouseover', (e) => {
+      const container = (e.target as HTMLElement).closest<HTMLElement>('.related-assets');
+      if (!container) return;
+      const related = (e as MouseEvent).relatedTarget as Node | null;
+      if (related && container.contains(related)) return;
+      const context = this.relatedAssetContext.get(container.dataset.clusterId ?? '');
+      if (context) this.onRelatedAssetsFocus?.(context.assets, context.origin.label);
     });
+
+    this.content.addEventListener('mouseout', (e) => {
+      const container = (e.target as HTMLElement).closest<HTMLElement>('.related-assets');
+      if (!container) return;
+      const related = (e as MouseEvent).relatedTarget as Node | null;
+      if (related && container.contains(related)) return;
+      this.onRelatedAssetsClear?.();
+    });
+  }
+
+  private bindRelatedAssetEvents(): void {
+    // Event delegation is set up in setupContentDelegation() — this is now a no-op
+    // kept for WindowedList callback compatibility
   }
 
   private getLocalizedAssetLabel(type: RelatedAsset['type']): string {

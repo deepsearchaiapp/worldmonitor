@@ -48,9 +48,12 @@ async function sendConfirmationEmail(email, referralCode, position) {
   const telegramShare = `https://t.me/share/url?url=${shareUrl}&text=${encodeURIComponent('Join the World Monitor Pro waitlist:')}`;
 
   const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return; // skip if not configured
+  if (!resendKey) {
+    console.warn('[register-interest] RESEND_API_KEY not set — skipping email');
+    return;
+  }
   try {
-    await fetch('https://api.resend.com/emails', {
+    const resendRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -177,6 +180,12 @@ async function sendConfirmationEmail(email, referralCode, position) {
           </div>`,
       }),
     });
+    if (!resendRes.ok) {
+      const body = await resendRes.text();
+      console.error(`[register-interest] Resend ${resendRes.status}:`, body);
+    } else {
+      console.log(`[register-interest] Email sent to ${email}`);
+    }
   } catch (err) {
     console.error('[register-interest] Resend error:', err);
   }
