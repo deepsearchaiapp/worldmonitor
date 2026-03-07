@@ -55,7 +55,7 @@ jobs:
 
       # --- Infrastructure & cyber ---
       - name: Seed internet outages
-        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        continue-on-error: true
         run: node scripts/seed-internet-outages.mjs
         env:
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
@@ -80,7 +80,7 @@ jobs:
           ICAO_API_KEY: ${{ secrets.ICAO_API_KEY }}
 
       - name: Seed fire detections
-        if: ${{ secrets.NASA_FIRMS_API_KEY != '' }}
+        continue-on-error: true
         run: node scripts/seed-fire-detections.mjs
         env:
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
