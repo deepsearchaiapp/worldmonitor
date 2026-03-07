@@ -356,7 +356,7 @@ export class DeckGLMap {
     nuclear: new Set(),
   };
 
-  private renderScheduled = false;
+  private renderRafId: number | null = null;
   private renderPaused = false;
   private renderPending = false;
   private webglLost = false;
@@ -3852,11 +3852,11 @@ export class DeckGLMap {
       this.renderPending = true;
       return;
     }
-    if (this.renderScheduled) return;
-    this.renderScheduled = true;
-
-    requestAnimationFrame(() => {
-      this.renderScheduled = false;
+    if (this.renderRafId !== null) {
+      cancelAnimationFrame(this.renderRafId);
+    }
+    this.renderRafId = requestAnimationFrame(() => {
+      this.renderRafId = null;
       this.updateLayers();
     });
   }
@@ -3865,6 +3865,11 @@ export class DeckGLMap {
     if (this.renderPaused === paused) return;
     this.renderPaused = paused;
     if (paused) {
+      if (this.renderRafId !== null) {
+        cancelAnimationFrame(this.renderRafId);
+        this.renderRafId = null;
+        this.renderPending = true;
+      }
       this.stopPulseAnimation();
       this.stopDayNightTimer();
       return;
@@ -5054,6 +5059,11 @@ export class DeckGLMap {
     this.debouncedFetchBases.cancel();
     this.debouncedFetchAircraft.cancel();
     this.rafUpdateLayers.cancel();
+
+    if (this.renderRafId !== null) {
+      cancelAnimationFrame(this.renderRafId);
+      this.renderRafId = null;
+    }
 
     if (this.moveTimeoutId) {
       clearTimeout(this.moveTimeoutId);

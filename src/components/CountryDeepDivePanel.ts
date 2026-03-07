@@ -260,7 +260,7 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
         if (sb !== sa) return sb - sa;
         return this.toTimestamp(b.pubDate) - this.toTimestamp(a.pubDate);
       })
-      .slice(0, 15);
+      .slice(0, 10);
 
     this.currentHeadlineCount = items.length;
 
@@ -532,8 +532,9 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
       return;
     }
 
-    const summary = this.summarizeBrief(data.brief);
-    const text = this.el('p', 'cdp-assessment-text', summary);
+    const summaryHtml = this.formatBrief(this.summarizeBrief(data.brief), 0);
+    const text = this.el('div', 'cdp-assessment-text cdp-summary-only');
+    text.innerHTML = summaryHtml;
 
     const metaTokens: string[] = [];
     if (data.cached) metaTokens.push('Cached');
@@ -931,7 +932,12 @@ export class CountryDeepDivePanel implements CountryBriefPanel {
   }
 
   private summarizeBrief(brief: string): string {
-    const normalized = brief.replace(/\s+/g, ' ').trim();
+    const stripped = brief.replace(/\*\*(.*?)\*\*/g, '$1');
+    const lines = stripped.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+    if (lines.length >= 3) {
+      return lines.slice(0, 3).join('\n');
+    }
+    const normalized = stripped.replace(/\s+/g, ' ').trim();
     const sentences = normalized.split(/(?<=[.!?])\s+/).filter((part) => part.length > 0);
     return sentences.slice(0, 3).join(' ') || normalized;
   }
