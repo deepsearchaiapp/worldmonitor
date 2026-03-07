@@ -126,7 +126,7 @@ export class App {
             newOrder.push(...priorityPanels.filter(p => order.includes(p)));
             newOrder.push(...filtered);
             localStorage.setItem(PANEL_ORDER_KEY, JSON.stringify(newOrder));
-            console.log('[App] Migrated panel order to v1.9 layout');
+            console.log('[App] Migrated panel order to v1.8 layout');
           } catch {
             // Invalid saved order, will use defaults
           }
@@ -627,13 +627,8 @@ export class App {
       () => !!this.state.panels['strategic-risk']
     );
 
-    // Server-side temporal anomalies (news + satellite_fires)
-    if (SITE_VARIANT !== 'happy') {
-      this.refreshScheduler.scheduleRefresh('temporalBaseline', () => this.dataLoader.refreshTemporalBaseline(), 600_000);
-    }
-
     // WTO trade policy data — annual data, poll every 10 min to avoid hammering upstream
-    if (SITE_VARIANT === 'full' || SITE_VARIANT === 'finance' || SITE_VARIANT === 'commodity') {
+    if (SITE_VARIANT === 'full' || SITE_VARIANT === 'finance') {
       this.refreshScheduler.scheduleRefresh('tradePolicy', () => this.dataLoader.loadTradePolicy(), 10 * 60 * 1000);
       this.refreshScheduler.scheduleRefresh('supplyChain', () => this.dataLoader.loadSupplyChain(), 10 * 60 * 1000);
     }

@@ -51,10 +51,6 @@
   display: block;
 }
 
-.country-deep-dive.maximized .cdp-summary-only {
-  display: none;
-}
-
 .cdp-maximize-btn {
   border: 1px solid var(--border);
   background: var(--surface);

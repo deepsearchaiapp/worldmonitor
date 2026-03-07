@@ -16,7 +16,6 @@ import {
 } from '@/services/aviation';
 import { aviationWatchlist } from '@/services/aviation/watchlist';
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
-import { t } from '@/services/i18n';
 import { Panel } from './Panel';
 
 // ---- Helpers ----
@@ -84,7 +83,7 @@ export class AirlineIntelPanel extends Panel {
     private tabBar!: HTMLElement;
 
     constructor() {
-        super({ id: 'airline-intel', title: t('panels.airlineIntel'), trackActivity: true });
+        super({ id: 'airline-intel', title: '✈️ Airline Intelligence', trackActivity: true });
 
         const wl = aviationWatchlist.get();
         this.airports = wl.airports.slice(0, 8);
@@ -92,7 +91,7 @@ export class AirlineIntelPanel extends Panel {
         // Add refresh button to header
         const refreshBtn = document.createElement('button');
         refreshBtn.className = 'icon-btn';
-        refreshBtn.title = t('common.refresh');
+        refreshBtn.title = 'Refresh';
         refreshBtn.textContent = '↻';
         refreshBtn.addEventListener('click', () => this.refresh());
         this.header.appendChild(refreshBtn);
@@ -223,7 +222,7 @@ export class AirlineIntelPanel extends Panel {
     }
 
     private renderLoading(): void {
-        this.content.innerHTML = `<div class="panel-loading">${t('common.loading')}</div>`;
+        this.content.innerHTML = '<div class="panel-loading">Loading…</div>';
     }
 
     private renderTab(): void {
@@ -241,7 +240,7 @@ export class AirlineIntelPanel extends Panel {
     // ---- Ops tab ----
     private renderOps(): void {
         if (!this.opsData.length) {
-            this.content.innerHTML = `<div class="no-data">${t('components.airlineIntel.noOpsData')}</div>`;
+            this.content.innerHTML = '<div class="no-data">No ops data — loading…</div>';
             return;
         }
         const rows = this.opsData.map(s => `
@@ -260,7 +259,7 @@ export class AirlineIntelPanel extends Panel {
     // ---- Flights tab ----
     private renderFlights(): void {
         if (!this.flightsData.length) {
-            this.content.innerHTML = `<div class="no-data">${t('components.airlineIntel.noFlights')}</div>`;
+            this.content.innerHTML = `<div class="no-data">No flights — select airport in settings.</div>`;
             return;
         }
         const rows = this.flightsData.map(f => {
@@ -280,7 +279,7 @@ export class AirlineIntelPanel extends Panel {
     // ---- Airlines tab ----
     private renderAirlines(): void {
         if (!this.carriersData.length) {
-            this.content.innerHTML = `<div class="no-data">${t('components.airlineIntel.noCarrierData')}</div>`;
+            this.content.innerHTML = '<div class="no-data">No carrier data yet.</div>';
             return;
         }
         const rows = this.carriersData.slice(0, 15).map(c => `
@@ -296,7 +295,7 @@ export class AirlineIntelPanel extends Panel {
     // ---- Tracking tab ----
     private renderTracking(): void {
         if (!this.trackingData.length) {
-            this.content.innerHTML = `<div class="no-data">${t('components.airlineIntel.noTrackingData')}</div>`;
+            this.content.innerHTML = '<div class="no-data">No aircraft tracking data.</div>';
             return;
         }
         const rows = this.trackingData.slice(0, 20).map(p => `
@@ -312,7 +311,7 @@ export class AirlineIntelPanel extends Panel {
     // ---- News tab ----
     private renderNews(): void {
         if (!this.newsData.length) {
-            this.content.innerHTML = `<div class="no-data">${t('components.airlineIntel.noNews')}</div>`;
+            this.content.innerHTML = '<div class="no-data">No aviation news.</div>';
             return;
         }
         const items = this.newsData.map(n => `
@@ -327,8 +326,8 @@ export class AirlineIntelPanel extends Panel {
     private renderPrices(): void {
         const provider = this.pricesProvider;
         const providerBadge = provider === 'travelpayouts_data'
-            ? `<span class="tp-badge">${t('components.airlineIntel.cachedInsight')} · Travelpayouts</span>`
-            : `<span class="demo-badge">${t('components.airlineIntel.demoMode')}</span>`;
+            ? '<span class="tp-badge">Cached insight \u00b7 Travelpayouts</span>'
+            : '<span class="demo-badge">DEMO MODE</span>';
 
         const searchForm = `
       <div class="price-controls" style="display:flex;gap:6px;flex-wrap:wrap;padding:8px 0;align-items:center">
@@ -342,12 +341,12 @@ export class AirlineIntelPanel extends Panel {
           <option value="try"${this.pricesCurrency === 'try' ? ' selected' : ''}>TRY</option>
           <option value="gbp"${this.pricesCurrency === 'gbp' ? ' selected' : ''}>GBP</option>
         </select>
-        <button id="priceSearchBtn" class="icon-btn" style="padding:4px 10px">${t('common.search')}</button>
+        <button id="priceSearchBtn" class="icon-btn" style="padding:4px 10px">Search</button>
       </div>
-      <div style="margin-bottom:6px">${providerBadge}<span style="font-size:10px;color:#6b7280;margin-left:6px">${t('components.airlineIntel.pricesIndicative')}</span></div>`;
+      <div style="margin-bottom:6px">${providerBadge}<span style="font-size:10px;color:#6b7280;margin-left:6px">All prices indicative</span></div>`;
 
         if (!this.pricesData.length) {
-            this.content.innerHTML = `${searchForm}<div class="no-data">${t('components.airlineIntel.enterRoute')}</div>`;
+            this.content.innerHTML = `${searchForm}<div class="no-data">Enter route and search for prices.</div>`;
         } else {
             const now = Date.now();
             const active = this.pricesData.filter(q => !isPriceExpired(q));

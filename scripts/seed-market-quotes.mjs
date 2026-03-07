@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 
-import { loadEnvFile, loadSharedConfig, CHROME_UA, sleep, runSeed, parseYahooChart, writeExtraKey } from './_seed-utils.mjs';
-
-const stocksConfig = loadSharedConfig('stocks.json');
+import { loadEnvFile, CHROME_UA, sleep, runSeed, parseYahooChart, writeExtraKey } from './_seed-utils.mjs';
 
 loadEnvFile(import.meta.url);
 
@@ -10,9 +8,14 @@ const CANONICAL_KEY = 'market:stocks-bootstrap:v1';
 const CACHE_TTL = 1800;
 const YAHOO_DELAY_MS = 200;
 
-const MARKET_SYMBOLS = stocksConfig.symbols.map(s => s.symbol);
+const MARKET_SYMBOLS = [
+  'AAPL', 'AMZN', 'AVGO', 'BAC', 'BRK-B', 'COST', 'GOOGL', 'HD',
+  'JNJ', 'JPM', 'LLY', 'MA', 'META', 'MSFT', 'NFLX', 'NVO', 'NVDA',
+  'ORCL', 'PG', 'TSLA', 'TSM', 'UNH', 'V', 'WMT', 'XOM',
+  '^DJI', '^GSPC', '^IXIC',
+];
 
-const YAHOO_ONLY = new Set(stocksConfig.yahooOnly);
+const YAHOO_ONLY = new Set(['^GSPC', '^DJI', '^IXIC']);
 
 async function fetchFinnhubQuote(symbol, apiKey) {
   try {

@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 
-import { loadEnvFile, loadSharedConfig, CHROME_UA, runSeed, sleep } from './_seed-utils.mjs';
-
-const cryptoConfig = loadSharedConfig('crypto.json');
+import { loadEnvFile, CHROME_UA, runSeed, sleep } from './_seed-utils.mjs';
 
 loadEnvFile(import.meta.url);
 
 const CANONICAL_KEY = 'market:crypto:v1';
 const CACHE_TTL = 3600; // 1 hour
 
-const CRYPTO_IDS = cryptoConfig.ids;
-const CRYPTO_META = cryptoConfig.meta;
+const CRYPTO_IDS = ['bitcoin', 'ethereum', 'solana', 'ripple'];
+const CRYPTO_META = {
+  bitcoin: { name: 'Bitcoin', symbol: 'BTC' },
+  ethereum: { name: 'Ethereum', symbol: 'ETH' },
+  solana: { name: 'Solana', symbol: 'SOL' },
+  ripple: { name: 'XRP', symbol: 'XRP' },
+};
 
 async function fetchWithRateLimitRetry(url, maxAttempts = 5, headers = { Accept: 'application/json', 'User-Agent': CHROME_UA }) {
   for (let i = 0; i < maxAttempts; i++) {
@@ -30,7 +33,12 @@ async function fetchWithRateLimitRetry(url, maxAttempts = 5, headers = { Accept:
   throw new Error('CoinGecko rate limit exceeded after retries');
 }
 
-const COINPAPRIKA_ID_MAP = cryptoConfig.coinpaprika;
+const COINPAPRIKA_ID_MAP = {
+  bitcoin: 'btc-bitcoin',
+  ethereum: 'eth-ethereum',
+  solana: 'sol-solana',
+  ripple: 'xrp-ripple',
+};
 
 async function fetchFromCoinGecko() {
   const ids = CRYPTO_IDS.join(',');

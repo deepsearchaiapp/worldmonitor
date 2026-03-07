@@ -236,14 +236,6 @@ export class UnifiedSettings {
       this.prefsCleanup = prefs.attach(settingsPanel as HTMLElement);
     }
 
-    const closeBtn = this.overlay.querySelector<HTMLButtonElement>('.unified-settings-close');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        this.close();
-      });
-    }
-
     this.renderPanelCategoryPills();
     this.renderPanelsTab();
     this.renderRegionPills();

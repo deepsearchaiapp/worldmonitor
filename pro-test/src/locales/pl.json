@@ -225,6 +225,7 @@
     "failedTryAgain": "Nie udało się — spróbuj ponownie"
   },
   "referral": {
+    "yourPosition": "Twoja pozycja",
     "alreadyOnList": "Jesteś już na liście.",
     "shareHint": "Udostępnij swój link, aby awansować w kolejce. Każdy znajomy, który dołączy, przesuwa cię bliżej początku.",
     "copied": "Skopiowano!",
@@ -233,8 +234,6 @@
     "whatsapp": "WhatsApp",
     "telegram": "Telegram",
     "shareText": "Właśnie dołączyłem do listy oczekujących World Monitor Pro — globalny wywiad w czasie rzeczywistym napędzany przez AI. Dołącz:",
-    "joinWaitlistShare": "Dołącz do listy oczekujących World Monitor Pro:",
-    "youreIn": "Jesteś na liście!",
-    "invitedBanner": "Zostałeś zaproszony — dołącz do listy"
+    "joinWaitlistShare": "Dołącz do listy oczekujących World Monitor Pro:"
   }
 }

@@ -58,7 +58,6 @@ const FULL_PANELS: Record<string, PanelConfig> = {
   'oref-sirens': { name: 'Israel Sirens', enabled: true, priority: 2, ...(_desktop && { premium: 'locked' as const }) },
   'telegram-intel': { name: 'Telegram Intel', enabled: true, priority: 2, ...(_desktop && { premium: 'locked' as const }) },
   'airline-intel': { name: 'Airline Intelligence', enabled: true, priority: 2 },
-  'tech-readiness': { name: 'Tech Readiness Index', enabled: true, priority: 2 },
   'world-clock': { name: 'World Clock', enabled: true, priority: 2 },
 };
 
@@ -640,6 +639,8 @@ const COMMODITY_PANELS: Record<string, PanelConfig> = {
   economic: { name: 'Economic Indicators', enabled: true, priority: 1 },
   'gulf-economies': { name: 'Gulf & OPEC Economies', enabled: true, priority: 1 },
   'gcc-investments': { name: 'GCC Resource Investments', enabled: true, priority: 2 },
+  climate: { name: 'Climate & Weather Impact', enabled: true, priority: 2 },
+  'satellite-fires': { name: 'Fires & Operational Risk', enabled: true, priority: 2 },
   'airline-intel': { name: 'Airline Intelligence', enabled: true, priority: 2 },
   finance: { name: 'Financial News', enabled: true, priority: 2 },
   polymarket: { name: 'Commodity Predictions', enabled: true, priority: 2 },
@@ -845,7 +846,7 @@ export const PANEL_CATEGORY_MAP: Record<string, { labelKey: string; panelKeys: s
   },
   dataTracking: {
     labelKey: 'header.panelCatDataTracking',
-    panelKeys: ['monitors', 'satellite-fires', 'ucdp-events', 'displacement', 'climate', 'population-exposure', 'security-advisories', 'oref-sirens', 'world-clock', 'tech-readiness'],
+    panelKeys: ['monitors', 'satellite-fires', 'ucdp-events', 'displacement', 'climate', 'population-exposure', 'security-advisories', 'oref-sirens', 'world-clock'],
     variants: ['full'],
   },
 

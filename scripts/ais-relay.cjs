@@ -17,13 +17,7 @@ const { readFileSync } = require('fs');
 const crypto = require('crypto');
 const v8 = require('v8');
 const { WebSocketServer, WebSocket } = require('ws');
-
-function requireShared(name) {
-  const candidates = [path.join(__dirname, '..', 'shared', name), path.join(__dirname, 'shared', name)];
-  for (const p of candidates) { try { return require(p); } catch {} }
-  throw new Error(`Cannot find shared/${name}`);
-}
-const RSS_ALLOWED_DOMAINS = new Set(requireShared('rss-allowed-domains.cjs'));
+const RSS_ALLOWED_DOMAINS = new Set(require('../shared/rss-allowed-domains.cjs'));
 
 // Log effective heap limit at startup (verifies NODE_OPTIONS=--max-old-space-size is active)
 const _heapStats = v8.getHeapStatistics();
@@ -180,41 +174,6 @@ function upstashSet(key, value, ttlSeconds) {
     });
     req.on('error', () => resolve(false));
     req.on('timeout', () => { req.destroy(); resolve(false); });
-    req.end(body);
-  });
-}
-
-function upstashMGet(keys) {
-  return new Promise((resolve) => {
-    if (!UPSTASH_ENABLED || keys.length === 0) return resolve([]);
-    const url = new URL('/pipeline', UPSTASH_REDIS_REST_URL);
-    const body = JSON.stringify(keys.map((k) => ['GET', k]));
-    const req = https.request(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      timeout: 10000,
-    }, (resp) => {
-      if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        resp.resume();
-        return resolve(keys.map(() => null));
-      }
-      let data = '';
-      resp.on('data', (chunk) => { data += chunk; });
-      resp.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          resolve(parsed.map((r) => {
-            if (!r?.result) return null;
-            try { return JSON.parse(r.result); } catch { return null; }
-          }));
-        } catch { resolve(keys.map(() => null)); }
-      });
-    });
-    req.on('error', () => resolve(keys.map(() => null)));
-    req.on('timeout', () => { req.destroy(); resolve(keys.map(() => null)); });
     req.end(body);
   });
 }
@@ -989,7 +948,6 @@ async function seedUcdpEvents() {
 
     const payload = { events: mapped, fetchedAt: Date.now(), version, totalRaw: allEvents.length, filteredCount: mapped.length };
     const ok = await upstashSet(UCDP_REDIS_KEY, payload, UCDP_TTL_SECONDS);
-    await upstashSet('seed-meta:conflict:ucdp-events', { fetchedAt: Date.now(), recordCount: mapped.length }, 604800);
     console.log(`[UCDP] Seeded ${mapped.length} events (raw: ${allEvents.length}, failed pages: ${failedPages}, redis: ${ok ? 'OK' : 'FAIL'})`);
   } catch (e) {
     console.warn('[UCDP] Seed error:', e?.message || e);
@@ -1303,10 +1261,9 @@ async function seedEtfFlows() {
 }
 
 // Crypto Quotes — CoinGecko → CoinPaprika fallback
-const _cryptoCfg = requireShared('crypto.json');
-const CRYPTO_IDS = _cryptoCfg.ids;
-const CRYPTO_META = _cryptoCfg.meta;
-const CRYPTO_PAPRIKA_MAP = _cryptoCfg.coinpaprika;
+const CRYPTO_IDS = ['bitcoin', 'ethereum', 'solana', 'ripple'];
+const CRYPTO_META = { bitcoin: { name: 'Bitcoin', symbol: 'BTC' }, ethereum: { name: 'Ethereum', symbol: 'ETH' }, solana: { name: 'Solana', symbol: 'SOL' }, ripple: { name: 'XRP', symbol: 'XRP' } };
+const CRYPTO_PAPRIKA_MAP = { bitcoin: 'btc-bitcoin', ethereum: 'eth-ethereum', solana: 'sol-solana', ripple: 'xrp-ripple' };
 const CRYPTO_SEED_TTL = 3600; // 1h
 
 async function fetchCryptoCoinPaprika() {
@@ -1438,16 +1395,13 @@ const AVIATION_SEED_TTL = 14400; // 4h — survives 1 missed cycle
 const AVIATION_REDIS_KEY = 'aviation:delays:intl:v3';
 const AVIATION_BATCH_CONCURRENCY = 10;
 const AVIATION_MIN_FLIGHTS_FOR_CLOSURE = 10;
-const RESOLVED_STATUSES = new Set(['cancelled', 'landed', 'active', 'arrived', 'diverted']);
 
 // Must match src/config/airports.ts AVIATIONSTACK_AIRPORTS — update both when changing
 const AVIATIONSTACK_AIRPORTS = [
-  'YYZ', 'YVR', 'MEX', 'GRU', 'EZE', 'BOG', 'SCL',
+  'YYZ', 'MEX', 'GRU', 'EZE', 'BOG',
   'LHR', 'CDG', 'FRA', 'AMS', 'MAD', 'FCO', 'MUC', 'BCN', 'ZRH', 'IST', 'VIE', 'CPH',
-  'DUB', 'LIS', 'ATH', 'WAW',
   'HND', 'NRT', 'PEK', 'PVG', 'HKG', 'SIN', 'ICN', 'BKK', 'SYD', 'DEL', 'BOM', 'KUL',
-  'CAN', 'TPE', 'MNL',
-  'DXB', 'DOH', 'AUH', 'RUH', 'CAI', 'TLV', 'AMM', 'KWI', 'CMN',
+  'DXB', 'DOH', 'AUH', 'RUH', 'CAI', 'TLV',
   'JNB', 'NBO', 'LOS', 'ADD', 'CPT',
 ];
 
@@ -1493,19 +1447,6 @@ const AIRPORT_META = {
   LOS: { icao: 'DNMM', name: 'Murtala Muhammed International', city: 'Lagos', country: 'Nigeria', lat: 6.5774, lon: 3.3212, region: 'africa' },
   ADD: { icao: 'HAAB', name: 'Bole International', city: 'Addis Ababa', country: 'Ethiopia', lat: 8.9779, lon: 38.7993, region: 'africa' },
   CPT: { icao: 'FACT', name: 'Cape Town International', city: 'Cape Town', country: 'South Africa', lat: -33.9715, lon: 18.6021, region: 'africa' },
-  // Added airports
-  YVR: { icao: 'CYVR', name: 'Vancouver International', city: 'Vancouver', country: 'Canada', lat: 49.1947, lon: -123.1792, region: 'americas' },
-  SCL: { icao: 'SCEL', name: 'Arturo Merino Benítez', city: 'Santiago', country: 'Chile', lat: -33.3930, lon: -70.7858, region: 'americas' },
-  DUB: { icao: 'EIDW', name: 'Dublin Airport', city: 'Dublin', country: 'Ireland', lat: 53.4264, lon: -6.2499, region: 'europe' },
-  LIS: { icao: 'LPPT', name: 'Humberto Delgado Airport', city: 'Lisbon', country: 'Portugal', lat: 38.7756, lon: -9.1354, region: 'europe' },
-  ATH: { icao: 'LGAV', name: 'Athens International', city: 'Athens', country: 'Greece', lat: 37.9364, lon: 23.9445, region: 'europe' },
-  WAW: { icao: 'EPWA', name: 'Warsaw Chopin Airport', city: 'Warsaw', country: 'Poland', lat: 52.1657, lon: 20.9671, region: 'europe' },
-  CAN: { icao: 'ZGGG', name: 'Guangzhou Baiyun International', city: 'Guangzhou', country: 'China', lat: 23.3924, lon: 113.2988, region: 'apac' },
-  TPE: { icao: 'RCTP', name: 'Taiwan Taoyuan International', city: 'Taipei', country: 'Taiwan', lat: 25.0797, lon: 121.2342, region: 'apac' },
-  MNL: { icao: 'RPLL', name: 'Ninoy Aquino International', city: 'Manila', country: 'Philippines', lat: 14.5086, lon: 121.0197, region: 'apac' },
-  AMM: { icao: 'OJAI', name: 'Queen Alia International', city: 'Amman', country: 'Jordan', lat: 31.7226, lon: 35.9932, region: 'mena' },
-  KWI: { icao: 'OKBK', name: 'Kuwait International', city: 'Kuwait City', country: 'Kuwait', lat: 29.2266, lon: 47.9689, region: 'mena' },
-  CMN: { icao: 'GMMN', name: 'Mohammed V International', city: 'Casablanca', country: 'Morocco', lat: 33.3675, lon: -7.5898, region: 'mena' },
 };
 
 const REGION_MAP = {
@@ -1543,8 +1484,7 @@ function aviationDetermineSeverity(avgDelay, delayedPct) {
 
 function fetchAviationStackSingle(apiKey, iata) {
   return new Promise((resolve) => {
-    const today = new Date().toISOString().slice(0, 10);
-    const url = `https://api.aviationstack.com/v1/flights?access_key=${apiKey}&dep_iata=${iata}&flight_date=${today}&limit=100`;
+    const url = `https://api.aviationstack.com/v1/flights?access_key=${apiKey}&dep_iata=${iata}&limit=100`;
     const req = https.get(url, {
       headers: { 'User-Agent': CHROME_UA },
       timeout: 5000,
@@ -1583,9 +1523,8 @@ function aviationAggregateFlights(iata, flights) {
   const meta = AIRPORT_META[iata];
   if (!meta) return null;
 
-  let delayed = 0, cancelled = 0, totalDelay = 0, resolved = 0;
+  let delayed = 0, cancelled = 0, totalDelay = 0;
   for (const f of flights) {
-    if (RESOLVED_STATUSES.has(f.flight_status || '')) resolved++;
     if (f.flight_status === 'cancelled') cancelled++;
     if (f.departure?.delay && f.departure.delay > 0) {
       delayed++;
@@ -1593,7 +1532,7 @@ function aviationAggregateFlights(iata, flights) {
     }
   }
 
-  const total = resolved >= AVIATION_MIN_FLIGHTS_FOR_CLOSURE ? resolved : flights.length;
+  const total = flights.length;
   const cancelledPct = (cancelled / total) * 100;
   const delayedPct = (delayed / total) * 100;
   const avgDelay = delayed > 0 ? Math.round(totalDelay / delayed) : 0;
@@ -2182,232 +2121,11 @@ async function startPositiveEventsSeedLoop() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// AI Classification Seed — batch-classify digest titles via LLM → Redis
-// Clients get pre-classified items from digest, zero classify-event RPCs
-// ─────────────────────────────────────────────────────────────
-const CLASSIFY_SEED_INTERVAL_MS = 15 * 60 * 1000;
-const CLASSIFY_CACHE_TTL = 86400;
-const CLASSIFY_SKIP_TTL = 1800;
-const CLASSIFY_BATCH_SIZE = 50;
-const CLASSIFY_VARIANTS = ['full', 'tech', 'finance', 'happy', 'commodity'];
-const CLASSIFY_VARIANT_STAGGER_MS = 3 * 60 * 1000;
-
-const CLASSIFY_VALID_LEVELS = ['critical', 'high', 'medium', 'low', 'info'];
-const CLASSIFY_VALID_CATEGORIES = [
-  'conflict', 'protest', 'disaster', 'diplomatic', 'economic',
-  'terrorism', 'cyber', 'health', 'environmental', 'military',
-  'crime', 'infrastructure', 'tech', 'general',
-];
-
-const CLASSIFY_SYSTEM_PROMPT = `You classify news headlines by threat level and category. Return ONLY a JSON array, no other text.
-
-Levels: critical, high, medium, low, info
-Categories: conflict, protest, disaster, diplomatic, economic, terrorism, cyber, health, environmental, military, crime, infrastructure, tech, general
-
-Input: numbered lines "index|Title"
-Output: [{"i":0,"l":"high","c":"conflict"}, ...]
-
-Focus: geopolitical events, conflicts, disasters, diplomacy. Classify by real-world severity and impact.`;
-
-function classifyCacheKey(title) {
-  const hash = crypto.createHash('sha256').update(title.toLowerCase()).digest('hex').slice(0, 16);
-  return `classify:sebuf:v1:${hash}`;
-}
-
-function classifyFetchLlm(titles, apiKey, apiUrl, model) {
-  return new Promise((resolve) => {
-    const sanitized = titles.map((t) => t.replace(/[\n\r]/g, ' ').replace(/\|/g, '/').slice(0, 200).trim());
-    const prompt = sanitized.map((t, i) => `${i}|${t}`).join('\n');
-    const bodyStr = JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: CLASSIFY_SYSTEM_PROMPT },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0,
-      max_tokens: titles.length * 40,
-    });
-
-    const parsed = new URL(apiUrl);
-    const transport = parsed.protocol === 'http:' ? http : https;
-    const req = transport.request(parsed, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'User-Agent': CHROME_UA,
-        'Content-Length': Buffer.byteLength(bodyStr),
-      },
-      timeout: 30000,
-    }, (resp) => {
-      if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        resp.resume();
-        return resolve(null);
-      }
-      let data = '';
-      resp.on('data', (chunk) => { data += chunk; });
-      resp.on('end', () => {
-        try {
-          const json = JSON.parse(data);
-          const raw = json?.choices?.[0]?.message?.content?.trim();
-          if (!raw) return resolve(null);
-          const match = raw.match(/\[[\s\S]*\]/);
-          if (!match) return resolve(null);
-          resolve(JSON.parse(match[0]));
-        } catch { resolve(null); }
-      });
-    });
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => { req.destroy(); resolve(null); });
-    req.end(bodyStr);
-  });
-}
-
-let classifyInFlight = false;
-
-async function seedClassifyForVariant(variant, apiKey, apiUrl, model) {
-  const digestUrl = `https://api.worldmonitor.app/api/news/v1/list-feed-digest?variant=${variant}&lang=en`;
-  let digest;
-  try {
-    const resp = await new Promise((resolve, reject) => {
-      const req = https.get(digestUrl, {
-        headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
-        timeout: 15000,
-      }, resolve);
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    });
-    if (resp.statusCode !== 200) { resp.resume(); return { total: 0, classified: 0, skipped: 0 }; }
-    const body = await new Promise((resolve) => {
-      let d = '';
-      resp.on('data', (c) => { d += c; });
-      resp.on('end', () => resolve(d));
-    });
-    digest = JSON.parse(body);
-  } catch {
-    return { total: 0, classified: 0, skipped: 0 };
-  }
-
-  const allTitles = new Set();
-  if (digest?.categories) {
-    for (const bucket of Object.values(digest.categories)) {
-      for (const item of bucket?.items ?? []) {
-        if (item?.title) allTitles.add(item.title);
-      }
-    }
-  }
-  if (allTitles.size === 0) return { total: 0, classified: 0, skipped: 0 };
-
-  const titleArr = [...allTitles];
-  const cacheKeys = titleArr.map((t) => classifyCacheKey(t));
-
-  const cached = await upstashMGet(cacheKeys);
-  const misses = [];
-  for (let i = 0; i < titleArr.length; i++) {
-    if (!cached[i]) misses.push(titleArr[i]);
-  }
-
-  if (misses.length === 0) return { total: titleArr.length, classified: 0, skipped: 0 };
-
-  let classified = 0;
-  let skipped = 0;
-
-  for (let b = 0; b < misses.length; b += CLASSIFY_BATCH_SIZE) {
-    const chunk = misses.slice(b, b + CLASSIFY_BATCH_SIZE);
-    const llmResult = await classifyFetchLlm(chunk, apiKey, apiUrl, model);
-
-    if (!Array.isArray(llmResult)) {
-      for (const title of chunk) {
-        await upstashSet(classifyCacheKey(title), { level: '_skip', timestamp: Date.now() }, CLASSIFY_SKIP_TTL);
-        skipped++;
-      }
-      continue;
-    }
-
-    const classifiedSet = new Set();
-    for (const entry of llmResult) {
-      const idx = entry?.i;
-      if (typeof idx !== 'number' || idx < 0 || idx >= chunk.length) continue;
-      if (classifiedSet.has(idx)) continue;
-      const level = CLASSIFY_VALID_LEVELS.includes(entry?.l) ? entry.l : null;
-      const category = CLASSIFY_VALID_CATEGORIES.includes(entry?.c) ? entry.c : null;
-      if (!level || !category) continue;
-      classifiedSet.add(idx);
-      await upstashSet(classifyCacheKey(chunk[idx]), { level, category, timestamp: Date.now() }, CLASSIFY_CACHE_TTL);
-      classified++;
-    }
-
-    for (let i = 0; i < chunk.length; i++) {
-      if (!classifiedSet.has(i)) {
-        await upstashSet(classifyCacheKey(chunk[i]), { level: '_skip', timestamp: Date.now() }, CLASSIFY_SKIP_TTL);
-        skipped++;
-      }
-    }
-  }
-
-  return { total: titleArr.length, classified, skipped };
-}
-
-async function seedClassify() {
-  if (classifyInFlight) return;
-  classifyInFlight = true;
-  const t0 = Date.now();
-  try {
-    const apiKey = process.env.LLM_API_KEY || process.env.GROQ_API_KEY;
-    const apiUrl = process.env.LLM_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
-    const model = process.env.LLM_MODEL || 'llama-3.1-8b-instant';
-    if (!apiKey) {
-      console.log('[Classify] Skipped — no LLM_API_KEY or GROQ_API_KEY');
-      return;
-    }
-    const isProd = process.env.RAILWAY_ENVIRONMENT === 'production';
-    if (isProd && !apiUrl.startsWith('https://') && !apiUrl.startsWith('http://localhost')) {
-      console.warn('[Classify] LLM_API_URL must be HTTPS in production — skipping');
-      return;
-    }
-
-    let totalClassified = 0;
-    let totalSkipped = 0;
-    for (let v = 0; v < CLASSIFY_VARIANTS.length; v++) {
-      if (v > 0) await new Promise((r) => setTimeout(r, CLASSIFY_VARIANT_STAGGER_MS));
-      try {
-        const stats = await seedClassifyForVariant(CLASSIFY_VARIANTS[v], apiKey, apiUrl, model);
-        totalClassified += stats.classified;
-        totalSkipped += stats.skipped;
-        console.log(`[Classify] ${CLASSIFY_VARIANTS[v]}: ${stats.total} titles, ${stats.classified} classified, ${stats.skipped} skipped`);
-      } catch (e) {
-        console.warn(`[Classify] ${CLASSIFY_VARIANTS[v]} error:`, e?.message || e);
-      }
-    }
-
-    await upstashSet('seed-meta:classify', { fetchedAt: Date.now(), recordCount: totalClassified }, 604800);
-    console.log(`[Classify] Done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${totalClassified} classified, ${totalSkipped} skipped`);
-  } catch (e) {
-    console.warn('[Classify] Seed error:', e?.message || e);
-  } finally {
-    classifyInFlight = false;
-  }
-}
-
-async function startClassifySeedLoop() {
-  if (!UPSTASH_ENABLED) {
-    console.log('[Classify] Disabled (no Upstash Redis)');
-    return;
-  }
-  const apiKey = process.env.LLM_API_KEY || process.env.GROQ_API_KEY;
-  console.log(`[Classify] Seed loop starting (interval ${CLASSIFY_SEED_INTERVAL_MS / 1000 / 60}min, apiKey:${apiKey ? 'yes' : 'no'})`);
-  seedClassify().catch((e) => console.warn('[Classify] Initial seed error:', e?.message || e));
-  setInterval(() => {
-    seedClassify().catch((e) => console.warn('[Classify] Seed error:', e?.message || e));
-  }, CLASSIFY_SEED_INTERVAL_MS).unref?.();
-}
-
-// ─────────────────────────────────────────────────────────────
 // Service Statuses Seed — warm-pings Vercel RPC every 15 min
 // so service statuses are always cached (TTL is 30 min).
 // ─────────────────────────────────────────────────────────────
 const SERVICE_STATUSES_SEED_INTERVAL_MS = 15 * 60 * 1000; // 15 min (TTL/2)
-const SERVICE_STATUSES_RPC_URL = 'https://api.worldmonitor.app/api/infrastructure/v1/list-service-statuses';
+const SERVICE_STATUSES_RPC_URL = 'https://worldmonitor.app/api/infrastructure/v1/list-service-statuses';
 
 async function seedServiceStatuses() {
   try {
@@ -2446,7 +2164,7 @@ function startServiceStatusesSeedLoop() {
 // so the strategic posture panel always has data in Redis.
 // ─────────────────────────────────────────────────────────────
 const THEATER_POSTURE_SEED_INTERVAL_MS = 600_000; // 10 min
-const THEATER_POSTURE_RPC_URL = 'https://api.worldmonitor.app/api/military/v1/get-theater-posture';
+const THEATER_POSTURE_RPC_URL = 'https://worldmonitor.app/api/military/v1/get-theater-posture';
 
 async function seedTheaterPosture() {
   try {
@@ -2613,7 +2331,6 @@ async function seedGpsJamData() {
     };
 
     const ok = await upstashSet(GPSJAM_REDIS_KEY, output, GPSJAM_SEED_TTL);
-    await upstashSet('seed-meta:intelligence:gpsjam', { fetchedAt: Date.now(), recordCount: hexes.length }, 604800);
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     console.log(`[GPSJam] Seeded ${hexes.length} hexes (${highCount} high, ${mediumCount} medium, date: ${latestDate}, redis: ${ok ? 'OK' : 'FAIL'}) in ${elapsed}s`);
   } catch (e) {
@@ -2984,398 +2701,6 @@ async function startCiiSeedLoop() {
   setInterval(() => {
     seedCiiScores().catch((e) => console.warn('[CII] Seed error:', e?.message || e));
   }, CII_SEED_INTERVAL_MS).unref?.();
-}
-
-// ─────────────────────────────────────────────────────────────
-// Weather Alerts Seed — NWS API → Redis every 15 min
-// ─────────────────────────────────────────────────────────────
-const WEATHER_SEED_INTERVAL_MS = 15 * 60 * 1000; // 15 min
-const WEATHER_REDIS_KEY = 'weather:alerts:v1';
-const WEATHER_CACHE_TTL = 900;
-let weatherSeedInFlight = false;
-
-async function seedWeatherAlerts() {
-  if (weatherSeedInFlight) return;
-  weatherSeedInFlight = true;
-  const t0 = Date.now();
-  try {
-    const resp = await fetch('https://api.weather.gov/alerts/active', {
-      headers: { Accept: 'application/geo+json', 'User-Agent': CHROME_UA },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!resp.ok) {
-      console.warn(`[Weather] Seed failed: HTTP ${resp.status}`);
-      return;
-    }
-    const data = await resp.json();
-    const features = data.features || [];
-    const alerts = features
-      .filter((f) => f?.properties?.severity !== 'Unknown')
-      .slice(0, 50)
-      .map((f) => {
-        const p = f.properties;
-        let coords = [];
-        try {
-          const g = f.geometry;
-          if (g?.type === 'Polygon') coords = g.coordinates[0]?.map((c) => [c[0], c[1]]) || [];
-          else if (g?.type === 'MultiPolygon') coords = g.coordinates[0]?.[0]?.map((c) => [c[0], c[1]]) || [];
-        } catch { /* ignore */ }
-        const centroid = coords.length > 0
-          ? [coords.reduce((s, c) => s + c[0], 0) / coords.length, coords.reduce((s, c) => s + c[1], 0) / coords.length]
-          : undefined;
-        return {
-          id: f.id || '', event: p.event || '', severity: p.severity || 'Unknown',
-          headline: p.headline || '', description: (p.description || '').slice(0, 500),
-          areaDesc: p.areaDesc || '', onset: p.onset || '', expires: p.expires || '',
-          coordinates: coords, centroid,
-        };
-      });
-    if (alerts.length === 0) {
-      console.warn('[Weather] No alerts returned — preserving last good data');
-      return;
-    }
-    const payload = { alerts };
-    const ok1 = await upstashSet(WEATHER_REDIS_KEY, payload, WEATHER_CACHE_TTL);
-    const ok2 = await upstashSet('seed-meta:weather:alerts', { fetchedAt: Date.now(), recordCount: alerts.length }, 604800);
-    console.log(`[Weather] Seeded ${alerts.length} alerts (redis: ${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  } catch (e) {
-    console.warn('[Weather] Seed error:', e?.message || e);
-  } finally {
-    weatherSeedInFlight = false;
-  }
-}
-
-async function startWeatherSeedLoop() {
-  if (!UPSTASH_ENABLED) {
-    console.log('[Weather] Disabled (no Upstash Redis)');
-    return;
-  }
-  console.log(`[Weather] Seed loop starting (interval ${WEATHER_SEED_INTERVAL_MS / 1000 / 60}min)`);
-  seedWeatherAlerts().catch((e) => console.warn('[Weather] Initial seed error:', e?.message || e));
-  setInterval(() => {
-    seedWeatherAlerts().catch((e) => console.warn('[Weather] Seed error:', e?.message || e));
-  }, WEATHER_SEED_INTERVAL_MS).unref?.();
-}
-
-// ─────────────────────────────────────────────────────────────
-// USASpending Seed — federal awards → Redis every 60 min
-// ─────────────────────────────────────────────────────────────
-const SPENDING_SEED_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-const SPENDING_REDIS_KEY = 'economic:spending:v1';
-const SPENDING_CACHE_TTL = 3600;
-let spendingSeedInFlight = false;
-
-function getDateDaysAgo(days) {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().split('T')[0];
-}
-
-const AWARD_TYPE_MAP = {
-  A: 'contract', B: 'contract', C: 'contract', D: 'contract',
-  '02': 'grant', '03': 'grant', '04': 'grant', '05': 'grant', '06': 'grant', '10': 'grant',
-  '07': 'loan', '08': 'loan',
-};
-
-async function seedUsaSpending() {
-  if (spendingSeedInFlight) return;
-  spendingSeedInFlight = true;
-  const t0 = Date.now();
-  try {
-    const periodStart = getDateDaysAgo(7);
-    const periodEnd = new Date().toISOString().split('T')[0];
-    const resp = await fetch('https://api.usaspending.gov/api/v2/search/spending_by_award/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': CHROME_UA },
-      signal: AbortSignal.timeout(20_000),
-      body: JSON.stringify({
-        filters: {
-          time_period: [{ start_date: periodStart, end_date: periodEnd }],
-          award_type_codes: ['A', 'B', 'C', 'D'],
-        },
-        fields: ['Award ID', 'Recipient Name', 'Award Amount', 'Awarding Agency', 'Description', 'Start Date', 'Award Type'],
-        limit: 15, order: 'desc', sort: 'Award Amount',
-      }),
-    });
-    if (!resp.ok) {
-      console.warn(`[Spending] Seed failed: HTTP ${resp.status}`);
-      return;
-    }
-    const data = await resp.json();
-    const results = data.results || [];
-    const awards = results.map((r) => ({
-      id: String(r['Award ID'] || ''),
-      recipientName: String(r['Recipient Name'] || 'Unknown'),
-      amount: Number(r['Award Amount']) || 0,
-      agency: String(r['Awarding Agency'] || 'Unknown'),
-      description: String(r['Description'] || '').slice(0, 200),
-      startDate: String(r['Start Date'] || ''),
-      awardType: AWARD_TYPE_MAP[String(r['Award Type'] || '')] || 'other',
-    }));
-    if (awards.length === 0) {
-      console.warn('[Spending] No awards returned — preserving last good data');
-      return;
-    }
-    const totalAmount = awards.reduce((s, a) => s + a.amount, 0);
-    const payload = { awards, totalAmount, periodStart, periodEnd, fetchedAt: Date.now() };
-    const ok1 = await upstashSet(SPENDING_REDIS_KEY, payload, SPENDING_CACHE_TTL);
-    const ok2 = await upstashSet('seed-meta:economic:spending', { fetchedAt: Date.now(), recordCount: awards.length }, 604800);
-    console.log(`[Spending] Seeded ${awards.length} awards, $${(totalAmount / 1e6).toFixed(1)}M (redis: ${ok1 && ok2 ? 'OK' : 'PARTIAL'}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  } catch (e) {
-    console.warn('[Spending] Seed error:', e?.message || e);
-  } finally {
-    spendingSeedInFlight = false;
-  }
-}
-
-async function startSpendingSeedLoop() {
-  if (!UPSTASH_ENABLED) {
-    console.log('[Spending] Disabled (no Upstash Redis)');
-    return;
-  }
-  console.log(`[Spending] Seed loop starting (interval ${SPENDING_SEED_INTERVAL_MS / 1000 / 60}min)`);
-  seedUsaSpending().catch((e) => console.warn('[Spending] Initial seed error:', e?.message || e));
-  setInterval(() => {
-    seedUsaSpending().catch((e) => console.warn('[Spending] Seed error:', e?.message || e));
-  }, SPENDING_SEED_INTERVAL_MS).unref?.();
-}
-
-// ─────────────────────────────────────────────────────────────
-// World Bank Indicators seed loop (tech readiness, progress, renewable)
-// ─────────────────────────────────────────────────────────────
-
-const WB_SEED_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours (data is annual)
-const WB_TTL_SECONDS = 7 * 24 * 3600; // 7 days
-const WB_BOOTSTRAP_KEY = 'economic:worldbank-techreadiness:v1';
-const WB_PROGRESS_KEY = 'economic:worldbank-progress:v1';
-const WB_RENEWABLE_KEY = 'economic:worldbank-renewable:v1';
-
-const WB_WEIGHTS = { internet: 30, mobile: 15, broadband: 20, rdSpend: 35 };
-const WB_NORMALIZE_MAX = { internet: 100, mobile: 150, broadband: 50, rdSpend: 5 };
-
-const WB_INDICATORS = [
-  { key: 'internet',  id: 'IT.NET.USER.ZS', dateRange: '2019:2024' },
-  { key: 'mobile',    id: 'IT.CEL.SETS.P2', dateRange: '2019:2024' },
-  { key: 'broadband', id: 'IT.NET.BBND.P2', dateRange: '2019:2024' },
-  { key: 'rdSpend',   id: 'GB.XPD.RSDV.GD.ZS', dateRange: '2018:2024' },
-];
-
-const WB_PROGRESS_INDICATORS = [
-  { id: 'lifeExpectancy', code: 'SP.DYN.LE00.IN', years: 65, invertTrend: false },
-  { id: 'literacy',       code: 'SE.ADT.LITR.ZS', years: 55, invertTrend: false },
-  { id: 'childMortality', code: 'SH.DYN.MORT',    years: 65, invertTrend: true },
-  { id: 'poverty',        code: 'SI.POV.DDAY',    years: 45, invertTrend: true },
-];
-
-const WB_RENEWABLE_REGIONS = ['1W', 'EAS', 'ECS', 'LCN', 'MEA', 'NAC', 'SAS', 'SSF'];
-const WB_RENEWABLE_REGION_NAMES = {
-  '1W': 'World', EAS: 'East Asia & Pacific', ECS: 'Europe & Central Asia',
-  LCN: 'Latin America & Caribbean', MEA: 'Middle East & N. Africa',
-  NAC: 'North America', SAS: 'South Asia', SSF: 'Sub-Saharan Africa',
-};
-
-function wbFetchJson(url) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, {
-      headers: { 'User-Agent': 'WorldMonitor-Seed/1.0', Accept: 'application/json' },
-      timeout: 30000,
-    }, (resp) => {
-      if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        resp.resume();
-        return reject(new Error(`WB HTTP ${resp.statusCode}`));
-      }
-      let data = '';
-      resp.on('data', (chunk) => { data += chunk; });
-      resp.on('end', () => {
-        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
-      });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('WB timeout')); });
-  });
-}
-
-async function wbFetchIndicator(indicatorId, dateRange) {
-  const baseUrl = `https://api.worldbank.org/v2/country/all/indicator/${indicatorId}`;
-  let page = 1;
-  let totalPages = 1;
-  const allEntries = [];
-
-  while (page <= totalPages) {
-    const url = `${baseUrl}?format=json&date=${dateRange}&per_page=1000&page=${page}`;
-    const raw = await wbFetchJson(url);
-    if (!Array.isArray(raw) || raw.length < 2) break;
-    totalPages = raw[0].pages || 1;
-    if (Array.isArray(raw[1])) allEntries.push(...raw[1]);
-    page++;
-  }
-
-  const latestByCountry = {};
-  for (const entry of allEntries) {
-    if (entry.value === null || entry.value === undefined) continue;
-    const iso3 = entry.countryiso3code;
-    if (!iso3 || iso3.length !== 3) continue;
-    const year = parseInt(entry.date, 10);
-    if (!latestByCountry[iso3] || year > latestByCountry[iso3].year) {
-      latestByCountry[iso3] = { value: entry.value, name: entry.country?.value || iso3, year };
-    }
-  }
-  return latestByCountry;
-}
-
-function wbNormalize(val, max) {
-  if (val === undefined || val === null) return null;
-  return Math.min(100, (val / max) * 100);
-}
-
-function wbComputeRankings(indicatorData) {
-  const allCountries = new Set();
-  for (const data of Object.values(indicatorData)) {
-    Object.keys(data).forEach(c => allCountries.add(c));
-  }
-  const scores = [];
-  for (const cc of allCountries) {
-    const components = {
-      internet:  wbNormalize(indicatorData.internet[cc]?.value, WB_NORMALIZE_MAX.internet),
-      mobile:    wbNormalize(indicatorData.mobile[cc]?.value, WB_NORMALIZE_MAX.mobile),
-      broadband: wbNormalize(indicatorData.broadband[cc]?.value, WB_NORMALIZE_MAX.broadband),
-      rdSpend:   wbNormalize(indicatorData.rdSpend[cc]?.value, WB_NORMALIZE_MAX.rdSpend),
-    };
-    let totalWeight = 0, weightedSum = 0;
-    for (const [key, weight] of Object.entries(WB_WEIGHTS)) {
-      if (components[key] !== null) { weightedSum += components[key] * weight; totalWeight += weight; }
-    }
-    const score = totalWeight > 0 ? weightedSum / totalWeight : 0;
-    const name = indicatorData.internet[cc]?.name || indicatorData.mobile[cc]?.name || cc;
-    scores.push({ country: cc, countryName: name, score: Math.round(score * 10) / 10, rank: 0, components });
-  }
-  scores.sort((a, b) => b.score - a.score);
-  scores.forEach((s, i) => { s.rank = i + 1; });
-  return scores;
-}
-
-async function wbFetchProgress() {
-  const currentYear = new Date().getFullYear();
-  const results = [];
-  for (const ind of WB_PROGRESS_INDICATORS) {
-    const startYear = currentYear - ind.years;
-    const url = `https://api.worldbank.org/v2/country/1W/indicator/${ind.code}?format=json&date=${startYear}:${currentYear}&per_page=1000`;
-    try {
-      const raw = await wbFetchJson(url);
-      if (!Array.isArray(raw) || raw.length < 2 || !Array.isArray(raw[1])) {
-        results.push({ id: ind.id, code: ind.code, data: [], invertTrend: ind.invertTrend });
-        continue;
-      }
-      const data = raw[1]
-        .filter(e => e.value !== null && e.value !== undefined)
-        .map(e => ({ year: parseInt(e.date, 10), value: e.value }))
-        .filter(d => !isNaN(d.year))
-        .sort((a, b) => a.year - b.year);
-      results.push({ id: ind.id, code: ind.code, data, invertTrend: ind.invertTrend });
-    } catch (e) {
-      console.warn(`[WB] Progress ${ind.code} failed:`, e?.message);
-      results.push({ id: ind.id, code: ind.code, data: [], invertTrend: ind.invertTrend });
-    }
-  }
-  return results;
-}
-
-async function wbFetchRenewable() {
-  const currentYear = new Date().getFullYear();
-  const startYear = currentYear - 35;
-  const codes = WB_RENEWABLE_REGIONS.join(';');
-  const url = `https://api.worldbank.org/v2/country/${codes}/indicator/EG.ELC.RNEW.ZS?format=json&date=${startYear}:${currentYear}&per_page=1000`;
-  try {
-    const raw = await wbFetchJson(url);
-    if (!Array.isArray(raw) || raw.length < 2 || !Array.isArray(raw[1])) {
-      return { globalPercentage: 0, globalYear: 0, historicalData: [], regions: [] };
-    }
-    const entries = raw[1].filter(e => e.value !== null && e.value !== undefined);
-    const byRegion = {};
-    for (const e of entries) {
-      const code = e.countryiso3code || e.country?.id;
-      if (!code) continue;
-      if (!byRegion[code]) byRegion[code] = [];
-      byRegion[code].push({ year: parseInt(e.date, 10), value: e.value });
-    }
-    for (const arr of Object.values(byRegion)) arr.sort((a, b) => a.year - b.year);
-
-    const worldData = byRegion['WLD'] || byRegion['1W'] || [];
-    const latest = worldData.length ? worldData[worldData.length - 1] : null;
-    const regions = [];
-    for (const code of WB_RENEWABLE_REGIONS) {
-      if (code === '1W') continue;
-      const rd = byRegion[code] || [];
-      if (!rd.length) continue;
-      const lr = rd[rd.length - 1];
-      regions.push({ code, name: WB_RENEWABLE_REGION_NAMES[code] || code, percentage: lr.value, year: lr.year });
-    }
-    regions.sort((a, b) => b.percentage - a.percentage);
-    return { globalPercentage: latest?.value || 0, globalYear: latest?.year || 0, historicalData: worldData, regions };
-  } catch (e) {
-    console.warn('[WB] Renewable fetch failed:', e?.message);
-    return { globalPercentage: 0, globalYear: 0, historicalData: [], regions: [] };
-  }
-}
-
-async function seedWorldBank() {
-  try {
-    console.log('[WB] Fetching tech readiness indicators...');
-    const indicatorData = {};
-    for (const { key, id, dateRange } of WB_INDICATORS) {
-      indicatorData[key] = await wbFetchIndicator(id, dateRange);
-      console.log(`[WB]   ${id}: ${Object.keys(indicatorData[key]).length} countries`);
-    }
-    const rankings = wbComputeRankings(indicatorData);
-    console.log(`[WB] Rankings: ${rankings.length} countries`);
-
-    console.log('[WB] Fetching progress indicators...');
-    const progressData = await wbFetchProgress();
-    const progressWithData = progressData.filter(p => p.data.length > 0);
-    console.log(`[WB] Progress: ${progressWithData.length}/${progressData.length} with data`);
-
-    console.log('[WB] Fetching renewable energy...');
-    const renewableData = await wbFetchRenewable();
-    console.log(`[WB] Renewable: global=${renewableData.globalPercentage}%, ${renewableData.regions.length} regions`);
-
-    if (rankings.length === 0) {
-      console.warn('[WB] No rankings — aborting seed');
-      return;
-    }
-
-    const metaTtl = WB_TTL_SECONDS + 3600;
-    let ok = await upstashSet(WB_BOOTSTRAP_KEY, rankings, WB_TTL_SECONDS);
-    console.log(`[WB] techReadiness: ${rankings.length} rankings (redis: ${ok ? 'OK' : 'FAIL'})`);
-    await upstashSet(`seed-meta:${WB_BOOTSTRAP_KEY}`, { fetchedAt: Date.now(), recordCount: rankings.length }, metaTtl);
-
-    if (progressWithData.length > 0) {
-      ok = await upstashSet(WB_PROGRESS_KEY, progressData, WB_TTL_SECONDS);
-      console.log(`[WB] progressData: ${progressWithData.length} indicators (redis: ${ok ? 'OK' : 'FAIL'})`);
-      await upstashSet(`seed-meta:${WB_PROGRESS_KEY}`, { fetchedAt: Date.now(), recordCount: progressWithData.length }, metaTtl);
-    }
-
-    if (renewableData.historicalData.length > 0) {
-      ok = await upstashSet(WB_RENEWABLE_KEY, renewableData, WB_TTL_SECONDS);
-      console.log(`[WB] renewableEnergy: ${renewableData.regions.length} regions (redis: ${ok ? 'OK' : 'FAIL'})`);
-      await upstashSet(`seed-meta:${WB_RENEWABLE_KEY}`, { fetchedAt: Date.now(), recordCount: renewableData.historicalData.length }, metaTtl);
-    }
-
-    console.log('[WB] Seed complete');
-  } catch (e) {
-    console.warn('[WB] Seed error:', e?.message || e);
-  }
-}
-
-async function startWorldBankSeedLoop() {
-  if (!UPSTASH_ENABLED) {
-    console.log('[WB] Disabled (no Upstash Redis)');
-    return;
-  }
-  console.log(`[WB] Seed loop starting (interval ${WB_SEED_INTERVAL_MS / 1000 / 60 / 60}h)`);
-  seedWorldBank().catch(e => console.warn('[WB] Initial seed error:', e?.message || e));
-  setInterval(() => {
-    seedWorldBank().catch(e => console.warn('[WB] Seed error:', e?.message || e));
-  }, WB_SEED_INTERVAL_MS).unref?.();
 }
 
 function gzipSyncBuffer(body) {
@@ -6201,13 +5526,9 @@ server.listen(PORT, () => {
   // (avoids burning 12 extra AbuseIPDB calls/day from duplicate relay loop)
   startCiiSeedLoop();
   startPositiveEventsSeedLoop();
-  startClassifySeedLoop();
   startServiceStatusesSeedLoop();
   startTheaterPostureSeedLoop();
   startGpsJamSeedLoop();
-  startWeatherSeedLoop();
-  startSpendingSeedLoop();
-  startWorldBankSeedLoop();
 });
 
 wss.on('connection', (ws, req) => {

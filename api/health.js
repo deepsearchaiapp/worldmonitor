@@ -25,8 +25,6 @@ const BOOTSTRAP_KEYS = {
   unrestEvents:      'unrest:events:v1',
   iranEvents:        'conflict:iran-events:v1',
   ucdpEvents:        'conflict:ucdp-events:v1',
-  weatherAlerts:     'weather:alerts:v1',
-  spending:          'economic:spending:v1',
 };
 
 const STANDALONE_KEYS = {
@@ -51,10 +49,6 @@ const STANDALONE_KEYS = {
   notamClosures:         'aviation:notam:closures:v1',
   positiveEventsLive:    'positive-events:geo:v1',
   cableHealth:           'cable-health-v1',
-  cyberThreatsRpc:       'cyber:threats:v2',
-  militaryBases:         'military:bases:active',
-  temporalAnomalies:     'temporal:anomalies:v1',
-  displacement:          `displacement:summary:v1:${new Date().getFullYear()}`,
 };
 
 const SEED_META = {
@@ -89,9 +83,7 @@ const SEED_META = {
   positiveGeoEvents:{ key: 'seed-meta:positive-events:geo',       maxStaleMin: 60 },
   riskScores:       { key: 'seed-meta:risk:scores',               maxStaleMin: 30 },
   iranEvents:       { key: 'seed-meta:conflict:iran-events',      maxStaleMin: 10080 },
-  ucdpEvents:       { key: 'seed-meta:conflict:ucdp-events',      maxStaleMin: 420 },
-  weatherAlerts:    { key: 'seed-meta:weather:alerts',             maxStaleMin: 30 },
-  spending:         { key: 'seed-meta:economic:spending',          maxStaleMin: 120 },
+  ucdpEvents:       { key: 'seed-meta:conflict:ucdp-events',      maxStaleMin: 60 },
   sectors:          { key: 'seed-meta:market:sectors',             maxStaleMin: 30 },
   techReadiness:    { key: 'seed-meta:economic:worldbank-techreadiness:v1', maxStaleMin: 10080 },
   progressData:     { key: 'seed-meta:economic:worldbank-progress:v1',     maxStaleMin: 10080 },
@@ -105,7 +97,6 @@ const ON_DEMAND_KEYS = new Set([
   'usniFleet', 'usniFleetStale', 'positiveEventsLive', 'cableHealth',
   'bisPolicy', 'bisExchange', 'bisCredit',
   'macroSignals', 'shippingRates', 'chokepoints', 'minerals', 'giving',
-  'cyberThreatsRpc', 'militaryBases', 'temporalAnomalies', 'displacement',
 ]);
 
 // Cascade groups: if any key in the group has data, all empty siblings are OK.
@@ -143,7 +134,7 @@ function dataSize(parsed) {
   if (Array.isArray(parsed)) return parsed.length;
   if (typeof parsed === 'object') {
     for (const k of ['quotes', 'hexes', 'events', 'stablecoins', 'fires', 'threats',
-                      'earthquakes', 'outages', 'delays', 'items', 'predictions', 'alerts', 'awards',
+                      'earthquakes', 'outages', 'delays', 'items', 'predictions',
                       'papers', 'repos', 'articles', 'signals', 'rates', 'countries',
                       'chokepoints', 'minerals', 'anomalies', 'flows', 'bases',
                       'theaters', 'fleets', 'warnings', 'closures', 'cables',

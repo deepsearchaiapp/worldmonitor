@@ -450,26 +450,23 @@ export class StrategicRiskPanel extends Panel {
   private render(): void {
     this.freshnessSummary = dataFreshness.getSummary();
 
-    try {
-      if (!this.overview) {
-        this.showLoading();
-        return;
-      }
-
-      // Render full data view — partial data is handled gracefully by CII baselines
-      // Only show insufficient state if zero sources after 60s (true failure)
-      const uptime = performance.now();
-      const html =
-        this.freshnessSummary.overallStatus === 'insufficient' && uptime > 60_000 && !this.usedCachedScores
-          ? this.renderInsufficientData()
-          : this.renderFullData();
-
-      this.content.innerHTML = html;
-      this.attachEventListeners();
-    } catch (e: unknown) {
-      console.error('[StrategicRiskPanel] Render error:', e);
-      this.showError(t('common.failedRiskOverview'), () => this.refresh());
+    if (!this.overview) {
+      this.showLoading();
+      return;
     }
+
+    // Render full data view — partial data is handled gracefully by CII baselines
+    // Only show insufficient state if zero sources after 60s (true failure)
+    let html: string;
+    const uptime = performance.now();
+    if (this.freshnessSummary.overallStatus === 'insufficient' && uptime > 60_000 && !this.usedCachedScores) {
+      html = this.renderInsufficientData();
+    } else {
+      html = this.renderFullData();
+    }
+
+    this.content.innerHTML = html;
+    this.attachEventListeners();
   }
 
   private attachEventListeners(): void {
