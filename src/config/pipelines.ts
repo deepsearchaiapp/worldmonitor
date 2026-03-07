@@ -1010,8 +1010,6 @@ export const PIPELINES: Pipeline[] = [
 
 ];
 
-import { getCSSColor } from '@/utils';
-
 // Pipeline colors by type — fixed category colors (not theme-dependent)
 export const PIPELINE_COLORS: Record<string, string> = {
   oil: '#ff6b35',
@@ -1019,17 +1017,13 @@ export const PIPELINE_COLORS: Record<string, string> = {
   products: '#ffd166',
 };
 
-/** Get pipeline status color using semantic CSS variables */
-export function getPipelineStatusColor(status: string): string {
-  switch (status) {
-    case 'operating': return getCSSColor('--status-live');
-    case 'construction': return getCSSColor('--semantic-elevated');
-    default: return getCSSColor('--text-dim');
-  }
-}
-
-// Pipeline status colors — kept for backward compatibility (DeckGL RGB conversion)
+// Pipeline status colors (static hex — safe for Edge/server contexts)
 export const PIPELINE_STATUS_COLORS: Record<string, string> = {
   operating: '#44ff88',
   construction: '#ffaa00',
 };
+
+/** Get pipeline status color by status string */
+export function getPipelineStatusColor(status: string): string {
+  return PIPELINE_STATUS_COLORS[status] ?? '#888888';
+}
