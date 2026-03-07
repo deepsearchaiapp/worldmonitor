@@ -122,6 +122,8 @@ This pattern is enforced project-wide across all panel subclasses. In E2E tests,
 
 ## API & Data Pipeline
 
+> **CORS** — all API endpoints enforce an origin allowlist. See [CORS.md](./CORS.md) for the allowed origins, implementation details, and how to add CORS to new endpoints.
+
 ### Proto-First API Contracts
 
 The entire API surface is defined in Protocol Buffer (`.proto`) files using [sebuf](https://github.com/SebastienMelki/sebuf) HTTP annotations. Code generation produces TypeScript clients, server handler stubs, and OpenAPI 3.1.0 documentation from a single source of truth — eliminating request/response schema drift between frontend and backend.

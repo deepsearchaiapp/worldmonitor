@@ -4447,13 +4447,12 @@ body.playback-mode .status-dot {
 
 /* Popup styles for datacenter clusters */
 .popup-header.datacenter.cluster {
-  background: linear-gradient(90deg, #9966ff40 0%, transparent 100%);
-  border-left: 3px solid var(--semantic-info);
+  background: rgba(153, 102, 255, 0.08);
 }
 
 /* Popup styles for protests */
 .popup-header.protest {
-  background: linear-gradient(90deg, var(--protest-color, var(--semantic-high)) 0%, transparent 100%);
+  background: color-mix(in srgb, var(--protest-color, var(--semantic-high)) 8%, transparent);
 }
 
 .popup-header.protest.high {
@@ -4469,13 +4468,19 @@ body.playback-mode .status-dot {
 }
 
 .popup-icon {
-  font-size: 16px;
-  margin-right: 6px;
+  font-size: 13px;
+  margin-right: 2px;
+  opacity: 0.7;
+  flex-shrink: 0;
 }
 
 .popup-badge.verified {
+  color: var(--semantic-normal);
+  background: none;
+}
+
+.popup-badge.verified::before {
   background: var(--semantic-normal);
-  color: var(--bg);
 }
 
 .popup-tags {
@@ -5047,7 +5052,7 @@ body.playback-mode .status-dot {
 
 /* Popup header for natural events */
 .popup-header.nat-event {
-  background: rgba(255, 136, 0, 0.1);
+  background: rgba(255, 136, 0, 0.06);
 }
 
 .popup-header.nat-event .popup-title {
@@ -5055,7 +5060,7 @@ body.playback-mode .status-dot {
 }
 
 .popup-header.nat-event.severeStorms {
-  background: rgba(0, 191, 255, 0.1);
+  background: rgba(0, 191, 255, 0.06);
 }
 
 .popup-header.nat-event.severeStorms .popup-title {
@@ -5063,7 +5068,7 @@ body.playback-mode .status-dot {
 }
 
 .popup-header.nat-event.wildfires {
-  background: rgba(255, 102, 0, 0.15);
+  background: rgba(255, 102, 0, 0.08);
 }
 
 .popup-header.nat-event.wildfires .popup-title {
@@ -5071,7 +5076,7 @@ body.playback-mode .status-dot {
 }
 
 .popup-header.nat-event.volcanoes {
-  background: rgba(255, 51, 0, 0.15);
+  background: rgba(255, 51, 0, 0.08);
 }
 
 .popup-header.nat-event.volcanoes .popup-title {
@@ -5079,7 +5084,7 @@ body.playback-mode .status-dot {
 }
 
 .popup-header.nat-event.floods {
-  background: rgba(65, 105, 225, 0.1);
+  background: rgba(65, 105, 225, 0.06);
 }
 
 .popup-header.nat-event.floods .popup-title {
@@ -5195,8 +5200,7 @@ body.playback-mode .status-dot {
 }
 
 .popup-header.irradiator {
-  background: linear-gradient(135deg, #00442220, #00221110);
-  border-left: 3px solid var(--status-live);
+  background: rgba(0, 68, 34, 0.08);
 }
 
 /* AI Data Centers */
@@ -5262,16 +5266,15 @@ body.playback-mode .status-dot {
 }
 
 .popup-header.datacenter {
-  background: linear-gradient(135deg, #33225520, #22113310);
-  border-left: 3px solid var(--semantic-info);
+  background: rgba(51, 34, 85, 0.08);
 }
 
 .popup-header.datacenter.existing {
-  border-left-color: var(--semantic-info);
+  background: rgba(59, 130, 246, 0.06);
 }
 
 .popup-header.datacenter.planned {
-  border-left-color: var(--semantic-elevated);
+  background: rgba(234, 179, 8, 0.06);
 }
 
 /* Heatmap */
@@ -6089,13 +6092,14 @@ a.prediction-link:hover {
 /* Map Popups */
 .map-popup {
   position: fixed;
-  width: 380px;
-  max-height: calc(100vh - 120px);
+  width: 360px;
+  max-height: 380px;
   background: var(--bg);
-  border: 1px solid var(--red);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
   z-index: 1000;
   overflow-y: auto;
-  box-shadow: 0 4px 24px rgba(255, 68, 68, 0.3);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), inset 0 1px 20px rgba(255, 255, 255, 0.02), 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
 .map-popup.map-popup-sheet {
@@ -6153,62 +6157,56 @@ a.prediction-link:hover {
 .popup-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   position: sticky;
   top: 0;
   z-index: 1;
   background: var(--bg);
 }
 
-/* Solid backdrop for sticky header - ensures content doesn't show through */
-.popup-header::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--bg);
-  z-index: -1;
-}
-
 .popup-header.iranEvent {
-  background: rgba(255, 68, 68, 0.1);
+  background: rgba(255, 68, 68, 0.06);
 }
 
 .popup-header.iranEvent.high {
-  border-left: 3px solid #ff3232;
+  background: rgba(255, 50, 50, 0.08);
 }
 
 .popup-header.iranEvent.medium {
-  border-left: 3px solid #ffa500;
+  background: rgba(255, 165, 0, 0.08);
 }
 
 .popup-header.iranEvent.low {
-  border-left: 3px solid #cccc00;
+  background: rgba(204, 204, 0, 0.06);
 }
 
 .popup-header.conflict {
-  background: rgba(255, 68, 68, 0.1);
+  background: rgba(255, 68, 68, 0.06);
 }
 
 .popup-header.hotspot {
-  background: rgba(68, 255, 136, 0.1);
+  background: rgba(68, 255, 136, 0.06);
 }
 
 .popup-header.earthquake {
-  background: rgba(255, 165, 0, 0.1);
+  background: rgba(255, 165, 0, 0.06);
 }
 
 .popup-header.ais {
-  background: rgba(0, 209, 255, 0.12);
+  background: rgba(0, 209, 255, 0.06);
 }
 
 .popup-title {
-  font-size: 16px;
-  font-weight: bold;
+  font-size: 13px;
+  font-weight: 700;
   color: var(--red);
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .popup-header.hotspot .popup-title {
@@ -6224,117 +6222,214 @@ a.prediction-link:hover {
 }
 
 .popup-title.magnitude {
-  font-size: 28px;
+  font-size: 24px;
 }
 
 .popup-badge {
-  padding: 4px 10px;
-  font-size: 10px;
-  font-weight: bold;
-  border-radius: 2px;
-  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  background: none;
+  border-radius: 0;
+  flex-shrink: 0;
+}
+
+.popup-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .popup-badge.high {
+  color: var(--red);
+  background: none;
+}
+
+.popup-badge.high::before {
   background: var(--red);
-  color: var(--bg);
+}
+
+.popup-badge.critical {
+  color: var(--semantic-critical);
+  background: none;
+}
+
+.popup-badge.critical::before {
+  background: var(--semantic-critical);
 }
 
 .popup-badge.medium {
+  color: var(--yellow);
+  background: none;
+}
+
+.popup-badge.medium::before {
   background: var(--yellow);
-  color: var(--bg);
 }
 
 .popup-badge.elevated {
+  color: var(--yellow);
+  background: none;
+}
+
+.popup-badge.elevated::before {
   background: var(--yellow);
-  color: var(--bg);
 }
 
 .popup-badge.low {
+  color: var(--text-muted);
+  background: none;
+}
+
+.popup-badge.low::before {
   background: var(--text-muted);
-  color: var(--text);
 }
 
 .popup-close {
   background: none;
   border: none;
-  color: var(--text-dim);
-  font-size: 20px;
+  color: var(--text-muted);
+  font-size: 16px;
   cursor: pointer;
-  padding: 0 4px;
-  min-width: 36px;
-  min-height: 36px;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
   line-height: 1;
   touch-action: manipulation;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background 0.12s, color 0.12s;
+  flex-shrink: 0;
 }
 
 .popup-close:hover {
   color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .popup-body {
-  padding: 16px;
+  padding: 12px 14px;
 }
 
 .map-popup.map-popup-sheet .popup-body {
-  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
 
 .popup-subtitle {
-  font-size: 12px;
+  font-size: 10px;
   color: var(--green);
-  margin-bottom: 12px;
-  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  letter-spacing: 0.4px;
 }
 
 .popup-description {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text);
-  margin-bottom: 16px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
 }
 
 .popup-location {
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text);
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .popup-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 2px;
+  margin-bottom: 10px;
 }
 
 .popup-stat {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  padding: 6px 8px;
 }
 
 .stat-label {
-  font-size: 9px;
-  color: var(--text-dim);
-  letter-spacing: 1px;
+  font-size: 8px;
+  color: var(--text-muted);
+  letter-spacing: 0.7px;
   text-transform: uppercase;
 }
 
 .stat-value {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--green);
 }
 
 .popup-section {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .section-label {
-  font-size: 9px;
-  color: var(--text-dim);
-  letter-spacing: 1px;
+  font-size: 8px;
+  color: var(--text-muted);
+  letter-spacing: 0.8px;
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
+}
+
+/* Collapsible sections */
+.popup-section details {
+  border: none;
+}
+
+.popup-section details summary {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+  list-style: none;
+  user-select: none;
+  transition: color 0.12s;
+}
+
+.popup-section details summary:hover {
+  color: var(--text-secondary);
+}
+
+.popup-section details summary::-webkit-details-marker {
+  display: none;
+}
+
+.popup-section details summary::before {
+  content: '\25B6';
+  font-size: 7px;
+  transition: transform 0.2s;
+}
+
+.popup-section details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.popup-section details .popup-section-content {
+  padding-top: 5px;
+}
+
+/* Popup separator line */
+.popup-sep {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.04);
+  margin: 10px 0;
 }
 
 .evidence-list {
@@ -6352,16 +6447,18 @@ a.prediction-link:hover {
 .popup-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .popup-tag {
-  padding: 4px 10px;
-  background: transparent;
-  border: 1px solid var(--border);
+  padding: 2px 7px;
+  background: rgba(255, 255, 255, 0.05);
+  border: none;
   color: var(--text);
-  font-size: 10px;
-  border-radius: 2px;
+  font-size: 9px;
+  font-weight: 600;
+  border-radius: 3px;
+  letter-spacing: 0.3px;
 }
 
 .popup-list {
@@ -6372,29 +6469,38 @@ a.prediction-link:hover {
 
 .popup-list li {
   position: relative;
-  padding-left: 16px;
-  margin-bottom: 6px;
+  padding-left: 12px;
+  margin-bottom: 3px;
   font-size: 11px;
   color: var(--red);
 }
 
 .popup-list li::before {
-  content: '●';
+  content: '';
   position: absolute;
   left: 0;
-  color: var(--red);
+  top: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--red);
 }
 
 .popup-news {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
 }
 
 .popup-news-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  padding: 5px 0;
+}
+
+.popup-news-item + .popup-news-item {
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
 }
 
 .popup-news-item .news-source {
@@ -6884,23 +6990,23 @@ a.prediction-link:hover {
 
 /* Weather popup styles */
 .popup-header.weather {
-  background: linear-gradient(135deg, var(--semantic-high), var(--semantic-high));
+  background: color-mix(in srgb, var(--semantic-high) 8%, transparent);
 }
 
 .popup-header.weather.extreme {
-  background: linear-gradient(135deg, var(--semantic-critical), #aa0000);
+  background: color-mix(in srgb, var(--semantic-critical) 10%, transparent);
 }
 
 .popup-header.weather.severe {
-  background: linear-gradient(135deg, var(--semantic-high), var(--semantic-high));
+  background: color-mix(in srgb, var(--semantic-high) 8%, transparent);
 }
 
 .popup-header.weather.moderate {
-  background: linear-gradient(135deg, var(--semantic-elevated), var(--semantic-high));
+  background: color-mix(in srgb, var(--semantic-elevated) 8%, transparent);
 }
 
 .popup-header.weather.minor {
-  background: linear-gradient(135deg, var(--semantic-elevated), var(--semantic-elevated));
+  background: color-mix(in srgb, var(--semantic-elevated) 6%, transparent);
 }
 
 .popup-headline {
@@ -6991,15 +7097,15 @@ a.prediction-link:hover {
 }
 
 .popup-header.economic {
-  background: linear-gradient(135deg, var(--semantic-normal), var(--semantic-normal));
+  background: color-mix(in srgb, var(--semantic-normal) 8%, transparent);
 }
 
 .popup-header.economic.central-bank {
-  background: linear-gradient(135deg, var(--semantic-info), var(--semantic-info));
+  background: color-mix(in srgb, var(--semantic-info) 8%, transparent);
 }
 
 .popup-header.economic.financial-hub {
-  background: linear-gradient(135deg, var(--semantic-elevated), var(--semantic-high));
+  background: color-mix(in srgb, var(--semantic-elevated) 8%, transparent);
 }
 
 /* Spaceport Markers */
@@ -7065,16 +7171,15 @@ a.prediction-link:hover {
 
 /* Spaceport popup header */
 .popup-header.spaceport {
-  background: linear-gradient(135deg, #00224420, #001a3310);
-  border-left: 3px solid var(--defcon-4);
+  background: rgba(0, 36, 68, 0.08);
 }
 
 .popup-header.spaceport.active {
-  border-left-color: var(--status-live);
+  background: rgba(68, 255, 136, 0.06);
 }
 
 .popup-header.spaceport.planned {
-  border-left-color: var(--semantic-elevated);
+  background: rgba(255, 170, 0, 0.06);
 }
 
 /* Critical Minerals Markers */
@@ -7140,16 +7245,15 @@ a.prediction-link:hover {
 
 /* Mineral popup header */
 .popup-header.mineral {
-  background: linear-gradient(135deg, #331a4420, #221a3310);
-  border-left: 3px solid var(--semantic-info);
+  background: rgba(51, 26, 68, 0.08);
 }
 
 .popup-header.mineral.producing {
-  border-left-color: var(--status-live);
+  background: rgba(68, 255, 136, 0.06);
 }
 
 .popup-header.mineral.developing {
-  border-left-color: var(--semantic-elevated);
+  background: rgba(255, 170, 0, 0.06);
 }
 
 /* ============================================
@@ -7221,17 +7325,15 @@ a.prediction-link:hover {
 
 /* Startup Hub popup header */
 .popup-header.startup-hub {
-  background: linear-gradient(135deg, #00331a20, #00221510);
-  border-left: 3px solid var(--status-live);
+  background: rgba(0, 51, 26, 0.08);
 }
 
 .popup-header.startup-hub.mega {
-  border-left-color: var(--semantic-info);
-  background: linear-gradient(135deg, #331a3320, #22153310);
+  background: rgba(59, 130, 246, 0.06);
 }
 
 .popup-header.startup-hub.major {
-  border-left-color: var(--defcon-4);
+  background: rgba(0, 170, 255, 0.06);
 }
 
 .popup-badge.mega {
@@ -7322,24 +7424,23 @@ a.prediction-link:hover {
 
 /* Cloud Region popup header */
 .popup-header.cloud-region {
-  background: linear-gradient(135deg, #00221a20, #00111010);
-  border-left: 3px solid var(--accent);
+  background: rgba(0, 34, 26, 0.08);
 }
 
 .popup-header.cloud-region.aws {
-  border-left-color: var(--semantic-high);
+  background: rgba(255, 136, 0, 0.06);
 }
 
 .popup-header.cloud-region.gcp {
-  border-left-color: var(--semantic-info);
+  background: rgba(59, 130, 246, 0.06);
 }
 
 .popup-header.cloud-region.azure {
-  border-left-color: var(--semantic-info);
+  background: rgba(59, 130, 246, 0.06);
 }
 
 .popup-header.cloud-region.cloudflare {
-  border-left-color: var(--threat-high);
+  background: rgba(249, 115, 22, 0.06);
 }
 
 .popup-badge.aws {
@@ -7431,16 +7532,15 @@ a.prediction-link:hover {
 
 /* Tech HQ popup header */
 .popup-header.tech-hq {
-  background: linear-gradient(135deg, #1a1a3320, #11112210);
-  border-left: 3px solid var(--semantic-info);
+  background: rgba(26, 26, 51, 0.08);
 }
 
 .popup-header.tech-hq.faang {
-  border-left-color: var(--status-live);
+  background: rgba(68, 255, 136, 0.06);
 }
 
 .popup-header.tech-hq.unicorn {
-  border-left-color: var(--semantic-info);
+  background: rgba(59, 130, 246, 0.06);
 }
 
 .popup-badge.faang {
@@ -7634,16 +7734,15 @@ a.prediction-link:hover {
 
 /* Accelerator popup header */
 .popup-header.accelerator {
-  background: linear-gradient(135deg, #331a1020, #221a0810);
-  border-left: 3px solid var(--semantic-high);
+  background: rgba(51, 26, 16, 0.08);
 }
 
 .popup-header.accelerator.incubator {
-  border-left-color: var(--status-live);
+  background: rgba(68, 255, 136, 0.06);
 }
 
 .popup-header.accelerator.studio {
-  border-left-color: var(--semantic-critical);
+  background: rgba(239, 68, 68, 0.06);
 }
 
 .popup-badge.accelerator {
@@ -8552,7 +8651,7 @@ a.prediction-link:hover {
 
 /* Flight Popup Styles */
 .popup-header.flight {
-  background: linear-gradient(90deg, var(--flight-color, var(--semantic-info)) 0%, transparent 100%);
+  background: color-mix(in srgb, var(--flight-color, var(--semantic-info)) 8%, transparent);
 }
 
 .popup-header.flight.normal {
@@ -9080,13 +9179,13 @@ a.prediction-link:hover {
 .popup-header.militaryVessel,
 .popup-header.military-flight,
 .popup-header.military-vessel {
-  background: linear-gradient(90deg, rgba(0, 180, 180, 0.4) 0%, transparent 100%);
+  background: rgba(0, 180, 180, 0.08);
 }
 
 .popup-header.militaryFlightCluster,
 .popup-header.militaryVesselCluster,
 .popup-header.military-cluster {
-  background: linear-gradient(90deg, rgba(57, 255, 20, 0.3) 0%, transparent 100%);
+  background: rgba(57, 255, 20, 0.06);
 }
 
 /* US Military - blue tint */
@@ -9094,29 +9193,29 @@ a.prediction-link:hover {
 .popup-header.military-flight.usn,
 .popup-header.military-flight.usmc,
 .popup-header.military-flight.usa {
-  background: linear-gradient(90deg, rgba(59, 130, 246, 0.4) 0%, transparent 100%);
+  background: rgba(59, 130, 246, 0.08);
 }
 
 /* NATO/UK - purple tint */
 .popup-header.military-flight.nato,
 .popup-header.military-flight.raf {
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.4) 0%, transparent 100%);
+  background: rgba(99, 102, 241, 0.08);
 }
 
 /* Israel - light blue tint */
 .popup-header.military-flight.iaf {
-  background: linear-gradient(90deg, rgba(96, 165, 250, 0.4) 0%, transparent 100%);
+  background: rgba(96, 165, 250, 0.08);
 }
 
 /* China - lighter red tint for contrast */
 .popup-header.military-flight.plaaf,
 .popup-header.military-flight.plan {
-  background: linear-gradient(90deg, rgba(248, 113, 113, 0.4) 0%, transparent 100%);
+  background: rgba(248, 113, 113, 0.08);
 }
 
 /* Russia - orange tint for better contrast */
 .popup-header.military-flight.vks {
-  background: linear-gradient(90deg, rgba(251, 146, 60, 0.4) 0%, transparent 100%);
+  background: rgba(251, 146, 60, 0.08);
 }
 
 /* Military popup content - ensure readable text */
@@ -13431,20 +13530,37 @@ a.prediction-link:hover {
 }
 
 .layer-warn-dialog {
-  background: var(--bg, #0a0e14);
-  border: 1px solid rgba(255, 170, 0, 0.3);
-  border-radius: 8px;
-  padding: 24px;
+  background: var(--bg, #0a0a0a);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 24px 20px 20px;
   max-width: 340px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   text-align: center;
-  box-shadow: 0 0 30px rgba(255, 170, 0, 0.1), 0 8px 32px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), inset 0 1px 20px rgba(255, 170, 0, 0.03), 0 0 0 1px rgba(255, 255, 255, 0.03);
   transform: scale(0.95);
   opacity: 0;
   transition: transform 0.2s, opacity 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.layer-warn-dialog::before {
+  content: '';
+  position: absolute;
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 200px;
+  height: 100px;
+  border-radius: 50%;
+  background: #ffaa00;
+  filter: blur(50px);
+  opacity: 0.08;
+  pointer-events: none;
 }
 
 .layer-warn-in .layer-warn-dialog {
@@ -13460,30 +13576,41 @@ a.prediction-link:hover {
 .layer-warn-icon {
   color: #ffaa00;
   line-height: 1;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 170, 0, 0.1);
+  border-radius: 10px;
+  position: relative;
+  z-index: 1;
 }
 
 .layer-warn-text strong {
   display: block;
-  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-family: var(--font-mono, 'SF Mono', monospace);
   font-size: 13px;
-  letter-spacing: 0.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   color: #ffaa00;
   margin-bottom: 6px;
 }
 
 .layer-warn-text p {
   margin: 0;
-  font-size: 12px;
-  color: var(--text-dim, #8899aa);
-  line-height: 1.5;
+  font-size: 11px;
+  color: var(--text-secondary, #b0b0b0);
+  line-height: 1.55;
+  max-width: 280px;
 }
 
 .layer-warn-dismiss {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
-  color: var(--text-dim, #8899aa);
+  font-size: 10px;
+  color: var(--text-muted, #666);
   cursor: pointer;
   user-select: none;
 }
@@ -13494,22 +13621,29 @@ a.prediction-link:hover {
 }
 
 .layer-warn-ok {
-  padding: 6px 28px;
+  padding: 7px 0;
+  width: 100%;
+  max-width: 200px;
   background: rgba(255, 170, 0, 0.12);
-  border: 1px solid rgba(255, 170, 0, 0.4);
-  border-radius: 4px;
+  border: 1px solid rgba(255, 170, 0, 0.2);
+  border-radius: 6px;
   color: #ffaa00;
-  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-family: var(--font-mono, 'SF Mono', monospace);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 1px;
+  letter-spacing: 0.8px;
   cursor: pointer;
-  transition: background 0.15s, box-shadow 0.15s;
+  transition: all 0.15s;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  position: relative;
+  z-index: 1;
 }
 
 .layer-warn-ok:hover {
-  background: rgba(255, 170, 0, 0.2);
-  box-shadow: 0 0 12px rgba(255, 170, 0, 0.2);
+  background: rgba(255, 170, 0, 0.18);
+  filter: brightness(1.1);
+  transform: translateY(-1px);
 }
 
 /* deck.gl Legend - horizontal bar at bottom center */

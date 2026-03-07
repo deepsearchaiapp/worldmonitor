@@ -2,6 +2,8 @@
  * Shared helpers, types, and constants for the market service handler RPCs.
  */
 import { CHROME_UA, yahooGate } from '../../../_shared/constants';
+import cryptoConfig from '../../../../shared/crypto.json';
+import stablecoinConfig from '../../../../shared/stablecoins.json';
 
 // ========================================================================
 // Relay helpers (Railway proxy for Yahoo when Vercel IPs are rate-limited)
@@ -69,13 +71,7 @@ export const YAHOO_ONLY_SYMBOLS = new Set([
   'GC=F', 'CL=F', 'NG=F', 'SI=F', 'HG=F',
 ]);
 
-// Known crypto IDs and their metadata
-export const CRYPTO_META: Record<string, { name: string; symbol: string }> = {
-  bitcoin: { name: 'Bitcoin', symbol: 'BTC' },
-  ethereum: { name: 'Ethereum', symbol: 'ETH' },
-  solana: { name: 'Solana', symbol: 'SOL' },
-  ripple: { name: 'XRP', symbol: 'XRP' },
-};
+export const CRYPTO_META: Record<string, { name: string; symbol: string }> = cryptoConfig.meta;
 
 // ========================================================================
 // Types
@@ -273,17 +269,10 @@ export async function fetchCoinGeckoMarkets(
 // CoinPaprika fallback fetcher
 // ========================================================================
 
-// CoinGecko ID → CoinPaprika ID mapping
+// CoinGecko ID → CoinPaprika ID mapping (shared ids + stablecoin-specific)
 const COINPAPRIKA_ID_MAP: Record<string, string> = {
-  bitcoin: 'btc-bitcoin',
-  ethereum: 'eth-ethereum',
-  solana: 'sol-solana',
-  ripple: 'xrp-ripple',
-  tether: 'usdt-tether',
-  'usd-coin': 'usdc-usd-coin',
-  dai: 'dai-dai',
-  'first-digital-usd': 'fdusd-first-digital-usd',
-  'ethena-usde': 'usde-ethena-usde',
+  ...cryptoConfig.coinpaprika,
+  ...stablecoinConfig.coinpaprika,
 };
 
 interface CoinPaprikaTicker {

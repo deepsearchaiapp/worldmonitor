@@ -437,6 +437,26 @@ export class PanelLayoutManager implements AppModule {
     });
   }
 
+  private shouldCreatePanel(key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(DEFAULT_PANELS, key);
+  }
+
+  private createNewsPanel(key: string, labelKey: string): NewsPanel | null {
+    if (!this.shouldCreatePanel(key)) return null;
+    const panel = new NewsPanel(key, t(labelKey));
+    this.attachRelatedAssetHandlers(panel);
+    this.ctx.newsPanels[key] = panel;
+    this.ctx.panels[key] = panel;
+    return panel;
+  }
+
+  private createPanel<T extends import('@/components/Panel').Panel>(key: string, factory: () => T): T | null {
+    if (!this.shouldCreatePanel(key)) return null;
+    const panel = factory();
+    this.ctx.panels[key] = panel;
+    return panel;
+  }
+
   private createPanels(): void {
     const panelsGrid = document.getElementById('panelsGrid')!;
 
@@ -453,180 +473,61 @@ export class PanelLayoutManager implements AppModule {
     this.ctx.map.initEscalationGetters();
     this.ctx.currentTimeRange = this.ctx.map.getTimeRange();
 
-    const politicsPanel = new NewsPanel('politics', t('panels.politics'));
-    this.attachRelatedAssetHandlers(politicsPanel);
-    this.ctx.newsPanels['politics'] = politicsPanel;
-    this.ctx.panels['politics'] = politicsPanel;
+    this.createNewsPanel('politics', 'panels.politics');
+    this.createNewsPanel('tech', 'panels.tech');
+    this.createNewsPanel('finance', 'panels.finance');
 
-    const techPanel = new NewsPanel('tech', t('panels.tech'));
-    this.attachRelatedAssetHandlers(techPanel);
-    this.ctx.newsPanels['tech'] = techPanel;
-    this.ctx.panels['tech'] = techPanel;
+    this.createPanel('heatmap', () => new HeatmapPanel());
+    this.createPanel('markets', () => new MarketPanel());
 
-    const financePanel = new NewsPanel('finance', t('panels.finance'));
-    this.attachRelatedAssetHandlers(financePanel);
-    this.ctx.newsPanels['finance'] = financePanel;
-    this.ctx.panels['finance'] = financePanel;
-
-    const heatmapPanel = new HeatmapPanel();
-    this.ctx.panels['heatmap'] = heatmapPanel;
-
-    const marketsPanel = new MarketPanel();
-    this.ctx.panels['markets'] = marketsPanel;
-
-    const monitorPanel = new MonitorPanel(this.ctx.monitors);
-    this.ctx.panels['monitors'] = monitorPanel;
-    monitorPanel.onChanged((monitors) => {
+    const monitorPanel = this.createPanel('monitors', () => new MonitorPanel(this.ctx.monitors));
+    monitorPanel?.onChanged((monitors) => {
       this.ctx.monitors = monitors;
       saveToStorage(STORAGE_KEYS.monitors, monitors);
       this.callbacks.updateMonitorResults();
     });
 
-    const commoditiesPanel = new CommoditiesPanel();
-    this.ctx.panels['commodities'] = commoditiesPanel;
+    this.createPanel('commodities', () => new CommoditiesPanel());
+    this.createPanel('polymarket', () => new PredictionPanel());
 
-    const predictionPanel = new PredictionPanel();
-    this.ctx.panels['polymarket'] = predictionPanel;
+    this.createNewsPanel('gov', 'panels.gov');
+    this.createNewsPanel('intel', 'panels.intel');
 
-    const govPanel = new NewsPanel('gov', t('panels.gov'));
-    this.attachRelatedAssetHandlers(govPanel);
-    this.ctx.newsPanels['gov'] = govPanel;
-    this.ctx.panels['gov'] = govPanel;
+    this.createPanel('crypto', () => new CryptoPanel());
+    this.createNewsPanel('middleeast', 'panels.middleeast');
+    this.createNewsPanel('layoffs', 'panels.layoffs');
+    this.createNewsPanel('ai', 'panels.ai');
+    this.createNewsPanel('startups', 'panels.startups');
+    this.createNewsPanel('vcblogs', 'panels.vcblogs');
+    this.createNewsPanel('regionalStartups', 'panels.regionalStartups');
+    this.createNewsPanel('unicorns', 'panels.unicorns');
+    this.createNewsPanel('accelerators', 'panels.accelerators');
+    this.createNewsPanel('funding', 'panels.funding');
+    this.createNewsPanel('producthunt', 'panels.producthunt');
+    this.createNewsPanel('security', 'panels.security');
+    this.createNewsPanel('policy', 'panels.policy');
+    this.createNewsPanel('hardware', 'panels.hardware');
+    this.createNewsPanel('cloud', 'panels.cloud');
+    this.createNewsPanel('dev', 'panels.dev');
+    this.createNewsPanel('github', 'panels.github');
+    this.createNewsPanel('ipo', 'panels.ipo');
+    this.createNewsPanel('thinktanks', 'panels.thinktanks');
+    this.createPanel('economic', () => new EconomicPanel());
 
-    const intelPanel = new NewsPanel('intel', t('panels.intel'));
-    this.attachRelatedAssetHandlers(intelPanel);
-    this.ctx.newsPanels['intel'] = intelPanel;
-    this.ctx.panels['intel'] = intelPanel;
+    this.createPanel('trade-policy', () => new TradePolicyPanel());
+    this.createPanel('supply-chain', () => new SupplyChainPanel());
 
-    const cryptoPanel = new CryptoPanel();
-    this.ctx.panels['crypto'] = cryptoPanel;
-
-    const middleeastPanel = new NewsPanel('middleeast', t('panels.middleeast'));
-    this.attachRelatedAssetHandlers(middleeastPanel);
-    this.ctx.newsPanels['middleeast'] = middleeastPanel;
-    this.ctx.panels['middleeast'] = middleeastPanel;
-
-    const layoffsPanel = new NewsPanel('layoffs', t('panels.layoffs'));
-    this.attachRelatedAssetHandlers(layoffsPanel);
-    this.ctx.newsPanels['layoffs'] = layoffsPanel;
-    this.ctx.panels['layoffs'] = layoffsPanel;
-
-    const aiPanel = new NewsPanel('ai', t('panels.ai'));
-    this.attachRelatedAssetHandlers(aiPanel);
-    this.ctx.newsPanels['ai'] = aiPanel;
-    this.ctx.panels['ai'] = aiPanel;
-
-    const startupsPanel = new NewsPanel('startups', t('panels.startups'));
-    this.attachRelatedAssetHandlers(startupsPanel);
-    this.ctx.newsPanels['startups'] = startupsPanel;
-    this.ctx.panels['startups'] = startupsPanel;
-
-    const vcblogsPanel = new NewsPanel('vcblogs', t('panels.vcblogs'));
-    this.attachRelatedAssetHandlers(vcblogsPanel);
-    this.ctx.newsPanels['vcblogs'] = vcblogsPanel;
-    this.ctx.panels['vcblogs'] = vcblogsPanel;
-
-    const regionalStartupsPanel = new NewsPanel('regionalStartups', t('panels.regionalStartups'));
-    this.attachRelatedAssetHandlers(regionalStartupsPanel);
-    this.ctx.newsPanels['regionalStartups'] = regionalStartupsPanel;
-    this.ctx.panels['regionalStartups'] = regionalStartupsPanel;
-
-    const unicornsPanel = new NewsPanel('unicorns', t('panels.unicorns'));
-    this.attachRelatedAssetHandlers(unicornsPanel);
-    this.ctx.newsPanels['unicorns'] = unicornsPanel;
-    this.ctx.panels['unicorns'] = unicornsPanel;
-
-    const acceleratorsPanel = new NewsPanel('accelerators', t('panels.accelerators'));
-    this.attachRelatedAssetHandlers(acceleratorsPanel);
-    this.ctx.newsPanels['accelerators'] = acceleratorsPanel;
-    this.ctx.panels['accelerators'] = acceleratorsPanel;
-
-    const fundingPanel = new NewsPanel('funding', t('panels.funding'));
-    this.attachRelatedAssetHandlers(fundingPanel);
-    this.ctx.newsPanels['funding'] = fundingPanel;
-    this.ctx.panels['funding'] = fundingPanel;
-
-    const producthuntPanel = new NewsPanel('producthunt', t('panels.producthunt'));
-    this.attachRelatedAssetHandlers(producthuntPanel);
-    this.ctx.newsPanels['producthunt'] = producthuntPanel;
-    this.ctx.panels['producthunt'] = producthuntPanel;
-
-    const securityPanel = new NewsPanel('security', t('panels.security'));
-    this.attachRelatedAssetHandlers(securityPanel);
-    this.ctx.newsPanels['security'] = securityPanel;
-    this.ctx.panels['security'] = securityPanel;
-
-    const policyPanel = new NewsPanel('policy', t('panels.policy'));
-    this.attachRelatedAssetHandlers(policyPanel);
-    this.ctx.newsPanels['policy'] = policyPanel;
-    this.ctx.panels['policy'] = policyPanel;
-
-    const hardwarePanel = new NewsPanel('hardware', t('panels.hardware'));
-    this.attachRelatedAssetHandlers(hardwarePanel);
-    this.ctx.newsPanels['hardware'] = hardwarePanel;
-    this.ctx.panels['hardware'] = hardwarePanel;
-
-    const cloudPanel = new NewsPanel('cloud', t('panels.cloud'));
-    this.attachRelatedAssetHandlers(cloudPanel);
-    this.ctx.newsPanels['cloud'] = cloudPanel;
-    this.ctx.panels['cloud'] = cloudPanel;
-
-    const devPanel = new NewsPanel('dev', t('panels.dev'));
-    this.attachRelatedAssetHandlers(devPanel);
-    this.ctx.newsPanels['dev'] = devPanel;
-    this.ctx.panels['dev'] = devPanel;
-
-    const githubPanel = new NewsPanel('github', t('panels.github'));
-    this.attachRelatedAssetHandlers(githubPanel);
-    this.ctx.newsPanels['github'] = githubPanel;
-    this.ctx.panels['github'] = githubPanel;
-
-    const ipoPanel = new NewsPanel('ipo', t('panels.ipo'));
-    this.attachRelatedAssetHandlers(ipoPanel);
-    this.ctx.newsPanels['ipo'] = ipoPanel;
-    this.ctx.panels['ipo'] = ipoPanel;
-
-    const thinktanksPanel = new NewsPanel('thinktanks', t('panels.thinktanks'));
-    this.attachRelatedAssetHandlers(thinktanksPanel);
-    this.ctx.newsPanels['thinktanks'] = thinktanksPanel;
-    this.ctx.panels['thinktanks'] = thinktanksPanel;
-
-    const economicPanel = new EconomicPanel();
-    this.ctx.panels['economic'] = economicPanel;
-
-    if (SITE_VARIANT === 'full' || SITE_VARIANT === 'finance') {
-      const tradePolicyPanel = new TradePolicyPanel();
-      this.ctx.panels['trade-policy'] = tradePolicyPanel;
-
-      const supplyChainPanel = new SupplyChainPanel();
-      this.ctx.panels['supply-chain'] = supplyChainPanel;
-    }
-
-    const africaPanel = new NewsPanel('africa', t('panels.africa'));
-    this.attachRelatedAssetHandlers(africaPanel);
-    this.ctx.newsPanels['africa'] = africaPanel;
-    this.ctx.panels['africa'] = africaPanel;
-
-    const latamPanel = new NewsPanel('latam', t('panels.latam'));
-    this.attachRelatedAssetHandlers(latamPanel);
-    this.ctx.newsPanels['latam'] = latamPanel;
-    this.ctx.panels['latam'] = latamPanel;
-
-    const asiaPanel = new NewsPanel('asia', t('panels.asia'));
-    this.attachRelatedAssetHandlers(asiaPanel);
-    this.ctx.newsPanels['asia'] = asiaPanel;
-    this.ctx.panels['asia'] = asiaPanel;
-
-    const energyPanel = new NewsPanel('energy', t('panels.energy'));
-    this.attachRelatedAssetHandlers(energyPanel);
-    this.ctx.newsPanels['energy'] = energyPanel;
-    this.ctx.panels['energy'] = energyPanel;
+    this.createNewsPanel('africa', 'panels.africa');
+    this.createNewsPanel('latam', 'panels.latam');
+    this.createNewsPanel('asia', 'panels.asia');
+    this.createNewsPanel('energy', 'panels.energy');
 
     for (const key of Object.keys(FEEDS)) {
       if (this.ctx.newsPanels[key]) continue;
       if (!Array.isArray((FEEDS as Record<string, unknown>)[key])) continue;
       const panelKey = this.ctx.panels[key] && !this.ctx.newsPanels[key] ? `${key}-news` : key;
       if (this.ctx.panels[panelKey]) continue;
+      if (!DEFAULT_PANELS[panelKey] && !DEFAULT_PANELS[key]) continue;
       const panelConfig = DEFAULT_PANELS[panelKey] ?? DEFAULT_PANELS[key];
       const label = panelConfig?.name ?? key.charAt(0).toUpperCase() + key.slice(1);
       const panel = new NewsPanel(panelKey, label);
@@ -635,28 +536,27 @@ export class PanelLayoutManager implements AppModule {
       this.ctx.panels[panelKey] = panel;
     }
 
-    if (SITE_VARIANT === 'full') {
-      const gdeltIntelPanel = new GdeltIntelPanel();
-      this.ctx.panels['gdelt-intel'] = gdeltIntelPanel;
+    this.createPanel('gdelt-intel', () => new GdeltIntelPanel());
 
-      if (this.ctx.isDesktopApp) {
-        import('@/components/DeductionPanel').then(({ DeductionPanel }) => {
-          const deductionPanel = new DeductionPanel(() => this.ctx.allNews);
-          this.ctx.panels['deduction'] = deductionPanel;
-          const el = deductionPanel.getElement();
-          this.makeDraggable(el, 'deduction');
-          const grid = document.getElementById('panelsGrid');
-          if (grid) {
-            const gdeltEl = this.ctx.panels['gdelt-intel']?.getElement();
-            if (gdeltEl?.nextSibling) {
-              grid.insertBefore(el, gdeltEl.nextSibling);
-            } else {
-              grid.appendChild(el);
-            }
+    if (SITE_VARIANT === 'full' && this.ctx.isDesktopApp) {
+      import('@/components/DeductionPanel').then(({ DeductionPanel }) => {
+        const deductionPanel = new DeductionPanel(() => this.ctx.allNews);
+        this.ctx.panels['deduction'] = deductionPanel;
+        const el = deductionPanel.getElement();
+        this.makeDraggable(el, 'deduction');
+        const grid = document.getElementById('panelsGrid');
+        if (grid) {
+          const gdeltEl = this.ctx.panels['gdelt-intel']?.getElement();
+          if (gdeltEl?.nextSibling) {
+            grid.insertBefore(el, gdeltEl.nextSibling);
+          } else {
+            grid.appendChild(el);
           }
-        });
-      }
+        }
+      });
+    }
 
+    if (this.shouldCreatePanel('cii')) {
       const ciiPanel = new CIIPanel();
       ciiPanel.setShareStoryHandler((code, name) => {
         this.callbacks.openCountryStory(code, name);
@@ -665,132 +565,128 @@ export class PanelLayoutManager implements AppModule {
         this.callbacks.openCountryBrief(code);
       });
       this.ctx.panels['cii'] = ciiPanel;
+    }
 
-      const cascadePanel = new CascadePanel();
-      this.ctx.panels['cascade'] = cascadePanel;
+    this.createPanel('cascade', () => new CascadePanel());
+    this.createPanel('satellite-fires', () => new SatelliteFiresPanel());
 
-      const satelliteFiresPanel = new SatelliteFiresPanel();
-      this.ctx.panels['satellite-fires'] = satelliteFiresPanel;
-
+    if (this.shouldCreatePanel('strategic-risk')) {
       const strategicRiskPanel = new StrategicRiskPanel();
       strategicRiskPanel.setLocationClickHandler((lat, lon) => {
         this.ctx.map?.setCenter(lat, lon, 4);
       });
       this.ctx.panels['strategic-risk'] = strategicRiskPanel;
+    }
 
+    if (this.shouldCreatePanel('strategic-posture')) {
       const strategicPosturePanel = new StrategicPosturePanel(() => this.ctx.allNews);
       strategicPosturePanel.setLocationClickHandler((lat, lon) => {
         console.log('[App] StrategicPosture handler called:', { lat, lon, hasMap: !!this.ctx.map });
         this.ctx.map?.setCenter(lat, lon, 4);
       });
       this.ctx.panels['strategic-posture'] = strategicPosturePanel;
+    }
 
+    if (this.shouldCreatePanel('ucdp-events')) {
       const ucdpEventsPanel = new UcdpEventsPanel();
       ucdpEventsPanel.setEventClickHandler((lat, lon) => {
         this.ctx.map?.setCenter(lat, lon, 5);
       });
       this.ctx.panels['ucdp-events'] = ucdpEventsPanel;
-
-      this.lazyPanel('displacement', () =>
-        import('@/components/DisplacementPanel').then(m => {
-          const p = new m.DisplacementPanel();
-          p.setCountryClickHandler((lat: number, lon: number) => { this.ctx.map?.setCenter(lat, lon, 4); });
-          return p;
-        }),
-      );
-
-      this.lazyPanel('climate', () =>
-        import('@/components/ClimateAnomalyPanel').then(m => {
-          const p = new m.ClimateAnomalyPanel();
-          p.setZoneClickHandler((lat: number, lon: number) => { this.ctx.map?.setCenter(lat, lon, 4); });
-          return p;
-        }),
-      );
-
-      this.lazyPanel('population-exposure', () =>
-        import('@/components/PopulationExposurePanel').then(m => new m.PopulationExposurePanel()),
-      );
-
-      this.lazyPanel('security-advisories', () =>
-        import('@/components/SecurityAdvisoriesPanel').then(m => {
-          const p = new m.SecurityAdvisoriesPanel();
-          p.setRefreshHandler(() => { void this.callbacks.loadSecurityAdvisories?.(); });
-          return p;
-        }),
-      );
-
-      const _wmKeyPresent = getSecretState('WORLDMONITOR_API_KEY').present;
-      const _lockPanels = this.ctx.isDesktopApp && !_wmKeyPresent;
-
-      this.lazyPanel('oref-sirens', () =>
-        import('@/components/OrefSirensPanel').then(m => new m.OrefSirensPanel()),
-        undefined,
-        _lockPanels ? [t('premium.features.orefSirens1'), t('premium.features.orefSirens2')] : undefined,
-      );
-
-      this.lazyPanel('telegram-intel', () =>
-        import('@/components/TelegramIntelPanel').then(m => new m.TelegramIntelPanel()),
-        undefined,
-        _lockPanels ? [t('premium.features.telegramIntel1'), t('premium.features.telegramIntel2')] : undefined,
-      );
     }
 
-    if (SITE_VARIANT === 'finance') {
+    this.lazyPanel('displacement', () =>
+      import('@/components/DisplacementPanel').then(m => {
+        const p = new m.DisplacementPanel();
+        p.setCountryClickHandler((lat: number, lon: number) => { this.ctx.map?.setCenter(lat, lon, 4); });
+        return p;
+      }),
+    );
+
+    this.lazyPanel('climate', () =>
+      import('@/components/ClimateAnomalyPanel').then(m => {
+        const p = new m.ClimateAnomalyPanel();
+        p.setZoneClickHandler((lat: number, lon: number) => { this.ctx.map?.setCenter(lat, lon, 4); });
+        return p;
+      }),
+    );
+
+    this.lazyPanel('population-exposure', () =>
+      import('@/components/PopulationExposurePanel').then(m => new m.PopulationExposurePanel()),
+    );
+
+    this.lazyPanel('security-advisories', () =>
+      import('@/components/SecurityAdvisoriesPanel').then(m => {
+        const p = new m.SecurityAdvisoriesPanel();
+        p.setRefreshHandler(() => { void this.callbacks.loadSecurityAdvisories?.(); });
+        return p;
+      }),
+    );
+
+    const _wmKeyPresent = getSecretState('WORLDMONITOR_API_KEY').present;
+    const _lockPanels = this.ctx.isDesktopApp && !_wmKeyPresent;
+
+    this.lazyPanel('oref-sirens', () =>
+      import('@/components/OrefSirensPanel').then(m => new m.OrefSirensPanel()),
+      undefined,
+      _lockPanels ? [t('premium.features.orefSirens1'), t('premium.features.orefSirens2')] : undefined,
+    );
+
+    this.lazyPanel('telegram-intel', () =>
+      import('@/components/TelegramIntelPanel').then(m => new m.TelegramIntelPanel()),
+      undefined,
+      _lockPanels ? [t('premium.features.telegramIntel1'), t('premium.features.telegramIntel2')] : undefined,
+    );
+
+    if (this.shouldCreatePanel('gcc-investments')) {
       const investmentsPanel = new InvestmentsPanel((inv) => {
         focusInvestmentOnMap(this.ctx.map, this.ctx.mapLayers, inv.lat, inv.lon);
       });
       this.ctx.panels['gcc-investments'] = investmentsPanel;
-
-      const gulfEconomiesPanel = new GulfEconomiesPanel();
-      this.ctx.panels['gulf-economies'] = gulfEconomiesPanel;
     }
 
-    this.ctx.panels['world-clock'] = new WorldClockPanel();
+    if (this.shouldCreatePanel('world-clock')) {
+      this.ctx.panels['world-clock'] = new WorldClockPanel();
+    }
 
-    // Airline Intelligence panel (non-happy variants)
-    if (SITE_VARIANT !== 'happy') {
+    if (this.shouldCreatePanel('airline-intel')) {
       this.ctx.panels['airline-intel'] = new AirlineIntelPanel();
-      // Launch the Ctrl+J command bar (attaches global keydown listener)
       this.aviationCommandBar = new AviationCommandBar();
     }
 
-    if (SITE_VARIANT !== 'happy') {
-      if (!this.ctx.panels['gulf-economies']) {
-        const gulfEconomiesPanel = new GulfEconomiesPanel();
-        this.ctx.panels['gulf-economies'] = gulfEconomiesPanel;
-      }
-
-      const liveNewsPanel = new LiveNewsPanel();
-      this.ctx.panels['live-news'] = liveNewsPanel;
-
-      const liveWebcamsPanel = new LiveWebcamsPanel();
-      this.ctx.panels['live-webcams'] = liveWebcamsPanel;
-
-      this.ctx.panels['events'] = new TechEventsPanel('events', () => this.ctx.allNews);
-
-      const serviceStatusPanel = new ServiceStatusPanel();
-      this.ctx.panels['service-status'] = serviceStatusPanel;
-
-      this.lazyPanel('tech-readiness', () =>
-        import('@/components/TechReadinessPanel').then(m => {
-          const p = new m.TechReadinessPanel();
-          void p.refresh();
-          return p;
-        }),
-      );
-
-      this.ctx.panels['macro-signals'] = new MacroSignalsPanel();
-      this.ctx.panels['etf-flows'] = new ETFFlowsPanel();
-      this.ctx.panels['stablecoins'] = new StablecoinPanel();
+    if (this.shouldCreatePanel('gulf-economies') && !this.ctx.panels['gulf-economies']) {
+      this.ctx.panels['gulf-economies'] = new GulfEconomiesPanel();
     }
+
+    if (this.shouldCreatePanel('live-news')) {
+      this.ctx.panels['live-news'] = new LiveNewsPanel();
+    }
+
+    if (this.shouldCreatePanel('live-webcams')) {
+      this.ctx.panels['live-webcams'] = new LiveWebcamsPanel();
+    }
+
+    this.createPanel('events', () => new TechEventsPanel('events', () => this.ctx.allNews));
+    this.createPanel('service-status', () => new ServiceStatusPanel());
+
+    this.lazyPanel('tech-readiness', () =>
+      import('@/components/TechReadinessPanel').then(m => {
+        const p = new m.TechReadinessPanel();
+        void p.refresh();
+        return p;
+      }),
+    );
+
+    this.createPanel('macro-signals', () => new MacroSignalsPanel());
+    this.createPanel('etf-flows', () => new ETFFlowsPanel());
+    this.createPanel('stablecoins', () => new StablecoinPanel());
 
     if (this.ctx.isDesktopApp) {
       const runtimeConfigPanel = new RuntimeConfigPanel({ mode: 'alert' });
       this.ctx.panels['runtime-config'] = runtimeConfigPanel;
     }
 
-    const insightsPanel = new InsightsPanel();
-    this.ctx.panels['insights'] = insightsPanel;
+    this.createPanel('insights', () => new InsightsPanel());
 
     // Global Giving panel (all variants)
     this.lazyPanel('giving', () =>
@@ -968,6 +864,13 @@ export class PanelLayoutManager implements AppModule {
 
     this.applyPanelSettings();
     this.applyInitialUrlState();
+
+    if (import.meta.env.DEV) {
+      const configured = new Set(Object.keys(DEFAULT_PANELS).filter(k => k !== 'map'));
+      const created = new Set(Object.keys(this.ctx.panels));
+      const extra = [...created].filter(k => !configured.has(k) && k !== 'deduction' && k !== 'runtime-config');
+      if (extra.length) console.warn('[PanelLayout] Panels created but not in DEFAULT_PANELS:', extra);
+    }
   }
 
   private applyTimeRangeFilterToNewsPanels(): void {
@@ -1273,6 +1176,7 @@ export class PanelLayoutManager implements AppModule {
     setup?: (panel: T) => void,
     lockedFeatures?: string[],
   ): void {
+    if (!this.shouldCreatePanel(key)) return;
     loader().then(async (panel) => {
       this.ctx.panels[key] = panel as unknown as import('@/components/Panel').Panel;
       if (lockedFeatures) {

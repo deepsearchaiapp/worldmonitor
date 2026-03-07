@@ -20,7 +20,7 @@ const FAA_AIRPORTS = [
 ];
 
 const MENA_AIRPORTS_ICAO = [
-  'OEJN', 'OERK', 'OEMA', 'OEDF', 'OMDB', 'OMAD', 'OMSJ',
+  'OEJN', 'OERK', 'OEMA', 'OEDF', 'OMDB', 'OMAA', 'OMSJ',
   'OTHH', 'OBBI', 'OOMS', 'OKBK', 'OLBA', 'OJAI', 'OSDI',
   'ORBI', 'OIIE', 'OISS', 'OIMM', 'OIKB', 'HECA', 'GMMN',
   'DTTA', 'DAAG', 'HLLT',

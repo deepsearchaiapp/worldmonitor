@@ -37,6 +37,7 @@ export const BOOTSTRAP_CACHE_KEYS: Record<string, string> = {
   unrestEvents:     'unrest:events:v1',
   iranEvents:       'conflict:iran-events:v1',
   ucdpEvents:       'conflict:ucdp-events:v1',
+  temporalAnomalies: 'temporal:anomalies:v1',
 };
 
 export const BOOTSTRAP_TIERS: Record<string, 'slow' | 'fast'> = {
@@ -52,5 +53,5 @@ export const BOOTSTRAP_TIERS: Record<string, 'slow' | 'fast'> = {
   macroSignals: 'fast', chokepoints: 'fast', riskScores: 'fast',
   marketQuotes: 'fast', commodityQuotes: 'fast', positiveGeoEvents: 'fast',
   flightDelays: 'fast', insights: 'fast', predictions: 'fast',
-  iranEvents: 'fast',
+  iranEvents: 'fast', temporalAnomalies: 'fast',
 };
