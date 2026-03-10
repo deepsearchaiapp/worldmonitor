@@ -66,6 +66,48 @@ const LOCATION_COORDS = {
   'haji omeran':   { lat: 36.6500, lon: 45.0500 },
   'nineveh':       { lat: 36.3500, lon: 43.1500 },
   'rashidiya':     { lat: 36.4000, lon: 43.1000 },
+  'gaza':          { lat: 31.3547, lon: 34.3088 },
+  'riyadh':        { lat: 24.7136, lon: 46.6753 },
+  'sulaimaniyah':  { lat: 35.5613, lon: 45.4306 },
+  'sulaimani':     { lat: 35.5613, lon: 45.4306 },
+  'haifa':         { lat: 32.7940, lon: 34.9896 },
+  'karaj':         { lat: 35.8400, lon: 50.9391 },
+  'shahran':       { lat: 35.7900, lon: 51.2900 },
+  'kouhak':        { lat: 35.6200, lon: 51.4800 },
+  'hamadan':       { lat: 34.7988, lon: 48.5146 },
+  'hamedan':       { lat: 34.7988, lon: 48.5146 },
+  'yazd':          { lat: 31.8974, lon: 54.3569 },
+  'kish':          { lat: 26.5400, lon: 53.9800 },
+  'qazvin':        { lat: 36.2688, lon: 50.0041 },
+  'najafabad':     { lat: 32.6340, lon: 51.3670 },
+  'malayer':       { lat: 34.2968, lon: 48.8234 },
+  'mehran':        { lat: 33.1222, lon: 46.1646 },
+  'aqaba':         { lat: 29.5267, lon: 35.0078 },
+  'eilat':         { lat: 29.5577, lon: 34.9519 },
+  'choman':        { lat: 36.6269, lon: 44.8856 },
+  'baqer shahr':   { lat: 35.5400, lon: 51.3900 },
+  'jubail':        { lat: 27.0046, lon: 49.6225 },
+  'shaybah':       { lat: 22.5200, lon: 54.0000 },
+  'al dhafra':     { lat: 24.2500, lon: 54.5500 },
+  'juffair':       { lat: 26.2167, lon: 50.6000 },
+  'qeshm':         { lat: 26.9500, lon: 56.2700 },
+  'pakdasht':      { lat: 35.4747, lon: 51.6856 },
+  'tasluja':       { lat: 35.5100, lon: 45.3700 },
+  'al-kharj':      { lat: 24.1500, lon: 47.3100 },
+  'petah tikva':   { lat: 32.0841, lon: 34.8878 },
+  'beersheba':     { lat: 31.2518, lon: 34.7913 },
+  'oman':          { lat: 23.5880, lon: 58.3829 },
+  'oslo':          { lat: 59.9139, lon: 10.7522 },
+  'norway':        { lat: 59.9139, lon: 10.7522 },
+  'aghdasiyeh':    { lat: 35.7900, lon: 51.4500 },
+  'rey':           { lat: 35.5959, lon: 51.4350 },
+  'beirut':        { lat: 33.8938, lon: 35.5018 },
+  'azraq':         { lat: 31.8300, lon: 36.8300 },
+  'yehud':         { lat: 32.0333, lon: 34.8833 },
+  'sitra':         { lat: 26.1547, lon: 50.6028 },
+  'sanandaj':      { lat: 35.3219, lon: 46.9862 },
+  'ma\'ameer':     { lat: 26.0500, lon: 50.5200 },
+  'northern cyprus': { lat: 35.1856, lon: 33.3823 },
 };
 
 const CATEGORY_MAP = {
@@ -100,6 +142,9 @@ function parseRelativeTime(timeStr) {
   if (match) return now - parseInt(match[1]) * 3600_000;
   const minMatch = timeStr.match(/(\d+)\s+min/);
   if (minMatch) return now - parseInt(minMatch[1]) * 60_000;
+  if (/a day ago/.test(timeStr)) return now - 86400_000;
+  const dayMatch = timeStr.match(/(\d+)\s+days?\s+ago/);
+  if (dayMatch) return now - parseInt(dayMatch[1]) * 86400_000;
   return now;
 }
 
@@ -142,7 +187,7 @@ function validate(data) {
 
 runSeed('conflict', 'iran-events', CANONICAL_KEY, fetchIranEvents, {
   validateFn: validate,
-  ttlSeconds: 86400,
+  ttlSeconds: 172800,
   sourceVersion: 'liveuamap-manual-v1',
 }).catch((err) => {
   console.error('FATAL:', err.message || err);

@@ -175,6 +175,8 @@
     "sourceRegionGulfMena": "Залив и БВСА",
     "filterPanels": "Фильтр панелей...",
     "resetLayout": "Сбросить макет",
+    "resetLayoutTooltip": "Восстановить расположение панелей по умолчанию",
+    "unsavedChanges": "У вас есть несохранённые изменения панелей. Отменить?",
     "panelCatCore": "Основные",
     "panelCatIntelligence": "Разведка",
     "panelCatRegionalNews": "Региональные новости",
@@ -375,6 +377,8 @@
       "noResults": "Ничего не найдено",
       "commands": "Команды",
       "results": "Результаты",
+      "seeAllCommands": "Показать все команды",
+      "hideCommandList": "Назад",
       "navigate": "навигация",
       "select": "выбрать",
       "close": "закрыть",
@@ -978,6 +982,7 @@
       "layerWarningDismiss": "Больше не показывать",
       "layerWarningOk": "Понятно",
       "layersTitle": "Слои",
+      "layerSearch": "Поиск слоёв...",
       "timeAll": "Все",
       "views": {
         "global": "Глобальный",
@@ -1007,6 +1012,7 @@
         "nuclearSites": "Ядерные объекты",
         "gammaIrradiators": "Гамма-облучатели",
         "spaceports": "Космодромы",
+        "satellites": "Орбитальное наблюдение",
         "pipelines": "Трубопроводы",
         "militaryActivity": "Военная активность",
         "shipTraffic": "Судоходство",
@@ -1738,9 +1744,9 @@
     },
     "gpsJamming": {
       "title": "Помехи GPS/GNSS",
-      "interference": "Помехи",
-      "aircraftAffected": "Затронутые воздушные суда",
-      "aircraftNormal": "Нормальные воздушные суда",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1756,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Расчётные"
+        "computed": "Расчётные",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Америка",

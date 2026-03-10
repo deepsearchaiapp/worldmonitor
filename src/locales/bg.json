@@ -175,6 +175,8 @@
     "sourceRegionGulfMena": "Залив & MENA",
     "filterPanels": "Филтриране на панели...",
     "resetLayout": "Нулиране на оформлението",
+    "resetLayoutTooltip": "Възстановяване на подредбата на панелите по подразбиране",
+    "unsavedChanges": "Имате незапазени промени на панелите. Да ги отхвърлите ли?",
     "panelCatCore": "Основно",
     "panelCatIntelligence": "Разузнаване",
     "panelCatRegionalNews": "Регионални новини",
@@ -375,6 +377,8 @@
       "noResults": "Няма резултати",
       "commands": "Команди",
       "results": "Резултати",
+      "seeAllCommands": "Виж всички команди",
+      "hideCommandList": "Назад",
       "navigate": "навигиране",
       "select": "избор",
       "close": "затвори",
@@ -978,6 +982,7 @@
       "layerWarningDismiss": "Не показвай отново",
       "layerWarningOk": "Разбрах",
       "layersTitle": "Слои",
+      "layerSearch": "Търсене на слоеве...",
       "timeAll": "Всички",
       "views": {
         "global": "Глобално",
@@ -1007,6 +1012,7 @@
         "nuclearSites": "Ядрени места",
         "gammaIrradiators": "Гама облъчватели",
         "spaceports": "Космически пристанища",
+        "satellites": "Орбитално наблюдение",
         "pipelines": "Тръбопроводи",
         "militaryActivity": "Военна активност",
         "shipTraffic": "Трафик на кораби",
@@ -1738,9 +1744,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS интерференция",
-      "interference": "Интерференция",
-      "aircraftAffected": "Летателни средства засегнати",
-      "aircraftNormal": "Летателни средства нормално",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1756,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Изчислено"
+        "computed": "Изчислено",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Америки",

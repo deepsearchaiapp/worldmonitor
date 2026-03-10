@@ -38,7 +38,7 @@ async function verifyTurnstile(token, ip) {
   }
 }
 
-async function sendConfirmationEmail(email, referralCode, position) {
+async function sendConfirmationEmail(email, referralCode) {
   const referralLink = `https://worldmonitor.app/pro?ref=${referralCode}`;
   const shareText = encodeURIComponent('I just joined the World Monitor Pro waitlist \u2014 real-time global intelligence powered by AI. Join me:');
   const shareUrl = encodeURIComponent(referralLink);
@@ -134,8 +134,8 @@ async function sendConfirmationEmail(email, referralCode, position) {
               </table>
               <div style="text-align: center; margin-bottom: 24px;">
                 <div style="display: inline-block; background: #111; border: 1px solid #4ade80; padding: 12px 28px;">
-                  <div style="font-size: 11px; color: #4ade80; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 4px;">Your position</div>
-                  <div style="font-size: 32px; font-weight: 800; color: #fff;">#${position || '?'}</div>
+                  <div style="font-size: 18px; font-weight: 800; color: #fff;">You're in!</div>
+                  <div style="font-size: 11px; color: #4ade80; text-transform: uppercase; letter-spacing: 2px; margin-top: 4px;">Waitlist confirmed</div>
                 </div>
               </div>
               <div style="background: #111; border: 1px solid #1a1a1a; border-left: 3px solid #4ade80; padding: 20px 24px; margin-bottom: 24px;">
@@ -215,8 +215,8 @@ export default async function handler(req) {
   // x-real-ip is injected by Vercel from the TCP connection and cannot be spoofed.
   // x-forwarded-for is client-settable — only use as last resort.
   const ip =
-    req.headers.get('x-real-ip') ||
     req.headers.get('cf-connecting-ip') ||
+    req.headers.get('x-real-ip') ||
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
     'unknown';
   if (isRateLimited(ip)) {
@@ -303,7 +303,7 @@ export default async function handler(req) {
 
     // Send confirmation email for new registrations (awaited to avoid Edge isolate termination)
     if (result.status === 'registered' && result.referralCode) {
-      await sendConfirmationEmail(email, result.referralCode, result.position);
+      await sendConfirmationEmail(email, result.referralCode);
     }
 
     return new Response(JSON.stringify(result), {

@@ -11,7 +11,7 @@ const GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
 
 export interface UnifiedSettingsConfig {
   getPanelSettings: () => Record<string, PanelConfig>;
-  togglePanel: (key: string) => void;
+  savePanelSettings: (panels: Record<string, PanelConfig>) => void;
   getDisabledSources: () => Set<string>;
   toggleSource: (name: string) => void;
   setSourcesEnabled: (names: string[], enabled: boolean) => void;
@@ -34,6 +34,9 @@ export class UnifiedSettings {
   private panelFilter = '';
   private escapeHandler: (e: KeyboardEvent) => void;
   private prefsCleanup: (() => void) | null = null;
+  private draftPanelSettings: Record<string, PanelConfig> = {};
+  private panelsJustSaved = false;
+  private savedTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config: UnifiedSettingsConfig) {
     this.config = config;
@@ -43,6 +46,8 @@ export class UnifiedSettings {
     this.overlay.id = 'unifiedSettingsModal';
     this.overlay.setAttribute('role', 'dialog');
     this.overlay.setAttribute('aria-label', t('header.settings'));
+
+    this.resetPanelDraft();
 
     this.escapeHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') this.close();
@@ -83,10 +88,14 @@ export class UnifiedSettings {
         return;
       }
 
+      if (target.closest('.panels-save-layout')) {
+        this.savePanelChanges();
+        return;
+      }
+
       const panelItem = target.closest<HTMLElement>('.panel-toggle-item');
       if (panelItem?.dataset.panel) {
-        this.config.togglePanel(panelItem.dataset.panel);
-        this.renderPanelsTab();
+        this.toggleDraftPanel(panelItem.dataset.panel);
         return;
       }
 
@@ -145,6 +154,7 @@ export class UnifiedSettings {
 
   public open(tab?: TabId): void {
     if (tab) this.activeTab = tab;
+    this.resetPanelDraft();
     this.render();
     this.overlay.classList.add('active');
     localStorage.setItem('wm-settings-open', '1');
@@ -152,12 +162,15 @@ export class UnifiedSettings {
   }
 
   public close(): void {
+    if (this.hasPendingPanelChanges() && !confirm(t('header.unsavedChanges'))) return;
     this.overlay.classList.remove('active');
+    this.resetPanelDraft();
     localStorage.removeItem('wm-settings-open');
     document.removeEventListener('keydown', this.escapeHandler);
   }
 
   public refreshPanelToggles(): void {
+    this.resetPanelDraft();
     if (this.activeTab === 'panels') this.renderPanelsTab();
   }
 
@@ -172,6 +185,7 @@ export class UnifiedSettings {
   }
 
   public destroy(): void {
+    if (this.savedTimeout) clearTimeout(this.savedTimeout);
     this.prefsCleanup?.();
     this.prefsCleanup = null;
     document.removeEventListener('keydown', this.escapeHandler);
@@ -211,7 +225,9 @@ export class UnifiedSettings {
           </div>
           <div class="panel-toggle-grid" id="usPanelToggles"></div>
           <div class="panels-footer">
-            <button class="panels-reset-layout">${t('header.resetLayout')}</button>
+            <span class="panels-status" id="usPanelsStatus" aria-live="polite"></span>
+            <button class="panels-save-layout">${t('modals.story.save')}</button>
+            <button class="panels-reset-layout" title="${t('header.resetLayoutTooltip')}" aria-label="${t('header.resetLayoutTooltip')}">${t('header.resetLayout')}</button>
           </div>
         </div>
         <div class="unified-settings-tab-panel${this.activeTab === 'sources' ? ' active' : ''}" data-panel-id="sources" id="us-tab-panel-sources" role="tabpanel" aria-labelledby="us-tab-sources">
@@ -284,7 +300,7 @@ export class UnifiedSettings {
   }
 
   private getVisiblePanelEntries(): Array<[string, PanelConfig]> {
-    const panelSettings = this.config.getPanelSettings();
+    const panelSettings = this.draftPanelSettings;
     const variant = SITE_VARIANT || 'full';
     let entries = Object.entries(panelSettings)
       .filter(([key]) => key !== 'runtime-config' || this.config.isDesktopApp);
@@ -323,13 +339,72 @@ export class UnifiedSettings {
     const container = this.overlay.querySelector('#usPanelToggles');
     if (!container) return;
 
+    const savedSettings = this.config.getPanelSettings();
     const entries = this.getVisiblePanelEntries();
-    container.innerHTML = entries.map(([key, panel]) => `
-      <div class="panel-toggle-item ${panel.enabled ? 'active' : ''}" data-panel="${escapeHtml(key)}">
-        <div class="panel-toggle-checkbox">${panel.enabled ? '\u2713' : ''}</div>
-        <span class="panel-toggle-label">${escapeHtml(this.config.getLocalizedPanelName(key, panel.name))}</span>
-      </div>
-    `).join('');
+    container.innerHTML = entries.map(([key, panel]) => {
+      const changed = savedSettings[key]?.enabled !== panel.enabled;
+      return `
+        <div class="panel-toggle-item ${panel.enabled ? 'active' : ''}${changed ? ' changed' : ''}" data-panel="${escapeHtml(key)}" aria-pressed="${panel.enabled}">
+          <div class="panel-toggle-checkbox">${panel.enabled ? '\u2713' : ''}</div>
+          <span class="panel-toggle-label">${escapeHtml(this.config.getLocalizedPanelName(key, panel.name))}</span>
+        </div>
+      `;
+    }).join('');
+
+    this.updatePanelsFooter();
+  }
+
+  private clonePanelSettings(source: Record<string, PanelConfig> = this.config.getPanelSettings()): Record<string, PanelConfig> {
+    return Object.fromEntries(
+      Object.entries(source).map(([key, panel]) => [key, { ...panel }]),
+    );
+  }
+
+  private resetPanelDraft(): void {
+    this.draftPanelSettings = this.clonePanelSettings();
+    this.panelsJustSaved = false;
+  }
+
+  private hasPendingPanelChanges(): boolean {
+    const savedSettings = this.config.getPanelSettings();
+    return Object.entries(this.draftPanelSettings).some(([key, panel]) => savedSettings[key]?.enabled !== panel.enabled);
+  }
+
+  private toggleDraftPanel(key: string): void {
+    const panel = this.draftPanelSettings[key];
+    if (!panel) return;
+    panel.enabled = !panel.enabled;
+    this.panelsJustSaved = false;
+    this.renderPanelsTab();
+  }
+
+  private savePanelChanges(): void {
+    if (!this.hasPendingPanelChanges()) return;
+    this.config.savePanelSettings(this.clonePanelSettings(this.draftPanelSettings));
+    this.draftPanelSettings = this.clonePanelSettings();
+    this.panelsJustSaved = true;
+    this.renderPanelsTab();
+    if (this.savedTimeout) clearTimeout(this.savedTimeout);
+    this.savedTimeout = setTimeout(() => {
+      this.panelsJustSaved = false;
+      this.savedTimeout = null;
+      this.updatePanelsFooter();
+    }, 2000);
+  }
+
+  private updatePanelsFooter(): void {
+    const status = this.overlay.querySelector<HTMLElement>('#usPanelsStatus');
+    const saveButton = this.overlay.querySelector<HTMLButtonElement>('.panels-save-layout');
+    const hasPendingChanges = this.hasPendingPanelChanges();
+
+    if (saveButton) {
+      saveButton.disabled = !hasPendingChanges;
+    }
+
+    if (status) {
+      status.textContent = this.panelsJustSaved ? t('modals.settingsWindow.saved') : '';
+      status.classList.toggle('visible', this.panelsJustSaved);
+    }
   }
 
   private getAvailableRegions(): Array<{ key: string; label: string }> {

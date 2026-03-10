@@ -727,6 +727,14 @@ canvas,
   color: var(--text);
 }
 
+/* Medium-width desktop: keep header utility actions reachable when OS scaling
+   reduces the effective viewport width (e.g. 1920px @ 150% = ~1280px CSS). */
+@media (max-width: 1360px) {
+  .credit-link {
+    display: none;
+  }
+}
+
 .search-btn {
   padding: 4px 10px;
   background: transparent;
@@ -1230,6 +1238,7 @@ body.panel-resize-active iframe {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 6px 10px;
   background: var(--overlay-subtle);
   border-bottom: 1px solid var(--border);
@@ -1278,6 +1287,11 @@ body.panel-resize-active iframe {
   color: var(--text);
 }
 
+/* Push the first element after header-left to the right; subsequent siblings flow via gap */
+.panel-header > .panel-header-left + * {
+  margin-left: auto;
+}
+
 .panel-count {
   font-size: 10px;
   color: var(--text-dim);
@@ -1312,6 +1326,91 @@ body.panel-resize-active iframe {
 }
 
 
+/* ---- Icon buttons in panel headers ---- */
+.panel-header .icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.panel-header .icon-btn:hover {
+  background: var(--overlay-subtle);
+  color: var(--text);
+}
+
+/* ---- Close (X) button on panels (extends .icon-btn) ---- */
+.panel-header .panel-close-btn {
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  order: 999;
+}
+
+.panel:hover .panel-close-btn,
+.panel-close-btn:focus-visible {
+  opacity: 1;
+}
+
+.panel-header .panel-close-btn:hover {
+  background: color-mix(in srgb, var(--semantic-critical) 15%, transparent);
+  color: var(--semantic-critical);
+}
+
+/* On touch devices, always show the close button */
+@media (hover: none) {
+  .panel-header .panel-close-btn {
+    opacity: 0.7;
+  }
+}
+
+/* ---- Add Panel (+) block ---- */
+.add-panel-block {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+  border: 2px dashed var(--border);
+  border-radius: var(--panel-radius, 6px);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+  padding: 0;
+  font-family: inherit;
+}
+
+.add-panel-block:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(0, 255, 136, 0.04);
+}
+
+.add-panel-block-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.add-panel-block-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
 .panel-data-badge {
   font-size: 9px;
   letter-spacing: 0.4px;
@@ -1339,6 +1438,35 @@ body.panel-resize-active iframe {
   background: rgba(255, 139, 139, 0.12);
 }
 
+/* Panel Sort Toggle Button (#107) */
+.panel-sort-btn {
+  background: var(--overlay-medium);
+  border: 1px solid var(--overlay-medium);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  margin-right: 2px;
+  opacity: 0.85;
+  transition: opacity 0.15s, transform 0.15s, background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.panel-sort-btn:hover {
+  opacity: 1;
+  background: var(--overlay-heavy);
+  transform: scale(1.05);
+  color: var(--text);
+}
+
+.panel-sort-btn svg {
+  display: block;
+}
+
 /* Panel Summarize Button */
 .panel-summarize-btn {
   background: var(--overlay-medium);
@@ -1347,7 +1475,6 @@ body.panel-resize-active iframe {
   cursor: pointer;
   font-size: 11px;
   padding: 2px 6px;
-  margin-right: 6px;
   opacity: 0.85;
   transition: opacity 0.15s, transform 0.15s, background 0.15s;
 }
@@ -1638,6 +1765,7 @@ body.panel-resize-active iframe {
   border-color: var(--text-dim);
   color: var(--text);
 }
+
 
 /* Channel management list: same layout as LIVE panel channel switcher */
 .live-news-manage-list {
@@ -5933,6 +6061,11 @@ a.prediction-link:hover {
   border-color: var(--green);
 }
 
+.panel-toggle-item.changed {
+  background: rgba(68, 255, 136, 0.06);
+  border-color: rgba(68, 255, 136, 0.35);
+}
+
 .panel-toggle-checkbox {
   width: 14px;
   height: 14px;
@@ -6042,10 +6175,25 @@ a.prediction-link:hover {
 
 .panels-footer {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   padding-top: 8px;
 }
 
+.panels-status {
+  margin-right: auto;
+  min-height: 14px;
+  font-size: 11px;
+  color: var(--green);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.panels-status.visible {
+  opacity: 1;
+}
+
+.panels-save-layout,
 .panels-reset-layout {
   padding: 6px 12px;
   background: var(--bg);
@@ -6055,6 +6203,23 @@ a.prediction-link:hover {
   font-size: 10px;
   cursor: pointer;
   text-transform: uppercase;
+}
+
+.panels-save-layout {
+  color: var(--green);
+  border-color: rgba(68, 255, 136, 0.35);
+}
+
+.panels-save-layout:hover:not(:disabled) {
+  background: rgba(68, 255, 136, 0.08);
+  border-color: var(--green);
+}
+
+.panels-save-layout:disabled {
+  color: var(--text-dim);
+  border-color: var(--border);
+  opacity: 0.6;
+  cursor: default;
 }
 
 .panels-reset-layout:hover {
@@ -8406,6 +8571,70 @@ a.prediction-link:hover {
   margin: 0 2px;
 }
 
+.search-all-commands-wrap {
+  padding: 8px 16px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.search-all-commands-link {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.search-all-commands-link:hover {
+  color: var(--green);
+  text-decoration: underline;
+}
+
+.search-command-list-back {
+  padding: 8px 16px;
+}
+
+.search-all-commands-back {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.search-all-commands-back:hover {
+  color: var(--green);
+  text-decoration: underline;
+}
+
+.search-command-category {
+  border-bottom: 1px solid var(--border);
+}
+
+.search-command-category:last-child {
+  border-bottom: none;
+}
+
+.search-command-category-summary {
+  padding: 8px 16px;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  background: var(--bg);
+  cursor: pointer;
+  list-style: none;
+}
+
+.search-command-category-summary::-webkit-details-marker {
+  display: none;
+}
+
+.search-command-category-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.search-command-category-list .command-item {
+  border-left: none;
+}
+
 .search-footer {
   display: flex;
   gap: 16px;
@@ -9299,6 +9528,32 @@ a.prediction-link:hover {
   letter-spacing: 0.3px;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.panel-live-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--semantic-critical);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.panel-live-count::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--semantic-critical);
+  animation: live-dot-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .panel-new-badge.pulse {
@@ -13405,6 +13660,26 @@ a.prediction-link:hover {
   display: none;
 }
 
+.deckgl-layer-toggles .layer-search {
+  width: calc(100% - 16px);
+  margin: 4px 8px;
+  padding: 4px 8px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  color: inherit;
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+}
+.deckgl-layer-toggles .layer-search::placeholder {
+  color: rgba(255,255,255,0.4);
+}
+.deckgl-layer-toggles .layer-search:focus {
+  border-color: rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.12);
+}
+
 .deckgl-layer-toggles .layer-toggle {
   display: flex;
   align-items: center;
@@ -13504,6 +13779,109 @@ a.prediction-link:hover {
 
 .deckgl-layer-toggles .layer-toggle.has-data {
   border-color: rgba(68, 255, 136, 0.2);
+}
+
+/* Pro early-access banner */
+.pro-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 7px 36px 7px 16px;
+  background: linear-gradient(90deg, rgba(74, 222, 128, 0.06), rgba(74, 222, 128, 0.12), rgba(74, 222, 128, 0.06));
+  border-bottom: 1px solid rgba(74, 222, 128, 0.15);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  position: relative;
+  transform: translateY(-100%);
+  opacity: 0;
+  transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+}
+
+.pro-banner.pro-banner-in {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.pro-banner.pro-banner-out {
+  transform: translateY(-100%);
+  opacity: 0;
+}
+
+.pro-banner-badge {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--green);
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.2);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.pro-banner-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pro-banner-text strong {
+  color: var(--text);
+}
+
+.pro-banner-cta {
+  padding: 4px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: #0a0a0a;
+  background: var(--green);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.pro-banner-cta:hover {
+  background: #5eead4;
+  transform: translateY(-1px);
+}
+
+.pro-banner-close {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px;
+}
+
+.pro-banner-close:hover {
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  .pro-banner {
+    font-size: 11px;
+    gap: 8px;
+    padding: 6px 32px 6px 10px;
+    flex-wrap: wrap;
+  }
+
+  .pro-banner-text {
+    white-space: normal;
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }
 
 /* Layer performance warning dialog */

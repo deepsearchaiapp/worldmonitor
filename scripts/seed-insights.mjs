@@ -7,7 +7,7 @@ loadEnvFile(import.meta.url);
 
 const CANONICAL_KEY = 'news:insights:v1';
 const DIGEST_KEY = 'news:digest:v1:full:en';
-const CACHE_TTL = 600; // 10 min (2x the 5-min cron interval)
+const CACHE_TTL = 1800; // 30 min — matches health maxStaleMin; survives missed cron runs
 const MAX_HEADLINES = 10;
 const MAX_HEADLINE_LEN = 500;
 const GROQ_MODEL = 'llama-3.1-8b-instant';

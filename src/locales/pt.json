@@ -205,7 +205,9 @@
       "placeholderFinance": "Pesquisar ou digitar um comando...",
       "hintFinance": "Pesquisa • Bolsas • Mercados • Camadas • Navegação • Configurações",
       "commands": "Comandos",
-      "results": "Resultados"
+      "results": "Resultados",
+      "seeAllCommands": "Ver todos os comandos",
+      "hideCommandList": "Voltar"
     },
     "signal": {
       "source": "Source",
@@ -552,6 +554,7 @@
         "nuclearSites": "Locais Nucleares",
         "gammaIrradiators": "Irradiadores gama",
         "spaceports": "Espaçoportos",
+        "satellites": "Vigilância Orbital",
         "pipelines": "Gasodutos",
         "militaryActivity": "Atividade Militar",
         "shipTraffic": "Tráfego de navios",
@@ -581,6 +584,7 @@
         "renewableInstallations": "Energia limpa"
       },
       "layersTitle": "Camadas",
+      "layerSearch": "Pesquisar camadas...",
       "layerGuide": "Guia de camadas",
       "layerWarningTitle": "Aviso de desempenho",
       "layerWarningBody": "Ativar mais de {{threshold}} camadas pode afetar o desempenho de renderização e a taxa de quadros.",
@@ -1546,9 +1550,9 @@
     },
     "gpsJamming": {
       "title": "Interferência GPS/GNSS",
-      "interference": "Interferência",
-      "aircraftAffected": "Aeronaves afetadas",
-      "aircraftNormal": "Aeronaves normais",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1564,7 +1568,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Calculado"
+        "computed": "Calculado",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Américas",
@@ -2202,6 +2208,8 @@
     "sourceRegionGulfMena": "Golfo & MENA",
     "filterPanels": "Filtrar painéis...",
     "resetLayout": "Redefinir layout",
+    "resetLayoutTooltip": "Restaurar disposição padrão dos painéis",
+    "unsavedChanges": "Você tem alterações de painel não salvas. Descartá-las?",
     "panelCatCore": "Principal",
     "panelCatIntelligence": "Inteligência",
     "panelCatRegionalNews": "Notícias Regionais",

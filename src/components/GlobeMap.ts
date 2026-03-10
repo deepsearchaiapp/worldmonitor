@@ -22,12 +22,12 @@ import { PIPELINES } from '@/config/pipelines';
 import { t } from '@/services/i18n';
 import { SITE_VARIANT } from '@/config/variant';
 import { getGlobeRenderScale, resolveGlobePixelRatio, resolvePerformanceProfile, subscribeGlobeRenderScaleChange, getGlobeTexture, GLOBE_TEXTURE_URLS, subscribeGlobeTextureChange, getGlobeVisualPreset, subscribeGlobeVisualPresetChange, type GlobeRenderScale, type GlobePerformanceProfile, type GlobeVisualPreset } from '@/services/globe-render-settings';
-import { getLayersForVariant, resolveLayerLabel, type MapVariant } from '@/config/map-layer-definitions';
+import { getLayersForVariant, resolveLayerLabel, bindLayerSearch, type MapVariant } from '@/config/map-layer-definitions';
 import { getSecretState } from '@/services/runtime-config';
 import { resolveTradeRouteSegments, type TradeRouteSegment } from '@/config/trade-routes';
 import { GAMMA_IRRADIATORS } from '@/config/irradiators';
 import { AI_DATA_CENTERS } from '@/config/ai-datacenters';
-import { getCountryBbox, getCountriesGeoJson } from '@/services/country-geometry';
+import { getCountryBbox, getCountriesGeoJson, getCountryAtCoordinates, getCountryNameByCode } from '@/services/country-geometry';
 import { escapeHtml } from '@/utils/sanitize';
 import { showLayerWarning } from '@/utils/layer-warning';
 import type { FeatureCollection, Geometry } from 'geojson';
@@ -41,6 +41,13 @@ import { type IranEvent, getIranEventHexColor } from '@/services/conflict';
 import type { DisplacementFlow } from '@/services/displacement';
 import type { ClimateAnomaly } from '@/services/climate';
 import type { GpsJamHex } from '@/services/gps-interference';
+import type { SatellitePosition } from '@/services/satellites';
+import type { ImageryScene } from '@/generated/server/worldmonitor/imagery/v1/service_server';
+
+const SAT_COUNTRY_COLORS: Record<string, string> = { CN: '#ff2020', RU: '#ff8800', US: '#4488ff', EU: '#44cc44', KR: '#aa66ff', IN: '#ff66aa', TR: '#ff4466', OTHER: '#ccccff' };
+const SAT_TYPE_EMOJI: Record<string, string> = { sar: '\u{1F4E1}', optical: '\u{1F4F7}', military: '\u{1F396}', sigint: '\u{1F4FB}' };
+const SAT_TYPE_LABEL: Record<string, string> = { sar: 'SAR Imaging', optical: 'Optical Imaging', military: 'Military', sigint: 'SIGINT' };
+const SAT_OPERATOR_NAME: Record<string, string> = { CN: 'China', RU: 'Russia', US: 'United States', EU: 'ESA / EU', KR: 'South Korea', IN: 'India', TR: 'Turkey', OTHER: 'Other' };
 
 // ─── Marker discriminated union ─────────────────────────────────────────────
 interface BaseMarker {
@@ -148,7 +155,7 @@ interface GpsJamMarker extends BaseMarker {
   _kind: 'gpsjam';
   id: string;
   level: string;
-  pct: number;
+  npAvg: number;
 }
 interface TechMarker extends BaseMarker {
   _kind: 'tech';
@@ -241,6 +248,11 @@ interface FlightDelayMarker extends BaseMarker {
   avgDelayMinutes: number;
   reason: string;
 }
+interface NotamRingMarker extends BaseMarker {
+  _kind: 'notamRing';
+  name: string;
+  reason: string;
+}
 interface NewsLocationMarker extends BaseMarker {
   _kind: 'newsLocation';
   id: string;
@@ -276,23 +288,51 @@ interface AisDisruptionMarker extends BaseMarker {
   severity: AisDisruptionEvent['severity'];
   description: string;
 }
+interface SatelliteMarker extends BaseMarker {
+  _kind: 'satellite';
+  id: string;
+  name: string;
+  country: string;
+  type: string;
+  alt: number;
+  velocity: number;
+  inclination: number;
+}
+interface SatFootprintMarker extends BaseMarker {
+  _kind: 'satFootprint';
+  country: string;
+  noradId: string;
+}
+interface ImagerySceneMarker extends BaseMarker {
+  _kind: 'imageryScene';
+  satellite: string;
+  datetime: string;
+  resolutionM: number;
+  mode: string;
+  previewUrl: string;
+}
 interface GlobePath {
   id: string;
   name: string;
-  points: [number, number][];
-  pathType: 'cable' | 'oil' | 'gas' | 'products';
+  points: number[][];
+  pathType: 'cable' | 'oil' | 'gas' | 'products' | 'orbit' | 'stormTrack' | 'stormHistory';
   status: string;
+  country?: string;
+  windKt?: number;
 }
 interface GlobePolygon {
   coords: number[][][];
   name: string;
-  _kind: 'cii' | 'conflict';
+  _kind: 'cii' | 'conflict' | 'imageryFootprint' | 'forecastCone';
   level?: string;
   score?: number;
 
   intensity?: string;
   parties?: string[];
   casualties?: string;
+
+  satellite?: string;
+  datetime?: string;
 }
 type GlobeMarker =
   | ConflictMarker | HotspotMarker | FlightMarker | VesselMarker
@@ -301,8 +341,8 @@ type GlobeMarker =
   | UcdpMarker | DisplacementMarker | ClimateMarker | GpsJamMarker | TechMarker
   | ConflictZoneMarker | MilBaseMarker | NuclearSiteMarker | IrradiatorSiteMarker | SpaceportSiteMarker
   | EarthquakeMarker | EconomicMarker | DatacenterMarker | WaterwayMarker | MineralMarker
-  | FlightDelayMarker | CableAdvisoryMarker | RepairShipMarker | AisDisruptionMarker
-  | NewsLocationMarker | FlashMarker;
+  | FlightDelayMarker | NotamRingMarker | CableAdvisoryMarker | RepairShipMarker | AisDisruptionMarker
+  | NewsLocationMarker | FlashMarker | SatelliteMarker | SatFootprintMarker | ImagerySceneMarker;
 
 interface GlobeControlsLike {
   autoRotate: boolean;
@@ -335,10 +375,16 @@ export class GlobeMap {
 
   private initialized = false;
   private destroyed = false;
+  private webglLost = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushMaxTimer: ReturnType<typeof setTimeout> | null = null;
   private _pulseEnabled = true;
   private reversedRingCache = new Map<string, number[][][]>();
+
+  // Idle rendering: pause globe animation when nothing changes
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private isGlobeAnimating = true;
+  private visibilityHandler: (() => void) | null = null;
 
   // Current data
   private hotspots: HotspotMarker[] = [];
@@ -367,11 +413,20 @@ export class GlobeMap {
   private waterwayMarkers: WaterwayMarker[] = [];
   private mineralMarkers: MineralMarker[] = [];
   private flightDelayMarkers: FlightDelayMarker[] = [];
+  private notamRingMarkers: NotamRingMarker[] = [];
   private newsLocationMarkers: NewsLocationMarker[] = [];
   private flashMarkers: FlashMarker[] = [];
   private cableAdvisoryMarkers: CableAdvisoryMarker[] = [];
   private repairShipMarkers: RepairShipMarker[] = [];
   private aisMarkers: AisDisruptionMarker[] = [];
+  private satelliteMarkers: SatelliteMarker[] = [];
+  private satelliteTrailPaths: GlobePath[] = [];
+  private stormTrackPaths: GlobePath[] = [];
+  private stormConePolygons: GlobePolygon[] = [];
+  private satelliteFootprintMarkers: SatFootprintMarker[] = [];
+  private imagerySceneMarkers: ImagerySceneMarker[] = [];
+  private imageryFootprintPolygons: GlobePolygon[] = [];
+  private satBeamGroup: any = null;
   private tradeRouteSegments: TradeRouteSegment[] = [];
   private globePaths: GlobePath[] = [];
   private cableFaultIds = new Set<string>();
@@ -393,6 +448,8 @@ export class GlobeMap {
   // Overlay UI elements
   private layerTogglesEl: HTMLElement | null = null;
   private tooltipEl: HTMLElement | null = null;
+  private tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private satHoverStyle: HTMLStyleElement | null = null;
 
   // Callbacks
   private onLayerChangeCb: ((layer: keyof MapLayers, enabled: boolean, source: 'user' | 'programmatic') => void) | null = null;
@@ -436,6 +493,11 @@ export class GlobeMap {
       globe._destructor();
       return;
     }
+
+    const satStyle = document.createElement('style');
+    satStyle.textContent = `.sat-hit:hover .sat-dot { transform: scale(2.5); box-shadow: 0 0 10px 4px currentColor; }`;
+    document.head.appendChild(satStyle);
+    this.satHoverStyle = satStyle;
 
     this.unsubscribeGlobeQuality?.();
     this.unsubscribeGlobeQuality = subscribeGlobeRenderScaleChange((scale) => {
@@ -519,10 +581,28 @@ export class GlobeMap {
 
     const canvas = this.container.querySelector('canvas');
     if (canvas) {
-      canvas.addEventListener('mousedown', pauseAutoRotate);
-      canvas.addEventListener('touchstart', pauseAutoRotate, { passive: true });
+      // Wake globe on any user interaction (idle rendering optimization)
+      const wakeOnInteraction = () => this.wakeGlobe();
+      canvas.addEventListener('mousedown', () => { pauseAutoRotate(); wakeOnInteraction(); });
+      canvas.addEventListener('touchstart', () => { pauseAutoRotate(); wakeOnInteraction(); }, { passive: true });
+      canvas.addEventListener('wheel', wakeOnInteraction, { passive: true });
+      let lastMoveWake = 0;
+      canvas.addEventListener('mousemove', () => {
+        const now = performance.now();
+        if (now - lastMoveWake > 500) { lastMoveWake = now; wakeOnInteraction(); }
+      }, { passive: true });
       canvas.addEventListener('mouseup', scheduleResumeAutoRotate);
       canvas.addEventListener('touchend', scheduleResumeAutoRotate);
+      canvas.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        this.webglLost = true;
+        console.warn('[GlobeMap] WebGL context lost — will restore when browser recovers');
+      });
+      canvas.addEventListener('webglcontextrestored', () => {
+        this.webglLost = false;
+        console.info('[GlobeMap] WebGL context restored');
+        this.flushMarkers();
+      });
     }
 
     // Wire HTML marker layer
@@ -532,6 +612,8 @@ export class GlobeMap {
       .htmlLng((d: object) => (d as GlobeMarker)._lng)
       .htmlAltitude((d: object) => {
         const m = d as GlobeMarker;
+        if (m._kind === 'satFootprint') return 0;
+        if (m._kind === 'satellite') return (m as SatelliteMarker).alt / 6371;
         if (m._kind === 'flight' || m._kind === 'vessel') return 0.012;
         if (m._kind === 'hotspot') return 0.005;
         return 0.003;
@@ -561,10 +643,18 @@ export class GlobeMap {
 
     // Path accessors — set once
     (globe as any)
-      .pathPoints((d: GlobePath) => d.points)
-      .pathPointLat((p: [number, number]) => p[1])
-      .pathPointLng((p: [number, number]) => p[0])
+      .pathPoints((d: GlobePath) => d?.points ?? [])
+      .pathPointLat((p: number[]) => p[1])
+      .pathPointLng((p: number[]) => p[0])
+      .pathPointAlt((p: number[], _idx: number, path: object) =>
+        (path as GlobePath)?.pathType === 'orbit' && p.length > 2 ? (p[2] ?? 0) / 6371 : 0
+      )
       .pathColor((d: GlobePath) => {
+        if (!d) return 'rgba(180,160,255,0.6)';
+        if (d.pathType === 'orbit') {
+          const colors: Record<string, string> = { CN: 'rgba(255,32,32,0.4)', RU: 'rgba(255,136,0,0.4)', US: 'rgba(68,136,255,0.4)', EU: 'rgba(68,204,68,0.4)' };
+          return colors[d.country || ''] || 'rgba(200,200,255,0.3)';
+        }
         if (d.pathType === 'cable') {
           if (this.cableFaultIds.has(d.id))    return '#ff3030';
           if (this.cableDegradedIds.has(d.id)) return '#ff8800';
@@ -572,13 +662,49 @@ export class GlobeMap {
         }
         if (d.pathType === 'oil')   return 'rgba(255,140,0,0.6)';
         if (d.pathType === 'gas')   return 'rgba(80,220,120,0.6)';
+        if (d.pathType === 'stormTrack') return 'rgba(255,100,100,0.8)';
+        if (d.pathType === 'stormHistory') {
+          const w = d.windKt || 0;
+          if (w >= 137) return 'rgba(255,96,96,0.8)';
+          if (w >= 96) return 'rgba(255,140,0,0.8)';
+          if (w >= 64) return 'rgba(255,231,117,0.8)';
+          if (w >= 34) return 'rgba(94,186,255,0.8)';
+          return 'rgba(160,160,160,0.6)';
+        }
         return 'rgba(180,160,255,0.6)';
       })
-      .pathStroke((d: GlobePath) => d.pathType === 'cable' ? 0.3 : 0.6)
-      .pathDashLength((d: GlobePath) => d.pathType === 'cable' ? 1 : 0.6)
-      .pathDashGap((d: GlobePath) => d.pathType === 'cable' ? 0 : 0.25)
-      .pathDashAnimateTime((d: GlobePath) => d.pathType === 'cable' ? 0 : 5000)
-      .pathLabel((d: GlobePath) => d.name);
+      .pathStroke((d: GlobePath) => {
+        if (!d) return 0.6;
+        if (d.pathType === 'orbit') return 0.3;
+        if (d.pathType === 'cable') return 0.3;
+        if (d.pathType === 'stormTrack' || d.pathType === 'stormHistory') return 1.2;
+        return 0.6;
+      })
+      .pathDashLength((d: GlobePath) => {
+        if (!d) return 0.6;
+        if (d.pathType === 'orbit') return 0.4;
+        if (d.pathType === 'cable') return 1;
+        if (d.pathType === 'stormTrack') return 0.8;
+        if (d.pathType === 'stormHistory') return 1;
+        return 0.6;
+      })
+      .pathDashGap((d: GlobePath) => {
+        if (!d) return 0.25;
+        if (d.pathType === 'orbit') return 0.15;
+        if (d.pathType === 'cable') return 0;
+        if (d.pathType === 'stormTrack') return 0.4;
+        if (d.pathType === 'stormHistory') return 0;
+        return 0.25;
+      })
+      .pathDashAnimateTime((d: GlobePath) => {
+        if (!d) return 5000;
+        if (d.pathType === 'orbit') return 0;
+        if (d.pathType === 'cable') return 0;
+        if (d.pathType === 'stormTrack') return 3000;
+        if (d.pathType === 'stormHistory') return 0;
+        return 5000;
+      })
+      .pathLabel((d: GlobePath) => d?.name ?? '');
 
     // Polygon accessors — set once
     (globe as any)
@@ -586,16 +712,22 @@ export class GlobeMap {
       .polygonCapColor((d: GlobePolygon) => {
         if (d._kind === 'cii') return GlobeMap.CII_GLOBE_COLORS[d.level!] ?? 'rgba(0,0,0,0)';
         if (d._kind === 'conflict') return GlobeMap.CONFLICT_CAP[d.intensity!] ?? GlobeMap.CONFLICT_CAP.low;
+        if (d._kind === 'imageryFootprint') return 'rgba(0,180,255,0.08)';
+        if (d._kind === 'forecastCone') return 'rgba(255,140,60,0.2)';
         return 'rgba(255,60,60,0.15)';
       })
       .polygonSideColor((d: GlobePolygon) => {
         if (d._kind === 'cii') return 'rgba(0,0,0,0)';
         if (d._kind === 'conflict') return GlobeMap.CONFLICT_SIDE[d.intensity!] ?? GlobeMap.CONFLICT_SIDE.low;
+        if (d._kind === 'imageryFootprint') return 'rgba(0,180,255,0.04)';
+        if (d._kind === 'forecastCone') return 'rgba(255,140,60,0.1)';
         return 'rgba(255,60,60,0.08)';
       })
       .polygonStrokeColor((d: GlobePolygon) => {
         if (d._kind === 'cii') return 'rgba(80,80,80,0.3)';
         if (d._kind === 'conflict') return GlobeMap.CONFLICT_STROKE[d.intensity!] ?? GlobeMap.CONFLICT_STROKE.low;
+        if (d._kind === 'imageryFootprint') return '#00b4ff';
+        if (d._kind === 'forecastCone') return 'rgba(255,140,60,0.5)';
         return '#ff4444';
       })
       .polygonAltitude((d: GlobePolygon) => {
@@ -640,6 +772,10 @@ export class GlobeMap {
     this.flushArcs();
     this.flushPaths();
     this.flushPolygons();
+
+    // Idle rendering: pause animation when nothing is happening
+    this.setupVisibilityHandler();
+    this.scheduleIdlePause();
 
     // Load countries GeoJSON for CII choropleth
     getCountriesGeoJson().then(geojson => {
@@ -839,6 +975,9 @@ export class GlobeMap {
       const sc = d.severity === 'severe' ? '#ff2020' : d.severity === 'major' ? '#ff6600' : d.severity === 'moderate' ? '#ffaa00' : '#ffee44';
       el.innerHTML = `<div style="font-size:11px;color:${sc};text-shadow:0 0 4px ${sc}88;">✈</div>`;
       el.title = `${d.iata} — ${d.severity}`;
+    } else if (d._kind === 'notamRing') {
+      el.innerHTML = `<div style="position:relative;width:20px;height:20px;display:flex;align-items:center;justify-content:center;"><div style="position:absolute;inset:-3px;border-radius:50%;border:2px solid #ff282888;${this.pulseStyle('2s')}"></div><div style="font-size:12px;color:#ff2828;text-shadow:0 0 6px #ff282888;">⚠</div></div>`;
+      el.title = `NOTAM: ${d.name}`;
     } else if (d._kind === 'cableAdvisory') {
       const sc = d.severity === 'fault' ? '#ff2020' : '#ff8800';
       el.innerHTML = `<div style="font-size:11px;color:${sc};text-shadow:0 0 4px ${sc}88;">🔌</div>`;
@@ -862,6 +1001,18 @@ export class GlobeMap {
       const sc = d.severity === 'high' ? '#ff2020' : d.severity === 'elevated' ? '#ff8800' : '#44aaff';
       el.innerHTML = `<div style="font-size:11px;color:${sc};text-shadow:0 0 4px ${sc}88;">⛴</div>`;
       el.title = d.name;
+    } else if (d._kind === 'satellite') {
+      const c = SAT_COUNTRY_COLORS[(d as SatelliteMarker).country] || '#ccccff';
+      el.innerHTML = `<div class="sat-hit" style="width:16px;height:16px;display:flex;align-items:center;justify-content:center;margin:-8px 0 0 -8px;color:${c}"><div class="sat-dot" style="width:5px;height:5px;border-radius:50%;background:${c};box-shadow:0 0 6px 2px ${c}88;transition:transform .15s,box-shadow .15s;"></div></div>`;
+      el.title = `${(d as SatelliteMarker).name}`;
+    } else if (d._kind === 'satFootprint') {
+      const colors: Record<string, string> = { CN: '#ff2020', RU: '#ff8800', US: '#4488ff', EU: '#44cc44' };
+      const c = colors[(d as SatFootprintMarker).country] || '#ccccff';
+      el.innerHTML = `<div style="width:12px;height:12px;border-radius:50%;border:1px solid ${c}66;background:${c}15;margin:-6px 0 0 -6px"></div>`;
+      el.style.pointerEvents = 'none';
+    } else if (d._kind === 'imageryScene') {
+      el.innerHTML = `<div style="font-size:11px;color:#00b4ff;text-shadow:0 0 4px #00b4ff88;">&#128752;</div>`;
+      el.title = `${d.satellite} ${d.datetime}`;
     } else if (d._kind === 'flash') {
       el.style.pointerEvents = 'none';
       el.innerHTML = `
@@ -909,9 +1060,11 @@ export class GlobeMap {
       'color:#d4d4d4',
       'max-width:240px',
       'z-index:1000',
-      'pointer-events:none',
+      'pointer-events:auto',
       'line-height:1.5',
     ].join(';');
+
+    const closeBtn = `<button style="position:absolute;top:4px;right:4px;background:none;border:none;color:#888;cursor:pointer;font-size:14px;line-height:1;padding:2px 4px;" aria-label="Close">\u00D7</button>`;
 
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -975,7 +1128,7 @@ export class GlobeMap {
       const gc = d.level === 'high' ? '#ff2020' : '#ff8800';
       html = `<span style="color:${gc};font-weight:bold;">📡 GPS Jamming</span>` +
              `<br><span style="opacity:.7;">Level: ${esc(d.level)}</span>` +
-             `<br><span style="opacity:.5;">${d.pct.toFixed(0)}% affected</span>`;
+             `<br><span style="opacity:.5;">NP avg: ${d.npAvg.toFixed(2)}</span>`;
     } else if (d._kind === 'tech') {
       html = `<span style="color:#44aaff;font-weight:bold;">💻 ${esc(d.title.slice(0, 50))}</span>` +
              `<br><span style="opacity:.7;">${esc(d.country)}</span>` +
@@ -1028,6 +1181,10 @@ export class GlobeMap {
              `<br><span style="opacity:.7;">${esc(d.delayType.replace(/_/g, ' '))}` +
              (d.avgDelayMinutes > 0 ? ` · avg ${d.avgDelayMinutes}min` : '') + `</span>` +
              (d.reason ? `<br><span style="opacity:.5;white-space:normal;display:block;">${esc(d.reason.slice(0, 70))}</span>` : '');
+    } else if (d._kind === 'notamRing') {
+      html = `<span style="color:#ff2828;font-weight:bold;">⚠ NOTAM CLOSURE</span>` +
+             `<br><span style="opacity:.7;">${esc(d.name)}</span>` +
+             (d.reason ? `<br><span style="opacity:.5;white-space:normal;display:block;">${esc(d.reason.slice(0, 100))}</span>` : '');
     } else if (d._kind === 'cableAdvisory') {
       const sc = d.severity === 'fault' ? '#ff2020' : '#ff8800';
       html = `<span style="color:${sc};font-weight:bold;">🔌 ${esc(d.severity.toUpperCase())} — ${esc(d.title.slice(0, 50))}</span>` +
@@ -1048,25 +1205,62 @@ export class GlobeMap {
       const tc = d.threatLevel === 'critical' ? '#ff2020' : d.threatLevel === 'high' ? '#ff6600' : d.threatLevel === 'elevated' ? '#ffaa00' : '#44aaff';
       html = `<span style="color:${tc};font-weight:bold;">📰 ${esc(d.title.slice(0, 60))}</span>` +
              `<br><span style="opacity:.5;">${esc(d.threatLevel)}</span>`;
+    } else if (d._kind === 'satellite') {
+      const sc = SAT_COUNTRY_COLORS[d.country] || '#ccccff';
+      const altBand = d.alt < 2000 ? 'LEO' : d.alt < 35786 ? 'MEO' : 'GEO';
+      const operatorName = SAT_OPERATOR_NAME[d.country] || getCountryNameByCode(d.country) || d.country;
+      const overHit = getCountryAtCoordinates(d._lat, d._lng);
+      const overLabel = overHit ? overHit.name : 'Ocean';
+      html = `<div style="min-width:220px;">` +
+        `<span style="color:${sc};font-weight:bold;font-size:12px;">${SAT_TYPE_EMOJI[d.type] || '\u{1F6F0}'} ${esc(d.name)}</span>` +
+        `<div style="opacity:.5;font-size:10px;margin:2px 0 6px;">NORAD ${esc(d.id)}</div>` +
+        `<div style="display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:11px;">` +
+        `<span style="opacity:.5;">Type</span><span>${esc(SAT_TYPE_LABEL[d.type] || d.type)}</span>` +
+        `<span style="opacity:.5;">Operator</span><span style="color:${sc}">${esc(operatorName)}</span>` +
+        `<span style="opacity:.5;">Over</span><span>${esc(overLabel)}</span>` +
+        `<span style="opacity:.5;">Alt. band</span><span>${altBand} \u00B7 ${Math.round(d.alt)} km</span>` +
+        `<span style="opacity:.5;">Incl.</span><span>${d.inclination.toFixed(1)}\u00B0</span>` +
+        `<span style="opacity:.5;">Velocity</span><span>${d.velocity.toFixed(1)} km/s</span>` +
+        `</div></div>`;
+    } else if (d._kind === 'imageryScene') {
+      html = `<span style="color:#00b4ff;font-weight:bold;">&#128752; ${esc(d.satellite)}</span>` +
+             `<br><span style="opacity:.7;">${esc(d.datetime)}</span>` +
+             `<br><span style="opacity:.5;">Res: ${d.resolutionM}m · ${esc(d.mode)}</span>`;
     }
-    el.innerHTML = html;
+    el.innerHTML = `<div style="padding-right:16px;position:relative;">${closeBtn}${html}</div>`;
+    if (d._kind === 'satellite') el.style.maxWidth = '300px';
+    el.querySelector('button')?.addEventListener('click', () => this.hideTooltip());
+    el.addEventListener('mouseenter', () => {
+      if (this.tooltipHideTimer) { clearTimeout(this.tooltipHideTimer); this.tooltipHideTimer = null; }
+    });
+    el.addEventListener('mouseleave', () => {
+      this.tooltipHideTimer = setTimeout(() => this.hideTooltip(), 2000);
+    });
 
-    // Position relative to container
+    this.container.appendChild(el);
+
+    // Position relative to container using measured dimensions
     const ar = anchor.getBoundingClientRect();
     const cr = this.container.getBoundingClientRect();
-    let left = ar.left - cr.left + (anchor.offsetWidth ?? 14) + 6;
-    let top  = ar.top  - cr.top  - 8;
-    left = Math.max(4, Math.min(left, cr.width  - 248));
-    top  = Math.max(4, Math.min(top,  cr.height - 80));
+    const left = Math.max(4, Math.min(
+      ar.left - cr.left + (anchor.offsetWidth ?? 14) + 6,
+      cr.width - el.offsetWidth - 4
+    ));
+    const top = Math.max(4, Math.min(
+      ar.top - cr.top - 8,
+      cr.height - el.offsetHeight - 4
+    ));
     el.style.left = left + 'px';
     el.style.top  = top  + 'px';
 
-    this.container.appendChild(el);
     this.tooltipEl = el;
-    setTimeout(() => this.hideTooltip(), 3500);
+    if (this.tooltipHideTimer) clearTimeout(this.tooltipHideTimer);
+    const hideDelay = d._kind === 'satellite' ? 6000 : 3500;
+    this.tooltipHideTimer = setTimeout(() => this.hideTooltip(), hideDelay);
   }
 
   private hideTooltip(): void {
+    if (this.tooltipHideTimer) { clearTimeout(this.tooltipHideTimer); this.tooltipHideTimer = null; }
     this.tooltipEl?.remove();
     this.tooltipEl = null;
   }
@@ -1127,6 +1321,7 @@ export class GlobeMap {
         <span>${t('components.deckgl.layersTitle')}</span>
         <button class="toggle-collapse">&#9660;</button>
       </div>
+      <input type="text" class="layer-search" placeholder="${t('components.deckgl.layerSearch')}" autocomplete="off" spellcheck="false" />
       <div class="toggle-list" style="max-height:32vh;overflow-y:auto;scrollbar-width:thin;">
         ${layers.map(({ key, label, icon, premium }) => {
           const isLocked = premium === 'locked' && !_wmKey;
@@ -1159,12 +1354,16 @@ export class GlobeMap {
     });
     this.enforceLayerLimit();
 
+    bindLayerSearch(el);
+    const searchEl = el.querySelector('.layer-search') as HTMLElement | null;
+
     const collapseBtn = el.querySelector('.toggle-collapse');
     const list = el.querySelector('.toggle-list') as HTMLElement | null;
     let collapsed = false;
     collapseBtn?.addEventListener('click', () => {
       collapsed = !collapsed;
       if (list) list.style.display = collapsed ? 'none' : '';
+      if (searchEl) searchEl.style.display = collapsed ? 'none' : '';
       if (collapseBtn) (collapseBtn as HTMLElement).innerHTML = collapsed ? '&#9654;' : '&#9660;';
     });
 
@@ -1181,7 +1380,7 @@ export class GlobeMap {
   // ─── Flush all current data to globe ──────────────────────────────────────
 
   private flushMarkers(): void {
-    if (!this.globe || !this.initialized || this.destroyed) return;
+    if (!this.globe || !this.initialized || this.destroyed || this.webglLost) return;
     if (this.renderPaused) { this.pendingFlushWhilePaused = true; return; }
 
     if (!this.flushMaxTimer) {
@@ -1200,7 +1399,8 @@ export class GlobeMap {
   }
 
   private flushMarkersImmediate(): void {
-    if (!this.globe || !this.initialized || this.destroyed) return;
+    if (!this.globe || !this.initialized || this.destroyed || this.webglLost) return;
+    this.wakeGlobe();
 
     const markers: GlobeMarker[] = [];
     if (this.layers.hotspots) markers.push(...this.hotspots);
@@ -1222,7 +1422,10 @@ export class GlobeMap {
     if (this.layers.datacenters) markers.push(...this.datacenterMarkers);
     if (this.layers.waterways) markers.push(...this.waterwayMarkers);
     if (this.layers.minerals) markers.push(...this.mineralMarkers);
-    if (this.layers.flights) markers.push(...this.flightDelayMarkers);
+    if (this.layers.flights) {
+      markers.push(...this.flightDelayMarkers);
+      markers.push(...this.notamRingMarkers);
+    }
     if (this.layers.ais) markers.push(...this.aisMarkers);
     if (this.layers.iranAttacks) markers.push(...this.iranMarkers);
     if (this.layers.outages) markers.push(...this.outageMarkers);
@@ -1233,6 +1436,11 @@ export class GlobeMap {
     if (this.layers.displacement) markers.push(...this.displacementMarkers);
     if (this.layers.climate) markers.push(...this.climateMarkers);
     if (this.layers.gpsJamming) markers.push(...this.gpsJamMarkers);
+    if (this.layers.satellites) {
+      markers.push(...this.satelliteMarkers);
+      markers.push(...this.satelliteFootprintMarkers);
+      markers.push(...this.imagerySceneMarkers);
+    }
     if (this.layers.techEvents) markers.push(...this.techMarkers);
     if (this.layers.cables) {
       markers.push(...this.cableAdvisoryMarkers);
@@ -1247,19 +1455,23 @@ export class GlobeMap {
   }
 
   private flushArcs(): void {
-    if (!this.globe || !this.initialized || this.destroyed) return;
+    if (!this.globe || !this.initialized || this.destroyed || this.webglLost) return;
+    this.wakeGlobe();
     const segments = this.layers.tradeRoutes ? this.tradeRouteSegments : [];
     (this.globe as any).arcsData(segments);
   }
 
   private flushPaths(): void {
-    if (!this.globe || !this.initialized || this.destroyed) return;
+    if (!this.globe || !this.initialized || this.destroyed || this.webglLost) return;
+    this.wakeGlobe();
     const showCables = this.layers.cables;
     const showPipelines = this.layers.pipelines;
     const paths = (showCables && showPipelines)
       ? this.globePaths
       : this.globePaths.filter(p => p.pathType === 'cable' ? showCables : showPipelines);
-    (this.globe as any).pathsData(paths);
+    const orbitPaths = this.layers.satellites ? this.satelliteTrailPaths : [];
+    const stormPaths = this.layers.natural ? this.stormTrackPaths : [];
+    (this.globe as any).pathsData([...paths, ...orbitPaths, ...stormPaths]);
   }
 
   private static readonly CII_GLOBE_COLORS: Record<string, string> = {
@@ -1285,7 +1497,8 @@ export class GlobeMap {
   }
 
   private flushPolygons(): void {
-    if (!this.globe || !this.initialized || this.destroyed) return;
+    if (!this.globe || !this.initialized || this.destroyed || this.webglLost) return;
+    this.wakeGlobe();
     const polys: GlobePolygon[] = [];
 
     if (this.layers.conflicts) {
@@ -1329,6 +1542,14 @@ export class GlobeMap {
           polys.push({ coords: ring, name, _kind: 'cii', level: entry.level, score: entry.score });
         }
       }
+    }
+
+    if (this.layers.satellites) {
+      polys.push(...this.imageryFootprintPolygons);
+    }
+
+    if (this.layers.natural) {
+      polys.push(...this.stormConePolygons);
     }
 
     (this.globe as any).polygonsData(polys);
@@ -1517,7 +1738,54 @@ export class GlobeMap {
       category: e.category ?? '',
       title: e.title ?? '',
     }));
+
+    const trackPaths: GlobePath[] = [];
+    const conePolys: GlobePolygon[] = [];
+
+    for (const e of events ?? []) {
+      if (e.forecastTrack?.length) {
+        trackPaths.push({
+          id: `storm-forecast-${e.id}`,
+          name: e.stormName || e.title || '',
+          points: [
+            [e.lon, e.lat, 0],
+            ...e.forecastTrack.map(p => [p.lon, p.lat, 0]),
+          ],
+          pathType: 'stormTrack',
+          status: 'active',
+        });
+      }
+      if (e.pastTrack?.length) {
+        let segIdx = 0;
+        for (let i = 0; i < e.pastTrack.length - 1; i++) {
+          const a = e.pastTrack[i]!;
+          const b = e.pastTrack[i + 1]!;
+          trackPaths.push({
+            id: `storm-past-${e.id}-${segIdx++}`,
+            name: e.stormName || e.title || '',
+            points: [[a.lon, a.lat, 0], [b.lon, b.lat, 0]],
+            pathType: 'stormHistory',
+            status: 'active',
+            windKt: b.windKt ?? a.windKt ?? 0,
+          });
+        }
+      }
+      if (e.conePolygon?.length) {
+        for (const ring of e.conePolygon) {
+          conePolys.push({
+            coords: [ring],
+            name: `${e.stormName || e.title || ''} Forecast Cone`,
+            _kind: 'forecastCone',
+          });
+        }
+      }
+    }
+
+    this.stormTrackPaths = trackPaths;
+    this.stormConePolygons = conePolys;
     this.flushMarkers();
+    this.flushPaths();
+    this.flushPolygons();
   }
 
   // ─── Layer control ────────────────────────────────────────────────────────
@@ -1528,6 +1796,9 @@ export class GlobeMap {
     ['pipelines',     { markers: false, arcs: false, paths: true,  polygons: false }],
     ['conflicts',     { markers: true,  arcs: false, paths: false, polygons: true }],
     ['cables',        { markers: true,  arcs: false, paths: true,  polygons: false }],
+    ['satellites',        { markers: true,  arcs: false, paths: true,  polygons: true }],
+    ['notamOverlay',      { markers: true,  arcs: false, paths: false, polygons: false }],
+    ['natural',           { markers: true,  arcs: false, paths: true,  polygons: true }],
   ]);
 
   private flushLayerChannels(layer: keyof MapLayers): void {
@@ -1537,6 +1808,9 @@ export class GlobeMap {
     if (ch.arcs)     this.flushArcs();
     if (ch.paths)    this.flushPaths();
     if (ch.polygons) this.flushPolygons();
+    if (layer === 'satellites' && this.satBeamGroup) {
+      this.satBeamGroup.visible = !!this.layers.satellites;
+    }
   }
 
   public setLayers(layers: MapLayers): void {
@@ -1556,6 +1830,9 @@ export class GlobeMap {
     if (needArcs)     this.flushArcs();
     if (needPaths)    this.flushPaths();
     if (needPolygons) this.flushPolygons();
+    if (prev.satellites !== layers.satellites && this.satBeamGroup) {
+      this.satBeamGroup.visible = !!layers.satellites;
+    }
   }
 
   public enableLayer(layer: keyof MapLayers): void {
@@ -1568,13 +1845,16 @@ export class GlobeMap {
   }
 
   private layerWarningShown = false;
+  private lastActiveLayerCount = 0;
 
   private enforceLayerLimit(): void {
     if (!this.layerTogglesEl) return;
     const WARN_THRESHOLD = 6;
     const activeCount = Array.from(this.layerTogglesEl.querySelectorAll<HTMLInputElement>('.layer-toggle input'))
       .filter(i => i.checked).length;
-    if (activeCount >= WARN_THRESHOLD && !this.layerWarningShown) {
+    const increasing = activeCount > this.lastActiveLayerCount;
+    this.lastActiveLayerCount = activeCount;
+    if (activeCount >= WARN_THRESHOLD && increasing && !this.layerWarningShown) {
       this.layerWarningShown = true;
       showLayerWarning(WARN_THRESHOLD);
     } else if (activeCount < WARN_THRESHOLD) {
@@ -1598,12 +1878,14 @@ export class GlobeMap {
   public setView(view: MapView): void {
     this.currentView = view;
     if (!this.globe) return;
+    this.wakeGlobe();
     const pov = GlobeMap.VIEW_POVS[view] ?? GlobeMap.VIEW_POVS.global;
     this.globe.pointOfView(pov, 1200);
   }
 
   public setCenter(lat: number, lon: number, zoom?: number): void {
     if (!this.globe) return;
+    this.wakeGlobe();
     // Map deck.gl zoom levels → globe.gl altitude
     // deck.gl: 2=world, 3=continent, 4=country, 5=region, 6+=city
     // globe.gl altitude: 1.8=full globe, 0.6=country, 0.15=city
@@ -1629,6 +1911,7 @@ export class GlobeMap {
 
   public resize(): void {
     if (!this.globe || this.destroyed) return;
+    this.wakeGlobe();
     this.applyRenderQuality(undefined, this.container.clientWidth, this.container.clientHeight);
   }
 
@@ -1772,6 +2055,47 @@ export class GlobeMap {
       }));
     this.flushMarkers();
   }
+  public setImageryScenes(scenes: ImageryScene[]): void {
+    const valid = (scenes ?? []).filter(s => {
+      try {
+        const geom = JSON.parse(s.geometryGeojson);
+        return geom?.type === 'Polygon' && geom.coordinates?.[0]?.[0];
+      } catch { return false; }
+    });
+    this.imagerySceneMarkers = valid.map(s => {
+      const geom = JSON.parse(s.geometryGeojson);
+      const coords = geom.coordinates[0] as number[][];
+      const lats = coords.map(c => c[1] ?? 0);
+      const lons = coords.map(c => c[0] ?? 0);
+      const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+      const centerLon = (Math.min(...lons) + Math.max(...lons)) / 2;
+      return {
+        _kind: 'imageryScene' as const,
+        _lat: centerLat,
+        _lng: centerLon,
+        satellite: s.satellite,
+        datetime: s.datetime,
+        resolutionM: s.resolutionM,
+        mode: s.mode,
+        previewUrl: s.previewUrl,
+      };
+    });
+    this.imageryFootprintPolygons = valid.map(s => {
+      const geom = JSON.parse(s.geometryGeojson);
+      return {
+        coords: geom.coordinates as number[][][],
+        name: `${s.satellite} ${s.datetime}`,
+        _kind: 'imageryFootprint' as const,
+        satellite: s.satellite,
+        datetime: s.datetime,
+      };
+    });
+    if (this.layers.satellites) {
+      this.flushMarkers();
+      this.flushPolygons();
+    }
+  }
+
   public setOutages(outages: InternetOutage[]): void {
     this.outageMarkers = (outages ?? []).filter(o => o.lat != null && o.lon != null).map(o => ({
       _kind: 'outage' as const,
@@ -1860,6 +2184,15 @@ export class GlobeMap {
         delayType: d.delayType,
         avgDelayMinutes: d.avgDelayMinutes,
         reason: d.reason ?? '',
+      }));
+    this.notamRingMarkers = (delays ?? [])
+      .filter(d => d.lat != null && d.lon != null && d.delayType === 'closure')
+      .map(d => ({
+        _kind: 'notamRing' as const,
+        _lat: d.lat,
+        _lng: d.lon,
+        name: d.name || d.iata,
+        reason: d.reason || 'Airspace closure',
       }));
     this.flushMarkers();
   }
@@ -1964,9 +2297,159 @@ export class GlobeMap {
       _lng: h.lon,
       id: h.h3,
       level: h.level,
-      pct: h.pct ?? 0,
+      npAvg: h.npAvg ?? 0,
     }));
     this.flushMarkers();
+  }
+
+  private static latLngAltToVec3(lat: number, lng: number, alt: number, vec3Ctor: any): any {
+    const GLOBE_R = 100;
+    const r = GLOBE_R * (1 + alt / 6371);
+    const phi = (90 - lat) * (Math.PI / 180);
+    const theta = (90 - lng) * (Math.PI / 180);
+    const sinPhi = Math.sin(phi);
+    return new vec3Ctor(
+      r * sinPhi * Math.cos(theta),
+      r * Math.cos(phi),
+      r * sinPhi * Math.sin(theta),
+    );
+  }
+
+  private async rebuildSatBeams(positions: SatellitePosition[]): Promise<void> {
+    if (!this.globe || this.destroyed) return;
+    const THREE = await import('three');
+    const scene = this.globe.scene();
+
+    if (this.satBeamGroup) {
+      scene.remove(this.satBeamGroup);
+      this.satBeamGroup.traverse((child: any) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) child.material.dispose();
+      });
+    }
+    this.satBeamGroup = new THREE.Group();
+    this.satBeamGroup.name = 'satBeams';
+
+    if (!this.layers.satellites || positions.length === 0) return;
+
+    const colorMap: Record<string, number> = {
+      CN: 0xff2020, RU: 0xff8800, US: 0x4488ff, EU: 0x44cc44,
+      KR: 0xaa66ff, IN: 0xff66aa, TR: 0xff4466, OTHER: 0xccccff,
+    };
+
+    const RAY_COUNT = 6;
+    const GLOBE_R = 100;
+    const BEAM_HEIGHT = 25;
+    const GROUND_SPREAD_RAD = 4.0;
+
+    const allRayPositions: number[] = [];
+    const allRayColors: number[] = [];
+    const allConePositions: number[] = [];
+    const allConeColors: number[] = [];
+
+    const tmpColor = new THREE.Color();
+
+    for (const s of positions) {
+      const groundCenter = GlobeMap.latLngAltToVec3(s.lat, s.lng, 0, THREE.Vector3);
+      const beamTop = new THREE.Vector3().copy(groundCenter).normalize().multiplyScalar(GLOBE_R + BEAM_HEIGHT);
+
+      const hex = colorMap[s.country] ?? 0xccccff;
+      tmpColor.setHex(hex);
+      const r = tmpColor.r, g = tmpColor.g, b = tmpColor.b;
+
+      const dir = new THREE.Vector3().copy(groundCenter).normalize().negate();
+      const up = new THREE.Vector3(0, 1, 0);
+      if (Math.abs(dir.dot(up)) > 0.99) up.set(1, 0, 0);
+      const right = new THREE.Vector3().crossVectors(dir, up).normalize();
+      const forward = new THREE.Vector3().crossVectors(right, dir).normalize();
+
+      const groundPts: InstanceType<typeof THREE.Vector3>[] = [];
+      for (let i = 0; i < RAY_COUNT; i++) {
+        const angle = (i / RAY_COUNT) * Math.PI * 2;
+        const gp = new THREE.Vector3()
+          .copy(groundCenter)
+          .addScaledVector(right, Math.cos(angle) * GROUND_SPREAD_RAD)
+          .addScaledVector(forward, Math.sin(angle) * GROUND_SPREAD_RAD)
+          .normalize().multiplyScalar(GLOBE_R);
+        groundPts.push(gp);
+        allRayPositions.push(beamTop.x, beamTop.y, beamTop.z, gp.x, gp.y, gp.z);
+        allRayColors.push(r, g, b, r * 0.3, g * 0.3, b * 0.3);
+      }
+
+      for (let i = 0; i < RAY_COUNT; i++) {
+        const next = (i + 1) % RAY_COUNT;
+        const gi = groundPts[i]!;
+        const gn = groundPts[next]!;
+        allConePositions.push(
+          beamTop.x, beamTop.y, beamTop.z,
+          gi.x, gi.y, gi.z,
+          gn.x, gn.y, gn.z,
+        );
+        allConeColors.push(r, g, b, r * 0.2, g * 0.2, b * 0.2, r * 0.2, g * 0.2, b * 0.2);
+      }
+    }
+
+    if (allRayPositions.length > 0) {
+      const rayGeo = new THREE.BufferGeometry();
+      rayGeo.setAttribute('position', new THREE.Float32BufferAttribute(allRayPositions, 3));
+      rayGeo.setAttribute('color', new THREE.Float32BufferAttribute(allRayColors, 3));
+      const rayMat = new THREE.LineBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false,
+      });
+      this.satBeamGroup.add(new THREE.LineSegments(rayGeo, rayMat));
+    }
+
+    if (allConePositions.length > 0) {
+      const coneGeo = new THREE.BufferGeometry();
+      coneGeo.setAttribute('position', new THREE.Float32BufferAttribute(allConePositions, 3));
+      coneGeo.setAttribute('color', new THREE.Float32BufferAttribute(allConeColors, 3));
+      const coneMat = new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.1,
+        side: THREE.DoubleSide, depthWrite: false,
+      });
+      this.satBeamGroup.add(new THREE.Mesh(coneGeo, coneMat));
+    }
+
+    this.satBeamGroup.visible = !!this.layers.satellites;
+    scene.add(this.satBeamGroup);
+  }
+
+  public setSatellites(positions: SatellitePosition[]): void {
+    this.satelliteMarkers = positions.map(s => ({
+      _kind: 'satellite' as const,
+      _lat: s.lat,
+      _lng: s.lng,
+      id: s.noradId,
+      name: s.name,
+      country: s.country,
+      type: s.type,
+      alt: s.alt,
+      velocity: s.velocity,
+      inclination: s.inclination,
+    }));
+
+    this.satelliteFootprintMarkers = positions.map(s => ({
+      _kind: 'satFootprint' as const,
+      _lat: s.lat,
+      _lng: s.lng,
+      country: s.country,
+      noradId: s.noradId,
+    }));
+
+    this.satelliteTrailPaths = positions
+      .filter(s => s.trail && s.trail.length > 1)
+      .map(s => ({
+        id: `orbit-${s.noradId}`,
+        name: s.name,
+        points: [[s.lng, s.lat, s.alt], ...s.trail],
+        pathType: 'orbit' as const,
+        status: 'active',
+        country: s.country,
+      }));
+
+    this.rebuildSatBeams(positions);
+    this.flushMarkers();
+    this.flushPaths();
   }
   public setTechEvents(events: Array<{ id: string; title: string; lat: number; lng: number; country: string; daysUntil: number; [key: string]: any }>): void {
     this.techMarkers = (events ?? []).filter(e => e.lat != null && e.lng != null).map(e => ({
@@ -2006,21 +2489,21 @@ export class GlobeMap {
       this.cyanLight.position.set(-10, -10, -10);
       scene.add(this.cyanLight);
 
-      const outerGeo = new THREE.SphereGeometry(2.15, 64, 64);
+      const outerGeo = new THREE.SphereGeometry(2.15, 24, 24);
       const outerMat = new THREE.MeshBasicMaterial({
         color: 0x00d4ff, side: THREE.BackSide, transparent: true, opacity: 0.15,
       });
       this.outerGlow = new THREE.Mesh(outerGeo, outerMat);
       scene.add(this.outerGlow);
 
-      const innerGeo = new THREE.SphereGeometry(2.08, 64, 64);
+      const innerGeo = new THREE.SphereGeometry(2.08, 24, 24);
       const innerMat = new THREE.MeshBasicMaterial({
         color: 0x00a8cc, side: THREE.BackSide, transparent: true, opacity: 0.1,
       });
       this.innerGlow = new THREE.Mesh(innerGeo, innerMat);
       scene.add(this.innerGlow);
 
-      const starCount = 2000;
+      const starCount = 600;
       const starPositions = new Float32Array(starCount * 3);
       const starColors = new Float32Array(starCount * 3);
       for (let i = 0; i < starCount; i++) {
@@ -2042,14 +2525,19 @@ export class GlobeMap {
       this.starField = new THREE.Points(starGeo, starMat);
       scene.add(this.starField);
 
-      const animateExtras = () => {
-        if (this.destroyed) return;
-        if (this.outerGlow) this.outerGlow.rotation.y += 0.0003;
-        if (this.starField) this.starField.rotation.y += 0.00005;
-        this.extrasAnimFrameId = requestAnimationFrame(animateExtras);
-      };
-      animateExtras();
+      this.startExtrasLoop();
     } catch { /* cosmetic — ignore */ }
+  }
+
+  private startExtrasLoop(): void {
+    if (this.extrasAnimFrameId != null) return;
+    const animateExtras = () => {
+      if (this.destroyed) return;
+      if (this.outerGlow) this.outerGlow.rotation.y += 0.0003;
+      if (this.starField) this.starField.rotation.y += 0.00005;
+      this.extrasAnimFrameId = requestAnimationFrame(animateExtras);
+    };
+    animateExtras();
   }
 
   private removeEnhancedVisuals(): void {
@@ -2108,7 +2596,7 @@ export class GlobeMap {
   }
 
   private applyPerformanceProfile(profile: GlobePerformanceProfile): void {
-    if (!this.globe || !this.initialized || this.destroyed) return;
+    if (!this.globe || !this.initialized || this.destroyed || this.webglLost) return;
 
     const prevPulse = this._pulseEnabled;
     this._pulseEnabled = !profile.disablePulseAnimations;
@@ -2118,7 +2606,12 @@ export class GlobeMap {
       (this.globe as any).pathDashAnimateTime(0);
     } else {
       (this.globe as any).arcDashAnimateTime(5000);
-      (this.globe as any).pathDashAnimateTime((d: GlobePath) => d.pathType === 'cable' ? 0 : 5000);
+      (this.globe as any).pathDashAnimateTime((d: GlobePath) => {
+        if (!d) return 5000;
+        if (d.pathType === 'orbit') return 0;
+        if (d.pathType === 'cable') return 0;
+        return 5000;
+      });
     }
 
     if (profile.disableAtmosphere) {
@@ -2136,6 +2629,52 @@ export class GlobeMap {
     }
   }
 
+  // ─── Idle rendering control ──────────────────────────────────────────────
+  // globe.gl runs requestAnimationFrame at 60fps continuously.
+  // Pause when idle to save CPU; resume on interaction or data change.
+
+  private wakeGlobe(): void {
+    if (this.destroyed || !this.globe) return;
+    if (!this.isGlobeAnimating) {
+      this.isGlobeAnimating = true;
+      try { (this.globe as any).resumeAnimation?.(); } catch { /* best-effort */ }
+    }
+    this.scheduleIdlePause();
+  }
+
+  private scheduleIdlePause(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    // After 3 seconds of no interaction/data change, pause rendering
+    this.idleTimer = setTimeout(() => {
+      if (this.destroyed || !this.globe || this.renderPaused) return;
+      // Don't pause if auto-rotate is active (user expects continuous spin)
+      if (this.controls?.autoRotate) return;
+      this.isGlobeAnimating = false;
+      try { (this.globe as any).pauseAnimation?.(); } catch { /* best-effort */ }
+    }, 3000);
+  }
+
+  private setupVisibilityHandler(): void {
+    this.visibilityHandler = () => {
+      if (document.hidden) {
+        if (this.isGlobeAnimating && this.globe) {
+          this.isGlobeAnimating = false;
+          try { (this.globe as any).pauseAnimation?.(); } catch { /* ignore */ }
+        }
+        if (this.extrasAnimFrameId != null) {
+          cancelAnimationFrame(this.extrasAnimFrameId);
+          this.extrasAnimFrameId = null;
+        }
+      } else {
+        this.wakeGlobe();
+        if (this.outerGlow && this.extrasAnimFrameId == null) {
+          this.startExtrasLoop();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', this.visibilityHandler);
+  }
+
   // ─── Destroy ──────────────────────────────────────────────────────────────
 
   public destroy(): void {
@@ -2145,12 +2684,25 @@ export class GlobeMap {
     this.unsubscribeGlobeTexture = null;
     this.unsubscribeVisualPreset?.();
     this.unsubscribeVisualPreset = null;
+    if (this.visibilityHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
     this.destroyed = true;
     if (this.extrasAnimFrameId != null) {
       cancelAnimationFrame(this.extrasAnimFrameId);
       this.extrasAnimFrameId = null;
     }
     const scene = this.globe?.scene();
+    if (this.satBeamGroup && scene) {
+      scene.remove(this.satBeamGroup);
+      this.satBeamGroup.traverse((child: any) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) child.material.dispose();
+      });
+      this.satBeamGroup = null;
+    }
     for (const obj of [this.outerGlow, this.innerGlow, this.starField, this.cyanLight]) {
       if (!obj) continue;
       if (scene) scene.remove(obj);
@@ -2170,6 +2722,7 @@ export class GlobeMap {
     if (this.autoRotateTimer) clearTimeout(this.autoRotateTimer);
     this.reversedRingCache.clear();
     this.hideTooltip();
+    if (this.satHoverStyle) { this.satHoverStyle.remove(); this.satHoverStyle = null; }
     this.controls = null;
     this.controlsAutoRotateBeforePause = null;
     this.controlsDampingBeforePause = null;

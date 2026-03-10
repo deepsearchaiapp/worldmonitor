@@ -59,6 +59,12 @@ Sentry.init({
     /objectStoreNames/,
     /Unexpected identifier 'https'/,
     /Can't find variable: _0x/,
+    /Can't find variable: video/,
+    /hackLocationFailed is not defined/,
+    /userScripts is not defined/,
+    /NS_ERROR_ABORT/,
+    /DataCloneError.*could not be cloned/,
+    /cannot decode message/,
     /WKWebView was deallocated/,
     /Unexpected end of(?: JSON)? input/,
     /window\.android\.\w+ is not a function/,
@@ -186,7 +192,7 @@ Sentry.init({
     /Can't find variable: caches/,
     /crypto\.randomUUID is not a function/,
     /ucapi is not defined/,
-    /Identifier '(?:script|reportPage)' has already been declared/,
+    /Identifier '(?:script|reportPage|element)' has already been declared/,
     /getAttribute is not a function.*getAttribute\("role"\)/,
     /^TypeError: Internal error$/,
     /SCDynimacBridge/,
@@ -210,6 +216,11 @@ Sentry.init({
     /Attempting to run\(\), but is already running/,
     /Out of range source coordinates for DEM data/,
     /Invalid character: '\\0'/,
+    /Failed to execute 'unobserve' on 'IntersectionObserver'/,
+    /WKErrorDomain/,
+    /Content-Length header of network response exceeds response Body/,
+    /^Uncaught \[object ErrorEvent\]$/,
+    /trsMethod\w+ is not defined/,
   ],
   beforeSend(event) {
     const msg = event.exception?.values?.[0]?.value ?? '';
@@ -224,11 +235,15 @@ Sentry.init({
       const nonSentryFrames = frames.filter(f => f.filename && f.filename !== '<anonymous>' && !/\/sentry-[A-Za-z0-9_-]+\.js/.test(f.filename));
       if (nonSentryFrames.length > 0 && nonSentryFrames.every(f => /\/(map|maplibre|deck-stack)-[A-Za-z0-9_-]+\.js/.test(f.filename ?? ''))) return null;
     }
-    // Suppress Three.js/globe.gl TypeError crashes in main bundle (reading 'type' on undefined during WebGL traversal)
-    if (/reading 'type'|can't access property "type",? \w+ is undefined/.test(msg)) {
+    // Suppress Three.js/globe.gl TypeError crashes in main bundle (reading 'type'/'pathType'/'count'/'__globeObjType' on undefined during WebGL traversal/raycast)
+    if (/reading '(?:type|pathType|count|__globeObjType)'|can't access property "(?:type|pathType|count|__globeObjType)",? \w+ is (?:undefined|null)|undefined is not an object \(evaluating '\w+\.(?:pathType|count|__globeObjType)'\)|null is not an object \(evaluating '\w+\.__globeObjType'\)/.test(msg)) {
       const nonSentryFrames = frames.filter(f => f.filename && f.filename !== '<anonymous>' && !/\/sentry-[A-Za-z0-9_-]+\.js/.test(f.filename));
       const hasSourceMapped = nonSentryFrames.some(f => /\.(ts|tsx)$/.test(f.filename ?? '') || /^src\//.test(f.filename ?? ''));
       if (!hasSourceMapped) return null;
+    }
+    // Suppress minified Three.js/globe.gl crashes (e.g. "l is undefined" in raycast, "b is undefined" in update/initGlobe)
+    if (/^\w{1,2} is (?:undefined|not an object)$/.test(msg) && frames.length > 0) {
+      if (frames.some(f => /\/(main|index)-[A-Za-z0-9_-]+\.js/.test(f.filename ?? '') && /(raycast|update|initGlobe|traverse|render)/.test(f.function ?? ''))) return null;
     }
     // Suppress Three.js OrbitControls touch crashes (finger lifted during pinch-zoom)
     if (/undefined is not an object \(evaluating 't\.x'\)|Cannot read properties of undefined \(reading 'x'\)/.test(msg)) {
@@ -238,10 +253,12 @@ Sentry.init({
     }
     // Suppress deck.gl/maplibre null-access crashes with no usable stack trace (requestAnimationFrame wrapping)
     if (/null is not an object \(evaluating '\w{1,3}\.(id|type|style)'\)/.test(msg) && frames.length === 0) return null;
-    // Suppress TypeErrors from anonymous/injected scripts (no real source files)
-    if (/^TypeError:/.test(msg) && frames.length > 0 && frames.every(f => !f.filename || f.filename === '<anonymous>' || /^blob:/.test(f.filename))) return null;
-    // Suppress parentNode.insertBefore from injected scripts only (iOS WKWebView)
-    if (/parentNode\.insertBefore/.test(msg) && frames.every(f => !f.filename || f.filename === '<anonymous>' || /^blob:/.test(f.filename))) return null;
+    // Suppress TypeErrors from anonymous/injected scripts (no real source files or only inline page URL)
+    if (/^TypeError:/.test(msg) && frames.length > 0 && frames.every(f => !f.filename || f.filename === '<anonymous>' || /^blob:/.test(f.filename) || /^https?:\/\/[^/]+\/?$/.test(f.filename))) return null;
+    // Suppress parentNode.insertBefore from injected/inline scripts (iOS WKWebView, Apple Mail)
+    if (/parentNode\.insertBefore/.test(msg) && frames.every(f => !f.filename || f.filename === '<anonymous>' || /^blob:/.test(f.filename) || /^https?:\/\/[^/]+\/?$/.test(f.filename))) return null;
+    // Suppress Sentry breadcrumb DOM-measuring crashes (element.offsetWidth on detached DOM)
+    if (/evaluating '(?:element|e)\.offset(?:Width|Height)'/.test(msg) && frames.some(f => /\/sentry-[A-Za-z0-9_-]+\.js/.test(f.filename ?? ''))) return null;
     // Suppress errors originating entirely from blob: URLs (browser extensions)
     if (frames.length > 0 && frames.every(f => /^blob:/.test(f.filename ?? ''))) return null;
     // Suppress errors originating from UV proxy (Ultraviolet service worker)

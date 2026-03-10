@@ -175,6 +175,8 @@
     "sourceRegionGulfMena": "Körfez & MENA",
     "filterPanels": "Panelleri filtrele...",
     "resetLayout": "Düzeni sıfırla",
+    "resetLayoutTooltip": "Varsayılan panel düzenini geri yükle",
+    "unsavedChanges": "Kaydedilmemiş panel değişiklikleriniz var. Vazgeçilsin mi?",
     "panelCatCore": "Temel",
     "panelCatIntelligence": "İstihbarat",
     "panelCatRegionalNews": "Bölgesel Haberler",
@@ -375,6 +377,8 @@
       "noResults": "Sonuc bulunamadi",
       "commands": "Komutlar",
       "results": "Sonuçlar",
+      "seeAllCommands": "Tüm komutları gör",
+      "hideCommandList": "Geri",
       "navigate": "gezin",
       "select": "sec",
       "close": "kapat",
@@ -978,6 +982,7 @@
       "layerWarningDismiss": "Bir daha gösterme",
       "layerWarningOk": "Anladım",
       "layersTitle": "Katmanlar",
+      "layerSearch": "Katman ara...",
       "timeAll": "Tumu",
       "views": {
         "global": "Kuresel",
@@ -1007,6 +1012,7 @@
         "nuclearSites": "Nukleer Tesisler",
         "gammaIrradiators": "Gama Isinlama Tesisleri",
         "spaceports": "Uzay Ussu",
+        "satellites": "Yörünge Gözetimi",
         "pipelines": "Boru Hatlari",
         "militaryActivity": "Askeri Faaliyet",
         "shipTraffic": "Gemi Trafigi",
@@ -1738,9 +1744,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS Paraziti",
-      "interference": "Parazit",
-      "aircraftAffected": "Etkilenen Uçaklar",
-      "aircraftNormal": "Normal Uçaklar",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1756,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Hesaplanan"
+        "computed": "Hesaplanan",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Amerikalar",

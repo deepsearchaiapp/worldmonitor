@@ -8,6 +8,8 @@ import {
   STORAGE_KEYS,
   SITE_VARIANT,
 } from '@/config';
+import { sanitizeLayersForVariant } from '@/config/map-layer-definitions';
+import type { MapVariant } from '@/config/map-layer-definitions';
 import { initDB, cleanOldSnapshots, isAisConfigured, initAisStream, isOutagesConfigured, disconnectAisStream } from '@/services';
 import { mlWorker } from '@/services/ml-worker';
 import { getAiFlowSettings, subscribeAiFlowChange, isHeadlineMemoryEnabled } from '@/services/ai-flow-settings';
@@ -23,6 +25,7 @@ import type { MacroSignalsPanel } from '@/components/MacroSignalsPanel';
 import type { StrategicPosturePanel } from '@/components/StrategicPosturePanel';
 import type { StrategicRiskPanel } from '@/components/StrategicRiskPanel';
 import { isDesktopRuntime, waitForSidecarReady } from '@/services/runtime';
+import { getSecretState } from '@/services/runtime-config';
 import { BETA_MODE } from '@/config/beta';
 import { trackEvent, trackDeeplinkOpened } from '@/services/analytics';
 import { preloadCountryGeometry, getCountryNameByCode } from '@/services/country-geometry';
@@ -38,6 +41,7 @@ import { PanelLayoutManager } from '@/app/panel-layout';
 import { DataLoaderManager } from '@/app/data-loader';
 import { EventHandlerManager } from '@/app/event-handlers';
 import { resolveUserRegion, resolvePreciseUserCoordinates, type PreciseCoordinates } from '@/utils/user-location';
+import { showProBanner } from '@/components/ProBanner';
 
 const CYBER_LAYER_ENABLED = import.meta.env.VITE_ENABLE_CYBER_LAYER === 'true';
 
@@ -91,15 +95,13 @@ export class App {
       localStorage.removeItem(PANEL_ORDER_KEY + '-bottom');
       localStorage.removeItem(PANEL_ORDER_KEY + '-bottom-set');
       localStorage.removeItem(PANEL_SPANS_KEY);
-      mapLayers = { ...defaultLayers };
+      mapLayers = sanitizeLayersForVariant({ ...defaultLayers }, currentVariant as MapVariant);
       panelSettings = { ...DEFAULT_PANELS };
     } else {
-      mapLayers = loadFromStorage<MapLayers>(STORAGE_KEYS.mapLayers, defaultLayers);
-      // Happy variant: force non-happy layers off even if localStorage has stale true values
-      if (currentVariant === 'happy') {
-        const unhappyLayers: (keyof MapLayers)[] = ['conflicts', 'bases', 'hotspots', 'nuclear', 'irradiators', 'sanctions', 'military', 'protests', 'pipelines', 'waterways', 'ais', 'flights', 'spaceports', 'minerals', 'natural', 'fires', 'outages', 'cyberThreats', 'weather', 'economic', 'cables', 'datacenters', 'ucdpEvents', 'displacement', 'climate', 'iranAttacks'];
-        unhappyLayers.forEach(layer => { mapLayers[layer] = false; });
-      }
+      mapLayers = sanitizeLayersForVariant(
+        loadFromStorage<MapLayers>(STORAGE_KEYS.mapLayers, defaultLayers),
+        currentVariant as MapVariant,
+      );
       panelSettings = loadFromStorage<Record<string, PanelConfig>>(
         STORAGE_KEYS.panels,
         DEFAULT_PANELS
@@ -158,6 +160,17 @@ export class App {
       }
     }
 
+    // One-time migration: enable satellite imagery panel for existing users
+    const IMAGERY_PANEL_MIGRATION_KEY = 'worldmonitor-imagery-panel-enabled-v1';
+    if (!localStorage.getItem(IMAGERY_PANEL_MIGRATION_KEY)) {
+      if (panelSettings['satellite-imagery'] && !panelSettings['satellite-imagery'].enabled) {
+        panelSettings['satellite-imagery'].enabled = true;
+        saveToStorage(STORAGE_KEYS.panels, panelSettings);
+        console.log('[App] Migration: enabled satellite imagery panel');
+      }
+      localStorage.setItem(IMAGERY_PANEL_MIGRATION_KEY, 'done');
+    }
+
     // One-time migration: clear stale panel ordering and sizing state
     const LAYOUT_RESET_MIGRATION_KEY = 'worldmonitor-layout-reset-v2.5';
     if (!localStorage.getItem(LAYOUT_RESET_MIGRATION_KEY)) {
@@ -187,22 +200,8 @@ export class App {
 
     let initialUrlState: ParsedMapUrlState | null = parseMapUrlState(window.location.search, mapLayers);
     if (initialUrlState.layers) {
-      if (currentVariant === 'tech') {
-        const geoLayers: (keyof MapLayers)[] = ['conflicts', 'bases', 'hotspots', 'nuclear', 'irradiators', 'sanctions', 'military', 'protests', 'pipelines', 'waterways', 'ais', 'flights', 'spaceports', 'minerals'];
-        const urlLayers = initialUrlState.layers;
-        geoLayers.forEach(layer => {
-          urlLayers[layer] = false;
-        });
-      }
-      // For happy variant, force off all non-happy layers (including natural events)
-      if (currentVariant === 'happy') {
-        const unhappyLayers: (keyof MapLayers)[] = ['conflicts', 'bases', 'hotspots', 'nuclear', 'irradiators', 'sanctions', 'military', 'protests', 'pipelines', 'waterways', 'ais', 'flights', 'spaceports', 'minerals', 'natural', 'fires', 'outages', 'cyberThreats', 'weather', 'economic', 'cables', 'datacenters', 'ucdpEvents', 'displacement', 'climate', 'iranAttacks'];
-        const urlLayers = initialUrlState.layers;
-        unhappyLayers.forEach(layer => {
-          urlLayers[layer] = false;
-        });
-      }
-      mapLayers = initialUrlState.layers;
+      mapLayers = sanitizeLayersForVariant(initialUrlState.layers, currentVariant as MapVariant);
+      initialUrlState.layers = mapLayers;
     }
     if (!CYBER_LAYER_ENABLED) {
       mapLayers.cyberThreats = false;
@@ -322,6 +321,7 @@ export class App {
       syncDataFreshnessWithLayers: () => this.dataLoader.syncDataFreshnessWithLayers(),
       ensureCorrectZones: () => this.panelLayout.ensureCorrectZones(),
       refreshOpenCountryBrief: () => this.countryIntel.refreshOpenBrief(),
+      stopLayerActivity: (layer) => this.dataLoader.stopLayerActivity(layer),
     });
 
     // Wire cross-module callback: DataLoader → SearchManager
@@ -404,6 +404,7 @@ export class App {
 
     // Phase 1: Layout (creates map + panels — they'll find hydrated data)
     this.panelLayout.init();
+    showProBanner(this.state.container);
 
     const mobileGeoCoords = await geoCoordsPromise;
     if (mobileGeoCoords && this.state.map) {
@@ -587,6 +588,27 @@ export class App {
           }, intervalMs: 10 * 60 * 1000, condition: () => CYBER_LAYER_ENABLED && this.state.mapLayers.cyberThreats
         },
       ]);
+    }
+
+    if (SITE_VARIANT === 'finance') {
+      this.refreshScheduler.scheduleRefresh(
+        'stock-analysis',
+        () => this.dataLoader.loadStockAnalysis(),
+        15 * 60 * 1000,
+        () => getSecretState('WORLDMONITOR_API_KEY').present,
+      );
+      this.refreshScheduler.scheduleRefresh(
+        'daily-market-brief',
+        () => this.dataLoader.loadDailyMarketBrief(),
+        60 * 60 * 1000,
+        () => getSecretState('WORLDMONITOR_API_KEY').present,
+      );
+      this.refreshScheduler.scheduleRefresh(
+        'stock-backtest',
+        () => this.dataLoader.loadStockBacktest(),
+        4 * 60 * 60 * 1000,
+        () => getSecretState('WORLDMONITOR_API_KEY').present,
+      );
     }
 
     // Panel-level refreshes (moved from panel constructors into scheduler for hidden-tab awareness + jitter)

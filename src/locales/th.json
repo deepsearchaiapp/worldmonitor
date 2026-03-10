@@ -175,6 +175,8 @@
     "sourceRegionGulfMena": "อ่าวเปอร์เซีย & MENA",
     "filterPanels": "กรองแผงควบคุม...",
     "resetLayout": "รีเซ็ตเลย์เอาต์",
+    "resetLayoutTooltip": "คืนค่าการจัดเรียงแผงควบคุมเริ่มต้น",
+    "unsavedChanges": "คุณมีการเปลี่ยนแปลงแผงควบคุมที่ยังไม่ได้บันทึก ยกเลิกหรือไม่?",
     "panelCatCore": "หลัก",
     "panelCatIntelligence": "ข่าวกรอง",
     "panelCatRegionalNews": "ข่าวภูมิภาค",
@@ -375,6 +377,8 @@
       "noResults": "ไม่พบผลลัพธ์",
       "commands": "คำสั่ง",
       "results": "ผลลัพธ์",
+      "seeAllCommands": "ดูคำสั่งทั้งหมด",
+      "hideCommandList": "กลับ",
       "navigate": "นำทาง",
       "select": "เลือก",
       "close": "ปิด",
@@ -978,6 +982,7 @@
       "layerWarningDismiss": "ไม่ต้องแสดงอีก",
       "layerWarningOk": "รับทราบ",
       "layersTitle": "เลเยอร์",
+      "layerSearch": "ค้นหาเลเยอร์...",
       "timeAll": "ทั้งหมด",
       "views": {
         "global": "ทั่วโลก",
@@ -1007,6 +1012,7 @@
         "nuclearSites": "สถานที่นิวเคลียร์",
         "gammaIrradiators": "เครื่องฉายรังสีแกมมา",
         "spaceports": "ท่าอวกาศ",
+        "satellites": "การเฝ้าระวังจากวงโคจร",
         "pipelines": "ท่อส่ง",
         "militaryActivity": "กิจกรรมทางทหาร",
         "shipTraffic": "การจราจรทางเรือ",
@@ -1738,9 +1744,9 @@
     },
     "gpsJamming": {
       "title": "การรบกวน GPS/GNSS",
-      "interference": "การรบกวน",
-      "aircraftAffected": "เครื่องบินที่ได้รับผลกระทบ",
-      "aircraftNormal": "เครื่องบินปกติ",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1756,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "คำนวณ"
+        "computed": "คำนวณ",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "อเมริกา",

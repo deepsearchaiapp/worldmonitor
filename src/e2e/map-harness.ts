@@ -137,6 +137,8 @@ app.style.margin = '0 auto';
 
 const allLayersEnabled: MapLayers = {
   gpsJamming: true,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: true,
   bases: true,
@@ -189,6 +191,8 @@ const allLayersEnabled: MapLayers = {
 
 const allLayersDisabled: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -952,7 +956,7 @@ const seedAllDynamicData = (): void => {
       severity: 'major',
       avgDelayMinutes: 48,
       reason: 'Severe weather',
-      source: 'computed',
+      source: 'aviationstack',
       updatedAt: new Date('2026-02-01T11:00:00.000Z'),
     },
   ];

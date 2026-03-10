@@ -33,13 +33,15 @@ export const LAYER_REGISTRY: Record<keyof MapLayers, LayerDefinition> = {
   nuclear:                  def('nuclear',                  '&#9762;',   'nuclearSites',             'Nuclear Sites'),
   irradiators:              def('irradiators',              '&#9888;',   'gammaIrradiators',         'Gamma Irradiators'),
   spaceports:               def('spaceports',               '&#128640;', 'spaceports',               'Spaceports'),
+  satellites:               def('satellites',               '&#128752;', 'satellites',               'Orbital Surveillance', ['flat', 'globe']),
+  notamOverlay:             def('notamOverlay',             '&#9888;',   'notamOverlay',             'NOTAM Closures'),
   cables:                   def('cables',                   '&#128268;', 'underseaCables',           'Undersea Cables'),
   pipelines:                def('pipelines',                '&#128738;', 'pipelines',                'Pipelines'),
   datacenters:              def('datacenters',              '&#128421;', 'aiDataCenters',            'AI Data Centers'),
   military:                 def('military',                 '&#9992;',   'militaryActivity',         'Military Activity'),
   ais:                      def('ais',                      '&#128674;', 'shipTraffic',              'Ship Traffic'),
   tradeRoutes:              def('tradeRoutes',              '&#9875;',   'tradeRoutes',              'Trade Routes'),
-  flights:                  def('flights',                  '&#9992;',   'flightDelays',             'Flight Delays'),
+  flights:                  def('flights',                  '&#9992;',   'flightDelays',             'Aviation'),
   protests:                 def('protests',                 '&#128226;', 'protests',                 'Protests'),
   ucdpEvents:               def('ucdpEvents',               '&#9876;',   'ucdpEvents',               'Armed Conflict Events'),
   displacement:             def('displacement',             '&#128101;', 'displacementFlows',        'Displacement Flows'),
@@ -53,7 +55,7 @@ export const LAYER_REGISTRY: Record<keyof MapLayers, LayerDefinition> = {
   economic:                 def('economic',                 '&#128176;', 'economicCenters',          'Economic Centers'),
   minerals:                 def('minerals',                 '&#128142;', 'criticalMinerals',         'Critical Minerals'),
   gpsJamming:               def('gpsJamming',               '&#128225;', 'gpsJamming',               'GPS Jamming', ['flat', 'globe'], _desktop ? 'locked' : undefined),
-  ciiChoropleth:            def('ciiChoropleth',            '&#127758;', 'ciiChoropleth',            'CII Instability', ['flat', 'globe'], _desktop ? 'enhanced' : undefined),
+  ciiChoropleth:            def('ciiChoropleth',            '&#127758;', 'ciiChoropleth',            'CII Instability', ['flat'], _desktop ? 'enhanced' : undefined),
   dayNight:                 def('dayNight',                 '&#127763;', 'dayNight',                 'Day/Night', ['flat']),
   sanctions:                def('sanctions',                '&#128683;', 'sanctions',                'Sanctions', []),
   startupHubs:              def('startupHubs',              '&#128640;', 'startupHubs',              'Startup Hubs'),
@@ -81,11 +83,11 @@ const VARIANT_LAYER_ORDER: Record<MapVariant, Array<keyof MapLayers>> = {
     'iranAttacks', 'hotspots', 'conflicts',
     'bases', 'nuclear', 'irradiators', 'spaceports',
     'cables', 'pipelines', 'datacenters', 'military',
-    'ais', 'tradeRoutes', 'flights', 'protests',
+    'ais', 'tradeRoutes', 'flights', 'notamOverlay', 'protests',
     'ucdpEvents', 'displacement', 'climate', 'weather',
     'outages', 'cyberThreats', 'natural', 'fires',
     'waterways', 'economic', 'minerals', 'gpsJamming',
-    'ciiChoropleth', 'dayNight',
+    'satellites', 'ciiChoropleth', 'dayNight',
   ],
   tech: [
     'startupHubs', 'techHQs', 'accelerators', 'cloudRegions',
@@ -105,8 +107,15 @@ const VARIANT_LAYER_ORDER: Record<MapVariant, Array<keyof MapLayers>> = {
   commodity: [
     'miningSites', 'processingPlants', 'commodityPorts', 'commodityHubs',
     'minerals', 'pipelines', 'waterways', 'tradeRoutes',
+    'ais', 'economic', 'fires', 'climate',
     'natural', 'weather', 'outages', 'dayNight',
   ],
+};
+
+const SVG_ONLY_LAYERS: Partial<Record<MapVariant, Array<keyof MapLayers>>> = {
+  full: ['sanctions'],
+  finance: ['sanctions'],
+  commodity: ['sanctions'],
 };
 
 const I18N_PREFIX = 'components.deckgl.layers.';
@@ -118,10 +127,115 @@ export function getLayersForVariant(variant: MapVariant, renderer: MapRenderer):
     .filter(d => d.renderers.includes(renderer));
 }
 
+export function getAllowedLayerKeys(variant: MapVariant): Set<keyof MapLayers> {
+  const keys = new Set(VARIANT_LAYER_ORDER[variant] ?? VARIANT_LAYER_ORDER.full);
+  for (const k of SVG_ONLY_LAYERS[variant] ?? []) keys.add(k);
+  return keys;
+}
+
+export function sanitizeLayersForVariant(layers: MapLayers, variant: MapVariant): MapLayers {
+  const allowed = getAllowedLayerKeys(variant);
+  const sanitized = { ...layers };
+  for (const key of Object.keys(sanitized) as Array<keyof MapLayers>) {
+    if (!allowed.has(key)) sanitized[key] = false;
+  }
+  return sanitized;
+}
+
+export const LAYER_SYNONYMS: Record<string, Array<keyof MapLayers>> = {
+  aviation: ['flights', 'notamOverlay'],
+  flight: ['flights', 'notamOverlay'],
+  airplane: ['flights'],
+  plane: ['flights'],
+  notam: ['notamOverlay', 'flights'],
+  ship: ['ais', 'tradeRoutes'],
+  vessel: ['ais'],
+  maritime: ['ais', 'waterways', 'tradeRoutes'],
+  sea: ['ais', 'waterways', 'cables'],
+  ocean: ['cables', 'waterways'],
+  war: ['conflicts', 'ucdpEvents', 'military'],
+  battle: ['conflicts', 'ucdpEvents'],
+  army: ['military', 'bases'],
+  navy: ['military', 'ais'],
+  missile: ['iranAttacks', 'military'],
+  nuke: ['nuclear'],
+  radiation: ['nuclear', 'irradiators'],
+  space: ['spaceports', 'satellites'],
+  orbit: ['satellites'],
+  internet: ['outages', 'cables', 'cyberThreats'],
+  cyber: ['cyberThreats', 'outages'],
+  hack: ['cyberThreats'],
+  earthquake: ['natural'],
+  volcano: ['natural'],
+  tsunami: ['natural'],
+  storm: ['weather', 'natural'],
+  hurricane: ['weather', 'natural'],
+  typhoon: ['weather', 'natural'],
+  cyclone: ['weather', 'natural'],
+  flood: ['weather', 'natural'],
+  wildfire: ['fires'],
+  forest: ['fires'],
+  refugee: ['displacement'],
+  migration: ['displacement'],
+  riot: ['protests'],
+  demonstration: ['protests'],
+  oil: ['pipelines', 'commodityHubs'],
+  gas: ['pipelines'],
+  energy: ['pipelines', 'renewableInstallations'],
+  solar: ['renewableInstallations'],
+  wind: ['renewableInstallations'],
+  green: ['renewableInstallations', 'speciesRecovery'],
+  money: ['economic', 'financialCenters', 'stockExchanges'],
+  bank: ['centralBanks', 'financialCenters'],
+  stock: ['stockExchanges'],
+  trade: ['tradeRoutes', 'waterways'],
+  cloud: ['cloudRegions', 'datacenters'],
+  ai: ['datacenters'],
+  startup: ['startupHubs', 'accelerators'],
+  tech: ['techHQs', 'techEvents', 'startupHubs', 'cloudRegions', 'datacenters'],
+  gps: ['gpsJamming'],
+  jamming: ['gpsJamming'],
+  mineral: ['minerals', 'miningSites'],
+  mining: ['miningSites'],
+  port: ['commodityPorts'],
+  happy: ['happiness', 'kindness', 'positiveEvents'],
+  good: ['positiveEvents', 'kindness'],
+  animal: ['speciesRecovery'],
+  wildlife: ['speciesRecovery'],
+  gulf: ['gulfInvestments'],
+  gcc: ['gulfInvestments'],
+  sanction: ['sanctions'],
+  night: ['dayNight'],
+  sun: ['dayNight'],
+};
+
 export function resolveLayerLabel(def: LayerDefinition, tFn?: (key: string) => string): string {
   if (tFn) {
     const translated = tFn(I18N_PREFIX + def.i18nSuffix);
     if (translated && translated !== I18N_PREFIX + def.i18nSuffix) return translated;
   }
   return def.fallbackLabel;
+}
+
+export function bindLayerSearch(container: HTMLElement): void {
+  const searchInput = container.querySelector('.layer-search') as HTMLInputElement | null;
+  if (!searchInput) return;
+  searchInput.addEventListener('input', () => {
+    const q = searchInput.value.trim().toLowerCase();
+    const synonymHits = new Set<string>();
+    if (q) {
+      for (const [alias, keys] of Object.entries(LAYER_SYNONYMS)) {
+        if (alias.includes(q)) keys.forEach(k => synonymHits.add(k));
+      }
+    }
+    container.querySelectorAll('.layer-toggle').forEach(label => {
+      const el = label as HTMLElement;
+      if (el.hasAttribute('data-layer-hidden')) return;
+      if (!q) { el.style.display = ''; return; }
+      const key = label.getAttribute('data-layer') || '';
+      const text = label.textContent?.toLowerCase() || '';
+      const match = text.includes(q) || key.toLowerCase().includes(q) || synonymHits.has(key);
+      el.style.display = match ? '' : 'none';
+    });
+  });
 }

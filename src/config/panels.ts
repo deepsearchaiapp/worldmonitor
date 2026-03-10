@@ -45,6 +45,7 @@ const FULL_PANELS: Record<string, PanelConfig> = {
   layoffs: { name: 'Layoffs Tracker', enabled: true, priority: 2 },
   monitors: { name: 'My Monitors', enabled: true, priority: 2 },
   'satellite-fires': { name: 'Fires', enabled: true, priority: 2 },
+  'satellite-imagery': { name: 'Satellite Imagery', enabled: true, priority: 2 },
   'macro-signals': { name: 'Market Radar', enabled: true, priority: 2 },
   'gulf-economies': { name: 'Gulf Economies', enabled: false, priority: 2 },
   'etf-flows': { name: 'BTC ETF Tracker', enabled: true, priority: 2 },
@@ -65,6 +66,8 @@ const FULL_PANELS: Record<string, PanelConfig> = {
 const FULL_MAP_LAYERS: MapLayers = {
   iranAttacks: _desktop ? false : true,
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: true,
   bases: _desktop ? false : true,
@@ -122,6 +125,8 @@ const FULL_MAP_LAYERS: MapLayers = {
 const FULL_MOBILE_MAP_LAYERS: MapLayers = {
   iranAttacks: true,
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: true,
   bases: false,
@@ -220,6 +225,8 @@ const TECH_PANELS: Record<string, PanelConfig> = {
 
 const TECH_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -230,8 +237,8 @@ const TECH_MAP_LAYERS: MapLayers = {
   nuclear: false,
   irradiators: false,
   sanctions: false,
-  weather: true,
-  economic: true,
+  weather: false,
+  economic: false,
   waterways: false,
   outages: true,
   cyberThreats: false,
@@ -277,6 +284,8 @@ const TECH_MAP_LAYERS: MapLayers = {
 
 const TECH_MOBILE_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -341,6 +350,9 @@ const FINANCE_PANELS: Record<string, PanelConfig> = {
   'live-webcams': { name: 'Live Webcams', enabled: true, priority: 2 },
   insights: { name: 'AI Market Insights', enabled: true, priority: 1 },
   markets: { name: 'Live Markets', enabled: true, priority: 1 },
+  'stock-analysis': { name: 'Premium Stock Analysis', enabled: true, priority: 1, premium: 'locked' },
+  'stock-backtest': { name: 'Premium Backtesting', enabled: true, priority: 1, premium: 'locked' },
+  'daily-market-brief': { name: 'Daily Market Brief', enabled: true, priority: 1, premium: 'locked' },
   'markets-news': { name: 'Markets News', enabled: true, priority: 2 },
   forex: { name: 'Forex & Currencies', enabled: true, priority: 1 },
   bonds: { name: 'Fixed Income', enabled: true, priority: 1 },
@@ -374,6 +386,8 @@ const FINANCE_PANELS: Record<string, PanelConfig> = {
 
 const FINANCE_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -431,6 +445,8 @@ const FINANCE_MAP_LAYERS: MapLayers = {
 
 const FINANCE_MOBILE_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -504,6 +520,8 @@ const HAPPY_PANELS: Record<string, PanelConfig> = {
 
 const HAPPY_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -561,6 +579,8 @@ const HAPPY_MAP_LAYERS: MapLayers = {
 
 const HAPPY_MOBILE_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -649,13 +669,15 @@ const COMMODITY_PANELS: Record<string, PanelConfig> = {
 
 const COMMODITY_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
-  cables: true,
+  cables: false,
   pipelines: true,
   hotspots: false,
-  ais: true,            // Commodity shipping, tanker routes, bulk carriers
+  ais: true,
   nuclear: false,
   irradiators: false,
   sanctions: true,
@@ -671,7 +693,7 @@ const COMMODITY_MAP_LAYERS: MapLayers = {
   natural: true,
   spaceports: false,
   minerals: true,
-  fires: true,          // Fires near mining/forestry operations
+  fires: true,
   // Data source layers
   ucdpEvents: false,
   displacement: false,
@@ -706,6 +728,8 @@ const COMMODITY_MAP_LAYERS: MapLayers = {
 
 const COMMODITY_MOBILE_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -874,7 +898,7 @@ export const PANEL_CATEGORY_MAP: Record<string, { labelKey: string; panelKeys: s
   // Finance variant
   finMarkets: {
     labelKey: 'header.panelCatMarkets',
-    panelKeys: ['markets', 'markets-news', 'heatmap', 'macro-signals', 'analysis', 'polymarket'],
+    panelKeys: ['markets', 'stock-analysis', 'stock-backtest', 'daily-market-brief', 'markets-news', 'heatmap', 'macro-signals', 'analysis', 'polymarket'],
     variants: ['finance'],
   },
   fixedIncomeFx: {

@@ -173,6 +173,8 @@
     "sourceRegionGulfMena": "Golf & MENA",
     "filterPanels": "Panels filtern...",
     "resetLayout": "Layout zurücksetzen",
+    "resetLayoutTooltip": "Standard-Panelanordnung wiederherstellen",
+    "unsavedChanges": "Sie haben ungespeicherte Panel-Änderungen. Verwerfen?",
     "panelCatCore": "Kern",
     "panelCatIntelligence": "Nachrichtendienst",
     "panelCatRegionalNews": "Regionale Nachrichten",
@@ -399,7 +401,9 @@
       "placeholderFinance": "Suchen oder Befehl eingeben...",
       "hintFinance": "Suche • Börsen • Märkte • Ebenen • Navigation • Einstellungen",
       "commands": "Befehle",
-      "results": "Ergebnisse"
+      "results": "Ergebnisse",
+      "seeAllCommands": "Alle Befehle anzeigen",
+      "hideCommandList": "Zurück"
     },
     "signal": {
       "title": "INTELLIGENZFINDEN",
@@ -850,6 +854,7 @@
         "nuclearSites": "Nukleare Standorte",
         "gammaIrradiators": "Gammastrahler",
         "spaceports": "Raumhäfen",
+        "satellites": "Orbitale Überwachung",
         "pipelines": "ROHRLEITUNGEN",
         "militaryActivity": "Militärische Aktivität",
         "shipTraffic": "Schiffsverkehr",
@@ -879,6 +884,7 @@
         "renewableInstallations": "Saubere Energie"
       },
       "layersTitle": "Schichten",
+      "layerSearch": "Schichten suchen...",
       "layerGuide": "Ebenenführer",
       "layerWarningTitle": "Leistungshinweis",
       "layerWarningBody": "Das Aktivieren von mehr als {{threshold}} Ebenen kann die Renderleistung und Bildrate beeinträchtigen.",
@@ -1737,9 +1743,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS-Störung",
-      "interference": "Störung",
-      "aircraftAffected": "Betroffene Flugzeuge",
-      "aircraftNormal": "Normale Flugzeuge",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1755,7 +1761,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Berechnet"
+        "computed": "Berechnet",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Amerika",

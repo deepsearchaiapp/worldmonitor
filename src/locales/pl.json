@@ -173,6 +173,8 @@
     "sourceRegionGulfMena": "Zatoka & MENA",
     "filterPanels": "Filtruj panele...",
     "resetLayout": "Resetuj układ",
+    "resetLayoutTooltip": "Przywróć domyślny układ paneli",
+    "unsavedChanges": "Masz niezapisane zmiany paneli. Odrzucić je?",
     "panelCatCore": "Główne",
     "panelCatIntelligence": "Wywiad",
     "panelCatRegionalNews": "Wiadomości Regionalne",
@@ -399,7 +401,9 @@
       "placeholderFinance": "Szukaj lub wpisz polecenie...",
       "hintFinance": "Szukaj • Giełdy • Rynki • Warstwy • Nawigacja • Ustawienia",
       "commands": "Polecenia",
-      "results": "Wyniki"
+      "results": "Wyniki",
+      "seeAllCommands": "Pokaż wszystkie polecenia",
+      "hideCommandList": "Wstecz"
     },
     "signal": {
       "title": "WYKONANIE INTELIGENCJI",
@@ -441,7 +445,7 @@
     },
     "story": {
       "generating": "Generuję historię...",
-      "save": "Ratować",
+      "save": "Zapisz",
       "whatsapp": "WhatsApp",
       "twitter": "X",
       "linkedin": "LinkedIn",
@@ -833,6 +837,7 @@
         "nuclearSites": "Miejsca nuklearne",
         "gammaIrradiators": "Promienniki gamma",
         "spaceports": "Porty kosmiczne",
+        "satellites": "Nadzór Orbitalny",
         "pipelines": "Rurociągi",
         "militaryActivity": "Działalność wojskowa",
         "shipTraffic": "Ruch statków",
@@ -862,6 +867,7 @@
         "renewableInstallations": "Czysta energia"
       },
       "layersTitle": "Warstwy",
+      "layerSearch": "Szukaj warstw...",
       "layerGuide": "Przewodnik po warstwach",
       "layerWarningTitle": "Informacja o wydajności",
       "layerWarningBody": "Włączenie więcej niż {{threshold}} warstw może wpłynąć na wydajność renderowania i liczbę klatek na sekundę.",
@@ -1737,9 +1743,9 @@
     },
     "gpsJamming": {
       "title": "Zakłócenia GPS/GNSS",
-      "interference": "Zakłócenia",
-      "aircraftAffected": "Dotknięte samoloty",
-      "aircraftNormal": "Normalne samoloty",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1755,7 +1761,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurokontrola",
-        "computed": "Obliczone"
+        "computed": "Obliczone",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Ameryki",

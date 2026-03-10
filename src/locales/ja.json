@@ -175,6 +175,8 @@
     "sourceRegionGulfMena": "湾岸・中東",
     "filterPanels": "パネルを絞り込む...",
     "resetLayout": "レイアウトをリセット",
+    "resetLayoutTooltip": "デフォルトのパネル配置に戻す",
+    "unsavedChanges": "パネルの未保存の変更があります。破棄しますか？",
     "panelCatCore": "コア",
     "panelCatIntelligence": "インテリジェンス",
     "panelCatRegionalNews": "地域ニュース",
@@ -375,6 +377,8 @@
       "noResults": "結果なし",
       "commands": "コマンド",
       "results": "結果",
+      "seeAllCommands": "コマンド一覧を見る",
+      "hideCommandList": "戻る",
       "navigate": "移動",
       "select": "選択",
       "close": "閉じる",
@@ -978,6 +982,7 @@
       "layerWarningDismiss": "今後表示しない",
       "layerWarningOk": "了解",
       "layersTitle": "レイヤー",
+      "layerSearch": "レイヤーを検索...",
       "timeAll": "全期間",
       "views": {
         "global": "グローバル",
@@ -1007,6 +1012,7 @@
         "nuclearSites": "核施設",
         "gammaIrradiators": "ガンマ線照射施設",
         "spaceports": "宇宙港",
+        "satellites": "軌道監視",
         "pipelines": "パイプライン",
         "militaryActivity": "軍事活動",
         "shipTraffic": "船舶交通",
@@ -1738,9 +1744,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS干渉",
-      "interference": "干渉",
-      "aircraftAffected": "影響を受けた航空機",
-      "aircraftNormal": "正常な航空機",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1756,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "算出値"
+        "computed": "算出値",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "アメリカ",

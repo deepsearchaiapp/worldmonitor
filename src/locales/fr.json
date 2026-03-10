@@ -173,6 +173,8 @@
     "sourceRegionGulfMena": "Golfe et MENA",
     "filterPanels": "Filtrer les panneaux...",
     "resetLayout": "Réinitialiser la disposition",
+    "resetLayoutTooltip": "Rétablir la disposition des panneaux par défaut",
+    "unsavedChanges": "Vous avez des modifications de panneaux non enregistrées. Les abandonner ?",
     "panelCatCore": "Principal",
     "panelCatIntelligence": "Renseignement",
     "panelCatRegionalNews": "Actualités Régionales",
@@ -399,7 +401,9 @@
       "placeholderFinance": "Rechercher ou saisir une commande...",
       "hintFinance": "Recherche • Bourses • Marchés • Couches • Navigation • Paramètres",
       "commands": "Commandes",
-      "results": "Résultats"
+      "results": "Résultats",
+      "seeAllCommands": "Voir toutes les commandes",
+      "hideCommandList": "Retour"
     },
     "signal": {
       "title": "DÉCOUVERTE RENSEIGNEMENT",
@@ -951,6 +955,7 @@
       "layerWarningDismiss": "Ne plus afficher",
       "layerWarningOk": "Compris",
       "layersTitle": "Couches",
+      "layerSearch": "Rechercher...",
       "timeAll": "Tout",
       "views": {
         "global": "Mondial",
@@ -980,6 +985,7 @@
         "nuclearSites": "Sites nucléaires",
         "gammaIrradiators": "Irradiateurs gamma",
         "spaceports": "Cosmodromes",
+        "satellites": "Surveillance Orbitale",
         "pipelines": "OLÉODUCS ET GAZODUCS",
         "militaryActivity": "Activité militaire",
         "shipTraffic": "Trafic maritime",
@@ -1737,9 +1743,9 @@
     },
     "gpsJamming": {
       "title": "Interférence GPS/GNSS",
-      "interference": "Interférence",
-      "aircraftAffected": "Aéronefs affectés",
-      "aircraftNormal": "Aéronefs normaux",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1755,7 +1761,9 @@
       "sources": {
         "faa": "FAA-ASWS",
         "eurocontrol": "Eurocontrôle",
-        "computed": "Calculé"
+        "computed": "Calculé",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Amériques",

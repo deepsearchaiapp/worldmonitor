@@ -205,7 +205,9 @@
       "placeholderFinance": "Zoeken of commando typen...",
       "hintFinance": "Zoeken • Beurzen • Markten • Lagen • Navigatie • Instellingen",
       "commands": "Opdrachten",
-      "results": "Resultaten"
+      "results": "Resultaten",
+      "seeAllCommands": "Alle opdrachten tonen",
+      "hideCommandList": "Terug"
     },
     "signal": {
       "source": "Source",
@@ -402,7 +404,7 @@
       "shareTitle": "Deel verhaal",
       "close": "Dichtbij",
       "generating": "Verhaal genereren...",
-      "save": "Redden",
+      "save": "Opslaan",
       "whatsapp": "WhatsAppen",
       "twitter": "X",
       "linkedin": "LinkedIn",
@@ -552,6 +554,7 @@
         "nuclearSites": "Nucleaire locaties",
         "gammaIrradiators": "Gamma-bestralers",
         "spaceports": "Ruimtehavens",
+        "satellites": "Orbitale Bewaking",
         "pipelines": "Pijpleidingen",
         "militaryActivity": "Militaire activiteit",
         "shipTraffic": "Scheepsverkeer",
@@ -581,6 +584,7 @@
         "renewableInstallations": "Schone energie"
       },
       "layersTitle": "Lagen",
+      "layerSearch": "Lagen zoeken...",
       "layerGuide": "Lagengids",
       "layerWarningTitle": "Prestatie-opmerking",
       "layerWarningBody": "Het inschakelen van meer dan {{threshold}} lagen kan de renderprestaties en framesnelheid beïnvloeden.",
@@ -1546,9 +1550,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS-storing",
-      "interference": "Storing",
-      "aircraftAffected": "Getroffen vliegtuigen",
-      "aircraftNormal": "Normale vliegtuigen",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1564,7 +1568,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Berekend"
+        "computed": "Berekend",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Amerika",
@@ -2202,6 +2208,8 @@
     "sourceRegionGulfMena": "Golf & MENA",
     "filterPanels": "Panels filteren...",
     "resetLayout": "Layout resetten",
+    "resetLayoutTooltip": "Standaard panelindeling herstellen",
+    "unsavedChanges": "U heeft niet-opgeslagen paneelwijzigingen. Verwijderen?",
     "panelCatCore": "Kern",
     "panelCatIntelligence": "Inlichtingen",
     "panelCatRegionalNews": "Regionaal Nieuws",

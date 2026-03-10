@@ -205,7 +205,9 @@
       "placeholderFinance": "Sök eller skriv ett kommando...",
       "hintFinance": "Sök • Börser • Marknader • Lager • Navigering • Inställningar",
       "commands": "Kommandon",
-      "results": "Resultat"
+      "results": "Resultat",
+      "seeAllCommands": "Visa alla kommandon",
+      "hideCommandList": "Tillbaka"
     },
     "signal": {
       "source": "Source",
@@ -552,6 +554,7 @@
         "nuclearSites": "Nukleära platser",
         "gammaIrradiators": "Gammastrålare",
         "spaceports": "Rymdhamnar",
+        "satellites": "Orbital Övervakning",
         "pipelines": "Rörledningar",
         "militaryActivity": "Militär aktivitet",
         "shipTraffic": "Fartygstrafik",
@@ -581,6 +584,7 @@
         "renewableInstallations": "Ren energi"
       },
       "layersTitle": "Lager",
+      "layerSearch": "Sök lager...",
       "layerGuide": "Lagerguide",
       "layerWarningTitle": "Prestandameddelande",
       "layerWarningBody": "Att aktivera fler än {{threshold}} lager kan påverka renderingsprestanda och bildfrekvens.",
@@ -1546,9 +1550,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS-störning",
-      "interference": "Störning",
-      "aircraftAffected": "Drabbade flygplan",
-      "aircraftNormal": "Normala flygplan",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1564,7 +1568,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Beräknad"
+        "computed": "Beräknad",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Amerika",
@@ -2202,6 +2208,8 @@
     "sourceRegionGulfMena": "Gulfen & MENA",
     "filterPanels": "Filtrera paneler...",
     "resetLayout": "Återställ layout",
+    "resetLayoutTooltip": "Återställ standardpanelordning",
+    "unsavedChanges": "Du har osparade paneländringar. Kassera dem?",
     "panelCatCore": "Kärna",
     "panelCatIntelligence": "Underrättelser",
     "panelCatRegionalNews": "Regionala Nyheter",

@@ -175,6 +175,8 @@
     "sourceRegionGulfMena": "걸프 & MENA",
     "filterPanels": "패널 필터...",
     "resetLayout": "레이아웃 초기화",
+    "resetLayoutTooltip": "기본 패널 배열로 복원",
+    "unsavedChanges": "저장되지 않은 패널 변경 사항이 있습니다. 취소하시겠습니까?",
     "panelCatCore": "핵심",
     "panelCatIntelligence": "정보",
     "panelCatRegionalNews": "지역 뉴스",
@@ -375,6 +377,8 @@
       "noResults": "결과 없음",
       "commands": "명령어",
       "results": "결과",
+      "seeAllCommands": "모든 명령 보기",
+      "hideCommandList": "뒤로",
       "navigate": "탐색",
       "select": "선택",
       "close": "닫기",
@@ -978,6 +982,7 @@
       "layerWarningDismiss": "다시 표시하지 않기",
       "layerWarningOk": "확인",
       "layersTitle": "레이어",
+      "layerSearch": "레이어 검색...",
       "timeAll": "전체",
       "views": {
         "global": "글로벌",
@@ -1007,6 +1012,7 @@
         "nuclearSites": "핵 시설",
         "gammaIrradiators": "감마 조사기",
         "spaceports": "우주 발사장",
+        "satellites": "궤도 감시",
         "pipelines": "파이프라인",
         "militaryActivity": "군사 활동",
         "shipTraffic": "선박 교통",
@@ -1738,9 +1744,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS 간섭",
-      "interference": "간섭",
-      "aircraftAffected": "영향받은 항공기",
-      "aircraftNormal": "정상 항공기",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -1756,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "산출값"
+        "computed": "산출값",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "아메리카",

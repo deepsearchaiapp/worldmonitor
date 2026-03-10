@@ -6,6 +6,8 @@ import {
   MapContainer,
   NewsPanel,
   MarketPanel,
+  StockAnalysisPanel,
+  StockBacktestPanel,
   HeatmapPanel,
   CommoditiesPanel,
   CryptoPanel,
@@ -36,6 +38,7 @@ import {
   AviationCommandBar,
 } from '@/components';
 import { SatelliteFiresPanel } from '@/components/SatelliteFiresPanel';
+import { SatelliteImageryPanel } from '@/components/SatelliteImageryPanel';
 import { focusInvestmentOnMap } from '@/services/investments-focus';
 import { debounce, saveToStorage, loadFromStorage } from '@/utils';
 import { escapeHtml } from '@/utils/sanitize';
@@ -429,6 +432,7 @@ export class PanelLayoutManager implements AppModule {
           if (mainContent) {
             mainContent.classList.toggle('map-hidden', !config.enabled);
           }
+          this.ensureCorrectZones();
         }
         return;
       }
@@ -479,6 +483,22 @@ export class PanelLayoutManager implements AppModule {
 
     this.createPanel('heatmap', () => new HeatmapPanel());
     this.createPanel('markets', () => new MarketPanel());
+    const stockAnalysisPanel = this.createPanel('stock-analysis', () => new StockAnalysisPanel());
+    if (stockAnalysisPanel && !getSecretState('WORLDMONITOR_API_KEY').present) {
+      stockAnalysisPanel.showLocked([
+        'AI stock briefs with technical + news synthesis',
+        'Trend scoring from MA, MACD, RSI, and volume structure',
+        'Actionable watchlist monitoring for your premium workspace',
+      ]);
+    }
+    const stockBacktestPanel = this.createPanel('stock-backtest', () => new StockBacktestPanel());
+    if (stockBacktestPanel && !getSecretState('WORLDMONITOR_API_KEY').present) {
+      stockBacktestPanel.showLocked([
+        'Historical replay of premium stock-analysis signals',
+        'Win-rate, accuracy, and simulated-return metrics',
+        'Recent evaluation samples for your tracked symbols',
+      ]);
+    }
 
     const monitorPanel = this.createPanel('monitors', () => new MonitorPanel(this.ctx.monitors));
     monitorPanel?.onChanged((monitors) => {
@@ -569,6 +589,23 @@ export class PanelLayoutManager implements AppModule {
 
     this.createPanel('cascade', () => new CascadePanel());
     this.createPanel('satellite-fires', () => new SatelliteFiresPanel());
+    const imageryPanel = this.createPanel('satellite-imagery', () => new SatelliteImageryPanel());
+    if (imageryPanel) {
+      this.ctx.map?.setOnImageryUpdate((scenes) => {
+        imageryPanel.update(scenes);
+        this.ctx.map?.setImageryScenes(scenes);
+      });
+      imageryPanel.setOnSearchArea(async () => {
+        const bbox = this.ctx.map?.getBbox();
+        if (!bbox) return;
+        try {
+          const { fetchImageryScenes } = await import('@/services/imagery');
+          const scenes = await fetchImageryScenes({ bbox, limit: 20 });
+          imageryPanel.update(scenes);
+          this.ctx.map?.setImageryScenes(scenes);
+        } catch { /* search failed */ }
+      });
+    }
 
     if (this.shouldCreatePanel('strategic-risk')) {
       const strategicRiskPanel = new StrategicRiskPanel();
@@ -625,6 +662,12 @@ export class PanelLayoutManager implements AppModule {
 
     const _wmKeyPresent = getSecretState('WORLDMONITOR_API_KEY').present;
     const _lockPanels = this.ctx.isDesktopApp && !_wmKeyPresent;
+
+    this.lazyPanel('daily-market-brief', () =>
+      import('@/components/DailyMarketBriefPanel').then(m => new m.DailyMarketBriefPanel()),
+      undefined,
+      !_wmKeyPresent ? ['Pre-market watchlist priorities', 'Action plan for the session', 'Risk watch tied to current finance headlines'] : undefined,
+    );
 
     this.lazyPanel('oref-sirens', () =>
       import('@/components/OrefSirensPanel').then(m => new m.OrefSirensPanel()),
@@ -842,6 +885,23 @@ export class PanelLayoutManager implements AppModule {
         panelsGrid.appendChild(el);
       }
     });
+
+    // "+" Add Panel block at the end of the grid
+    const addPanelBlock = document.createElement('button');
+    addPanelBlock.className = 'add-panel-block';
+    addPanelBlock.setAttribute('aria-label', t('components.panel.addPanel'));
+    const addIcon = document.createElement('span');
+    addIcon.className = 'add-panel-block-icon';
+    addIcon.textContent = '+';
+    const addLabel = document.createElement('span');
+    addLabel.className = 'add-panel-block-label';
+    addLabel.textContent = t('components.panel.addPanel');
+    addPanelBlock.appendChild(addIcon);
+    addPanelBlock.appendChild(addLabel);
+    addPanelBlock.addEventListener('click', () => {
+      this.ctx.unifiedSettings?.open('panels');
+    });
+    panelsGrid.appendChild(addPanelBlock);
 
     const bottomGrid = document.getElementById('mapBottomGrid');
     if (bottomGrid) {

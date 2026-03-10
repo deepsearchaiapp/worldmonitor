@@ -39,7 +39,7 @@ const STANDALONE_KEYS = {
   chokepoints:           'supply_chain:chokepoints:v2',
   minerals:              'supply_chain:minerals:v2',
   giving:                'giving:summary:v1',
-  gpsjam:                'intelligence:gpsjam:v1',
+  gpsjam:                'intelligence:gpsjam:v2',
   theaterPosture:        'theater-posture:sebuf:stale:v1',
   theaterPostureLive:    'theater-posture:sebuf:v1',
   theaterPostureBackup:  'theater-posture:sebuf:backup:v1',
@@ -48,13 +48,16 @@ const STANDALONE_KEYS = {
   usniFleetStale:        'usni-fleet:sebuf:stale:v1',
   faaDelays:             'aviation:delays:faa:v1',
   intlDelays:            'aviation:delays:intl:v3',
-  notamClosures:         'aviation:notam:closures:v1',
+  notamClosures:         'aviation:notam:closures:v2',
   positiveEventsLive:    'positive-events:geo:v1',
   cableHealth:           'cable-health-v1',
   cyberThreatsRpc:       'cyber:threats:v2',
   militaryBases:         'military:bases:active',
+  militaryFlights:       'military:flights:v1',
+  militaryFlightsStale:  'military:flights:stale:v1',
   temporalAnomalies:     'temporal:anomalies:v1',
   displacement:          `displacement:summary:v1:${new Date().getFullYear()}`,
+  satellites:            'intelligence:satellites:tle:v1',
 };
 
 const SEED_META = {
@@ -69,7 +72,7 @@ const SEED_META = {
   gulfQuotes:       { key: 'seed-meta:market:gulf-quotes',      maxStaleMin: 30 },
   stablecoinMarkets:{ key: 'seed-meta:market:stablecoins',      maxStaleMin: 60 },
   naturalEvents:    { key: 'seed-meta:natural:events',          maxStaleMin: 120 },
-  flightDelays:     { key: 'seed-meta:aviation:faa',            maxStaleMin: 30 },
+  flightDelays:     { key: 'seed-meta:aviation:faa',            maxStaleMin: 60 },
   predictions:      { key: 'seed-meta:prediction:markets',      maxStaleMin: 15 },
   insights:         { key: 'seed-meta:news:insights',           maxStaleMin: 30 },
   marketQuotes:     { key: 'seed-meta:market:stocks',         maxStaleMin: 30 },
@@ -87,9 +90,11 @@ const SEED_META = {
   gpsjam:           { key: 'seed-meta:intelligence:gpsjam',       maxStaleMin: 720 },
   cableHealth:      { key: 'seed-meta:cable-health',              maxStaleMin: 60 },
   positiveGeoEvents:{ key: 'seed-meta:positive-events:geo',       maxStaleMin: 60 },
-  riskScores:       { key: 'seed-meta:risk:scores',               maxStaleMin: 30 },
+  riskScores:       { key: 'seed-meta:risk:scores:sebuf',          maxStaleMin: 30 },
   iranEvents:       { key: 'seed-meta:conflict:iran-events',      maxStaleMin: 10080 },
   ucdpEvents:       { key: 'seed-meta:conflict:ucdp-events',      maxStaleMin: 420 },
+  militaryFlights:  { key: 'seed-meta:military:flights',           maxStaleMin: 15 },
+  satellites:       { key: 'seed-meta:intelligence:satellites',    maxStaleMin: 180 },
   weatherAlerts:    { key: 'seed-meta:weather:alerts',             maxStaleMin: 30 },
   spending:         { key: 'seed-meta:economic:spending',          maxStaleMin: 120 },
   sectors:          { key: 'seed-meta:market:sectors',             maxStaleMin: 30 },
@@ -114,6 +119,8 @@ const CASCADE_GROUPS = {
   theaterPosture:       ['theaterPosture', 'theaterPostureLive', 'theaterPostureBackup'],
   theaterPostureLive:   ['theaterPosture', 'theaterPostureLive', 'theaterPostureBackup'],
   theaterPostureBackup: ['theaterPosture', 'theaterPostureLive', 'theaterPostureBackup'],
+  militaryFlights:      ['militaryFlights', 'militaryFlightsStale'],
+  militaryFlightsStale: ['militaryFlights', 'militaryFlightsStale'],
 };
 
 const NEG_SENTINEL = '__WM_NEG__';
@@ -145,9 +152,10 @@ function dataSize(parsed) {
     for (const k of ['quotes', 'hexes', 'events', 'stablecoins', 'fires', 'threats',
                       'earthquakes', 'outages', 'delays', 'items', 'predictions', 'alerts', 'awards',
                       'papers', 'repos', 'articles', 'signals', 'rates', 'countries',
-                      'chokepoints', 'minerals', 'anomalies', 'flows', 'bases',
+                      'chokepoints', 'minerals', 'anomalies', 'flows', 'bases', 'flights',
                       'theaters', 'fleets', 'warnings', 'closures', 'cables',
-                      'airports', 'categories', 'regions', 'entries']) {
+                      'airports', 'categories', 'regions', 'entries', 'satellites',
+                      'sectors', 'statuses', 'scores']) {
       if (Array.isArray(parsed[k])) return parsed[k].length;
     }
     return Object.keys(parsed).length;
@@ -233,7 +241,7 @@ export default async function handler(req) {
       okCount++;
     }
 
-    const entry = { status, redisKey, records: size };
+    const entry = { status, records: size };
     if (seedAge !== null) entry.seedAgeMin = seedAge;
     if (seedCfg) entry.maxStaleMin = seedCfg.maxStaleMin;
     checks[name] = entry;
@@ -310,7 +318,7 @@ export default async function handler(req) {
       okCount++;
     }
 
-    const entry = { status, redisKey, records: size };
+    const entry = { status, records: size };
     if (seedAge !== null) entry.seedAgeMin = seedAge;
     if (seedCfg) entry.maxStaleMin = seedCfg.maxStaleMin;
     checks[name] = entry;
@@ -318,11 +326,11 @@ export default async function handler(req) {
 
   let overall;
   if (critCount === 0 && warnCount === 0) overall = 'HEALTHY';
-  else if (critCount === 0) overall = 'DEGRADED';
+  else if (critCount === 0) overall = 'WARNING';
   else if (critCount <= 3) overall = 'DEGRADED';
   else overall = 'UNHEALTHY';
 
-  const httpStatus = overall === 'HEALTHY' ? 200 : overall === 'DEGRADED' ? 200 : 503;
+  const httpStatus = overall === 'HEALTHY' || overall === 'WARNING' ? 200 : 503;
 
   const url = new URL(req.url);
   const compact = url.searchParams.get('compact') === '1';
@@ -343,7 +351,7 @@ export default async function handler(req) {
   } else {
     const problems = {};
     for (const [name, check] of Object.entries(checks)) {
-      if (check.status !== 'OK') problems[name] = check;
+      if (check.status !== 'OK' && check.status !== 'OK_CASCADE') problems[name] = check;
     }
     if (Object.keys(problems).length > 0) body.problems = problems;
   }

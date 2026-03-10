@@ -174,6 +174,8 @@ export const DEFAULT_PANELS: Record<string, PanelConfig> = {
 // Finance-focused map layers
 export const DEFAULT_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -231,6 +233,8 @@ export const DEFAULT_MAP_LAYERS: MapLayers = {
 // Mobile defaults for finance variant
 export const MOBILE_DEFAULT_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,

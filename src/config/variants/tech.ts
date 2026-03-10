@@ -215,6 +215,8 @@ export const DEFAULT_PANELS: Record<string, PanelConfig> = {
 export const DEFAULT_MAP_LAYERS: MapLayers = {
   // Keep only relevant layers, set others to false
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
@@ -272,6 +274,8 @@ export const DEFAULT_MAP_LAYERS: MapLayers = {
 // Mobile defaults for tech variant
 export const MOBILE_DEFAULT_MAP_LAYERS: MapLayers = {
   gpsJamming: false,
+  satellites: false,
+  notamOverlay: false,
 
   conflicts: false,
   bases: false,
