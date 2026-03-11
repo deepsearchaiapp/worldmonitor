@@ -3,6 +3,8 @@ import type {
   ListMilitaryFlightsRequest,
   ListMilitaryFlightsResponse,
   MilitaryAircraftType,
+  MilitaryOperator,
+  MilitaryConfidence,
 } from '../../../../src/generated/server/worldmonitor/military/v1/service_server';
 
 import { isMilitaryCallsign, isMilitaryHex, detectAircraftType, UPSTREAM_TIMEOUT_MS } from './_shared';
@@ -101,7 +103,7 @@ export async function listMilitaryFlights(
             registration: String(f.registration || ''),
             aircraftType: String(f.aircraftType || 'MILITARY_AIRCRAFT_TYPE_UNKNOWN') as MilitaryAircraftType,
             aircraftModel: String(f.aircraftModel || ''),
-            operator: String(f.operator || 'MILITARY_OPERATOR_OTHER'),
+            operator: String(f.operator || 'MILITARY_OPERATOR_OTHER') as MilitaryOperator,
             operatorCountry: String(f.operatorCountry || ''),
             location: { latitude: Number(f.lat ?? f.latitude ?? 0), longitude: Number(f.lon ?? f.longitude ?? 0) },
             altitude: Number(f.altitude ?? 0),
@@ -114,7 +116,7 @@ export async function listMilitaryFlights(
             destination: String(f.destination || ''),
             lastSeenAt: Number(f.lastSeenAt ?? Date.now()),
             firstSeenAt: Number(f.firstSeenAt ?? 0),
-            confidence: String(f.confidence || 'MILITARY_CONFIDENCE_LOW'),
+            confidence: String(f.confidence || 'MILITARY_CONFIDENCE_LOW') as MilitaryConfidence,
             isInteresting: Boolean(f.isInteresting),
             note: String(f.note || ''),
             enrichment: undefined,
