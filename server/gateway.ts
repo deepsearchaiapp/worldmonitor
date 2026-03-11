@@ -24,9 +24,10 @@ export const serverOptions: ServerOptions = { onError: mapErrorToResponse };
 // NOTE: This map is shared across all domain bundles (~3KB). Kept centralised for
 // single-source-of-truth maintainability; the size is negligible vs handler code.
 
-type CacheTier = 'fast' | 'medium' | 'slow' | 'static' | 'daily' | 'no-store';
+type CacheTier = 'fast' | 'medium' | 'slow' | 'static' | 'daily' | 'realtime' | 'no-store';
 
 const TIER_HEADERS: Record<CacheTier, string> = {
+  realtime: 'public, s-maxage=30, stale-while-revalidate=10, stale-if-error=60',
   fast: 'public, s-maxage=300, stale-while-revalidate=60, stale-if-error=600',
   medium: 'public, s-maxage=600, stale-while-revalidate=120, stale-if-error=900',
   slow: 'public, s-maxage=1800, stale-while-revalidate=300, stale-if-error=3600',
@@ -38,6 +39,7 @@ const TIER_HEADERS: Record<CacheTier, string> = {
 // Cloudflare-specific cache TTLs — more aggressive than s-maxage since CF can
 // revalidate via ETag/If-None-Match without full payload transfer.
 const TIER_CDN_CACHE: Record<CacheTier, string | null> = {
+  realtime: 'public, s-maxage=30, stale-while-revalidate=10, stale-if-error=60',
   fast: 'public, s-maxage=600, stale-while-revalidate=300, stale-if-error=1200',
   medium: 'public, s-maxage=1200, stale-while-revalidate=600, stale-if-error=1800',
   slow: 'public, s-maxage=3600, stale-while-revalidate=900, stale-if-error=7200',
@@ -123,7 +125,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/economic/v1/get-macro-signals': 'medium',
   '/api/prediction/v1/list-prediction-markets': 'medium',
   '/api/supply-chain/v1/get-chokepoint-status': 'medium',
-  '/api/news/v1/list-feed-digest': 'no-store',
+  '/api/news/v1/list-feed-digest': 'realtime',
   '/api/intelligence/v1/classify-event': 'static',
   '/api/news/v1/summarize-article-cache': 'slow',
 

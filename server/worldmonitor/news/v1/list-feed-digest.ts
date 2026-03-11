@@ -271,7 +271,7 @@ export async function listFeedDigest(
 
   const fallbackKey = `${variant}:${lang}`;
   try {
-    const cached = await cachedFetchJson<ListFeedDigestResponse>(digestCacheKey, 120, async () => {
+    const cached = await cachedFetchJson<ListFeedDigestResponse>(digestCacheKey, 60, async () => {
       return buildDigest(variant, lang);
     });
     if (cached) {
