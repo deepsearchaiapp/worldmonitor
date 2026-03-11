@@ -9,6 +9,7 @@ import { isMilitaryCallsign, isMilitaryHex, detectAircraftType, UPSTREAM_TIMEOUT
 import { CHROME_UA } from '../../../_shared/constants';
 import { cachedFetchJson } from '../../../_shared/redis';
 import { markNoCacheResponse } from '../../../_shared/response-headers';
+import { fetchUpstream } from '../../../_shared/upstream';
 
 const REDIS_CACHE_KEY = 'military:flights:v1';
 const REDIS_CACHE_TTL = 600; // 10 min — reduce upstream API pressure
@@ -90,6 +91,39 @@ export async function listMilitaryFlights(
       cacheKey,
       REDIS_CACHE_TTL,
       async () => {
+        // ① Primary: fetch from upstream (their data is richer — enriched, classified, more aircraft)
+        const raw = await fetchUpstream<{ flights: Array<Record<string, unknown>> }>('/api/military-flights');
+        if (raw?.flights?.length) {
+          const flights: ListMilitaryFlightsResponse['flights'] = raw.flights.map((f: Record<string, unknown>) => ({
+            id: String(f.id || ''),
+            callsign: String(f.callsign || ''),
+            hexCode: String(f.hexCode || ''),
+            registration: String(f.registration || ''),
+            aircraftType: String(f.aircraftType || 'MILITARY_AIRCRAFT_TYPE_UNKNOWN') as MilitaryAircraftType,
+            aircraftModel: String(f.aircraftModel || ''),
+            operator: String(f.operator || 'MILITARY_OPERATOR_OTHER'),
+            operatorCountry: String(f.operatorCountry || ''),
+            location: { latitude: Number(f.lat ?? f.latitude ?? 0), longitude: Number(f.lon ?? f.longitude ?? 0) },
+            altitude: Number(f.altitude ?? 0),
+            heading: Number(f.heading ?? 0),
+            speed: Number(f.speed ?? 0),
+            verticalRate: Number(f.verticalRate ?? 0),
+            onGround: Boolean(f.onGround),
+            squawk: String(f.squawk || ''),
+            origin: String(f.origin || ''),
+            destination: String(f.destination || ''),
+            lastSeenAt: Number(f.lastSeenAt ?? Date.now()),
+            firstSeenAt: Number(f.firstSeenAt ?? 0),
+            confidence: String(f.confidence || 'MILITARY_CONFIDENCE_LOW'),
+            isInteresting: Boolean(f.isInteresting),
+            note: String(f.note || ''),
+            enrichment: undefined,
+          }));
+          return { flights, clusters: [], pagination: undefined };
+        }
+
+        // ② Fallback: our own relay/OpenSky
+        console.log('[military-flights] upstream failed, trying own relay');
         const isSidecar = (process.env.LOCAL_API_MODE || '').includes('sidecar');
         const baseUrl = isSidecar
           ? 'https://opensky-network.org/api/states/all'

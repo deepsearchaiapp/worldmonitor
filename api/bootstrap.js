@@ -3,6 +3,25 @@ import { validateApiKey } from './_api-key.js';
 
 export const config = { runtime: 'edge' };
 
+// ── Upstream proxy config ──────────────────────────────────────────
+// When our Redis is empty we fetch from the original project's API.
+const UPSTREAM_BASE = 'https://api.worldmonitor.app';
+const UPSTREAM_TIMEOUT_MS = 8_000;
+const UPSTREAM_HEADERS = {
+  'Origin': 'https://www.worldmonitor.app',
+  'Referer': 'https://www.worldmonitor.app/',
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Accept': 'application/json',
+};
+
+// TTLs for data we backfill from upstream → our Redis
+const UPSTREAM_BACKFILL_TTL = {
+  fast: 600,   // 10 min — fast-tier data refreshes often upstream
+  slow: 3600,  // 1 hour — slow-tier data is already long-lived
+};
+
+// ── Redis key map ──────────────────────────────────────────────────
+
 const BOOTSTRAP_CACHE_KEYS = {
   earthquakes:      'seismology:earthquakes:v1',
   outages:          'infra:outages:v1',
@@ -67,6 +86,8 @@ const TIER_CDN_CACHE = {
 
 const NEG_SENTINEL = '__WM_NEG__';
 
+// ── Redis helpers ──────────────────────────────────────────────────
+
 async function getCachedJsonBatch(keys) {
   const result = new Map();
   if (keys.length === 0) return result;
@@ -75,9 +96,6 @@ async function getCachedJsonBatch(keys) {
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return result;
 
-  // Always read unprefixed keys — bootstrap is a read-only consumer of
-  // production cache data. Preview/branch deploys don't run handlers that
-  // populate prefixed keys, so prefixing would always miss.
   const pipeline = keys.map((k) => ['GET', k]);
   const resp = await fetch(`${url}/pipeline`, {
     method: 'POST',
@@ -99,6 +117,51 @@ async function getCachedJsonBatch(keys) {
   }
   return result;
 }
+
+async function setCachedJsonBatch(entries, ttlSeconds) {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token || entries.length === 0) return;
+
+  try {
+    const pipeline = entries.map(([key, value]) => [
+      'SET', key, JSON.stringify(value), 'EX', String(ttlSeconds),
+    ]);
+    await fetch(`${url}/pipeline`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(pipeline),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (err) {
+    console.warn('[bootstrap] Redis backfill write failed:', err?.message || err);
+  }
+}
+
+// ── Upstream fetch ─────────────────────────────────────────────────
+
+async function fetchUpstreamBootstrap(tier) {
+  try {
+    const resp = await fetch(`${UPSTREAM_BASE}/api/bootstrap?tier=${tier}`, {
+      headers: UPSTREAM_HEADERS,
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      console.warn(`[upstream] bootstrap/${tier} → HTTP ${resp.status}`);
+      return null;
+    }
+    const body = await resp.json();
+    if (!body?.data) return null;
+    const keys = Object.keys(body.data);
+    console.log(`[upstream] bootstrap/${tier} → ${keys.length} keys fetched`);
+    return body.data;
+  } catch (err) {
+    console.warn(`[upstream] bootstrap/${tier} failed:`, err?.message || err);
+    return null;
+  }
+}
+
+// ── Main handler ───────────────────────────────────────────────────
 
 export default async function handler(req) {
   if (isDisallowedOrigin(req))
@@ -130,22 +193,51 @@ export default async function handler(req) {
   const keys = Object.values(registry);
   const names = Object.keys(registry);
 
+  // ① Read our Redis
   let cached;
   try {
     cached = await getCachedJsonBatch(keys);
   } catch {
-    return new Response(JSON.stringify({ data: {}, missing: names }), {
-      status: 200,
-      headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
-    });
+    cached = new Map();
   }
 
+  // Build initial data + missing list
   const data = {};
   const missing = [];
   for (let i = 0; i < names.length; i++) {
     const val = cached.get(keys[i]);
     if (val !== undefined) data[names[i]] = val;
     else missing.push(names[i]);
+  }
+
+  // ② If we have missing keys → backfill from upstream
+  if (missing.length > 0 && (tier === 'fast' || tier === 'slow')) {
+    const upstreamData = await fetchUpstreamBootstrap(tier);
+    if (upstreamData) {
+      const backfillEntries = [];
+      for (const name of missing) {
+        if (upstreamData[name] !== undefined) {
+          data[name] = upstreamData[name];
+          // Queue Redis write: map logical name → Redis cache key
+          const redisKey = BOOTSTRAP_CACHE_KEYS[name];
+          if (redisKey) backfillEntries.push([redisKey, upstreamData[name]]);
+        }
+      }
+
+      // ③ Write backfilled data to our Redis (fire-and-forget, don't block response)
+      if (backfillEntries.length > 0) {
+        const ttl = UPSTREAM_BACKFILL_TTL[tier] || 600;
+        console.log(`[upstream] backfilling ${backfillEntries.length} keys to Redis (TTL: ${ttl}s)`);
+        // Use waitUntil-style: don't await, let it complete after response
+        setCachedJsonBatch(backfillEntries, ttl).catch(() => {});
+      }
+
+      // Recalculate missing
+      missing.length = 0;
+      for (const name of names) {
+        if (data[name] === undefined) missing.push(name);
+      }
+    }
   }
 
   const cacheControl = (tier && TIER_CACHE[tier]) || 'public, s-maxage=600, stale-while-revalidate=120, stale-if-error=900';

@@ -7,6 +7,7 @@ import type {
   ThreatLevel as ProtoThreatLevel,
 } from '../../../../src/generated/server/worldmonitor/news/v1/service_server';
 import { cachedFetchJson, getCachedJsonBatch } from '../../../_shared/redis';
+import { fetchUpstream } from '../../../_shared/upstream';
 import { sha256Hex } from '../../../_shared/hash';
 import { CHROME_UA } from '../../../_shared/constants';
 import { VARIANT_FEEDS, INTEL_SOURCES, type ServerFeed } from './_feeds';
@@ -158,8 +159,10 @@ function parseRssXml(xml: string, feed: ServerFeed, variant: string): ParsedItem
     const pubDateStr = isAtom
       ? (extractTag(block, 'published') || extractTag(block, 'updated'))
       : extractTag(block, 'pubDate');
-    const parsedDate = pubDateStr ? new Date(pubDateStr) : new Date();
-    const publishedAt = Number.isNaN(parsedDate.getTime()) ? Date.now() : parsedDate.getTime();
+    // Use 0 when date is missing/unparseable instead of Date.now() — avoids
+    // showing stale articles as "just posted" every time the feed cache refreshes.
+    const parsedDate = pubDateStr ? new Date(pubDateStr) : null;
+    const publishedAt = parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate.getTime() : 0;
 
     const threat = classifyByKeyword(title, variant);
     const isAlert = threat.level === 'critical' || threat.level === 'high';
@@ -272,6 +275,12 @@ export async function listFeedDigest(
   const fallbackKey = `${variant}:${lang}`;
   try {
     const cached = await cachedFetchJson<ListFeedDigestResponse>(digestCacheKey, 60, async () => {
+      // Primary: fetch from upstream (richer data, AI-classified, 300+ items)
+      const upstream = await fetchUpstream<ListFeedDigestResponse>('/api/news/v1/list-feed-digest');
+      if (upstream && Object.keys(upstream.categories || {}).length > 0) return upstream;
+
+      // Fallback: build our own digest from RSS feeds
+      console.log('[feed-digest] upstream failed, building own digest');
       return buildDigest(variant, lang);
     });
     if (cached) {
