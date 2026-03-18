@@ -1,287 +1,1001 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https: http://localhost:5173 ws: wss: blob: data:; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'sha256-LnMFPWZxTgVOr2VYwIh9mhQ3l/l3+a3SfNOLERnuHfY=' 'sha256-+SFBjfmi2XfnyAT3POBxf6JIKYDcNXtllPclOcaNBI0=' 'sha256-AhZAmdCW6h8iXMyBcvIrqN71FGNk4lwLD+lPxx43hxg=' 'sha256-PnEBZii+iFaNE2EyXaJhRq34g6bdjRJxpLfJALdXYt8=' 'sha256-cVhuR63Moy56DV5yG0caJCEyCugMTbYclkvkK6fSwXY=' 'sha256-903UI9my1I7mqHoiVeZSc56yd50YoRJTB2269QqL76w=' 'wasm-unsafe-eval' https://www.youtube.com https://static.cloudflareinsights.com https://vercel.live; worker-src 'self' blob:; font-src 'self' data: https:; media-src 'self' data: blob: https: http://127.0.0.1:* http://localhost:*; frame-src 'self' http://127.0.0.1:* http://localhost:* https://worldmonitor.app https://tech.worldmonitor.app https://finance.worldmonitor.app https://happy.worldmonitor.app https://www.youtube.com https://www.youtube-nocookie.com;" />
-    <meta name="referrer" content="strict-origin-when-cross-origin" />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- Primary Meta Tags -->
-    <title>World Monitor - Real-Time Global Intelligence Dashboard</title>
-    <meta name="title" content="World Monitor - Real-Time Global Intelligence Dashboard" />
-    <meta name="description" content="AI-powered real-time global intelligence dashboard with live news, markets, military tracking, infrastructure monitoring, and geopolitical data. OSINT in one view." />
-    <meta name="keywords" content="AI intelligence, AI-powered dashboard, global intelligence, geopolitical dashboard, world news, market data, military bases, nuclear facilities, undersea cables, conflict zones, real-time monitoring, situation awareness, OSINT, flight tracking, AIS ships, earthquake monitor, protest tracker, power outages, oil prices, government spending, polymarket predictions" />
-    <meta name="author" content="Elie Habib" />
-    <meta name="theme-color" content="#0a0f0a" />
-    <meta name="robots" content="index, follow" />
-    <link rel="canonical" href="https://www.worldmonitor.app/" />
-    <link rel="alternate" hreflang="x-default" href="https://www.worldmonitor.app/" />
-    <link rel="alternate" hreflang="en" href="https://www.worldmonitor.app/" />
-    <link rel="alternate" hreflang="ar" href="https://www.worldmonitor.app/?lang=ar" />
-    <link rel="alternate" hreflang="bg" href="https://www.worldmonitor.app/?lang=bg" />
-    <link rel="alternate" hreflang="cs" href="https://www.worldmonitor.app/?lang=cs" />
-    <link rel="alternate" hreflang="de" href="https://www.worldmonitor.app/?lang=de" />
-    <link rel="alternate" hreflang="el" href="https://www.worldmonitor.app/?lang=el" />
-    <link rel="alternate" hreflang="es" href="https://www.worldmonitor.app/?lang=es" />
-    <link rel="alternate" hreflang="fr" href="https://www.worldmonitor.app/?lang=fr" />
-    <link rel="alternate" hreflang="it" href="https://www.worldmonitor.app/?lang=it" />
-    <link rel="alternate" hreflang="ja" href="https://www.worldmonitor.app/?lang=ja" />
-    <link rel="alternate" hreflang="ko" href="https://www.worldmonitor.app/?lang=ko" />
-    <link rel="alternate" hreflang="nl" href="https://www.worldmonitor.app/?lang=nl" />
-    <link rel="alternate" hreflang="pl" href="https://www.worldmonitor.app/?lang=pl" />
-    <link rel="alternate" hreflang="pt" href="https://www.worldmonitor.app/?lang=pt" />
-    <link rel="alternate" hreflang="ro" href="https://www.worldmonitor.app/?lang=ro" />
-    <link rel="alternate" hreflang="ru" href="https://www.worldmonitor.app/?lang=ru" />
-    <link rel="alternate" hreflang="sv" href="https://www.worldmonitor.app/?lang=sv" />
-    <link rel="alternate" hreflang="th" href="https://www.worldmonitor.app/?lang=th" />
-    <link rel="alternate" hreflang="tr" href="https://www.worldmonitor.app/?lang=tr" />
-    <link rel="alternate" hreflang="vi" href="https://www.worldmonitor.app/?lang=vi" />
-    <link rel="alternate" hreflang="zh" href="https://www.worldmonitor.app/?lang=zh" />
+  <!-- Primary SEO -->
+  <title>World Monitor – Real-Time Global Intelligence App for iPhone</title>
+  <meta name="title" content="World Monitor – Real-Time Global Intelligence App for iPhone" />
+  <meta name="description" content="World Monitor is the ultimate real-time intelligence app for iPhone. Track global conflicts, live news, seismic activity, cyber threats, wildfires, and more on an interactive globe. Download free on the App Store." />
+  <meta name="keywords" content="world monitor app, real-time intelligence app, global conflict tracker, live news app, military tracking app, geopolitical app, situation awareness, OSINT app, conflict map app, seismic tracker, cyber threat monitor, wildfire tracker, pentagon pizza index, iphone news app, live world events app, breaking news map, iran war tracker, global crisis app, world events monitor" />
+  <meta name="author" content="World Monitor" />
+  <meta name="theme-color" content="#0a0f14" />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://www.worldmonitor.app/" />
 
-    <!-- Additional Search Discovery -->
-    <meta name="application-name" content="World Monitor" />
-    <meta name="subject" content="AI-Powered Global Intelligence and Situation Awareness" />
-    <meta name="classification" content="AI Intelligence Dashboard, OSINT Tool, News Aggregator" />
-    <meta name="coverage" content="Worldwide" />
-    <meta name="distribution" content="Global" />
-    <meta name="rating" content="General" />
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://www.worldmonitor.app/" />
+  <meta property="og:title" content="World Monitor – Real-Time Global Intelligence App" />
+  <meta property="og:description" content="Track global conflicts, live news, seismic activity, cyber threats, and more on an interactive globe. The ultimate OSINT app for iPhone." />
+  <meta property="og:image" content="https://www.worldmonitor.app/favico/og-image.png" />
 
-    <!-- Open Graph / Facebook -->
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://www.worldmonitor.app/" />
-    <meta property="og:title" content="World Monitor - Real-Time Global Intelligence Dashboard" />
-    <meta property="og:description" content="AI-powered real-time global intelligence dashboard with live news, markets, military tracking, infrastructure monitoring, and geopolitical data." />
-    <meta property="og:image" content="https://www.worldmonitor.app/favico/og-image.png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="World Monitor — real-time global intelligence dashboard with 3D globe, live markets, geopolitical data, and infrastructure monitoring" />
-    <meta property="og:site_name" content="World Monitor" />
-    <meta property="og:locale" content="en_US" />
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="World Monitor – Real-Time Global Intelligence App" />
+  <meta name="twitter:description" content="Track global conflicts, live news, seismic activity, cyber threats, and more on an interactive globe. The ultimate OSINT app for iPhone." />
+  <meta name="twitter:image" content="https://www.worldmonitor.app/favico/og-image.png" />
 
-    <!-- Twitter -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:url" content="https://www.worldmonitor.app/" />
-    <meta name="twitter:title" content="World Monitor - Real-Time Global Intelligence Dashboard" />
-    <meta name="twitter:description" content="AI-powered real-time global intelligence dashboard with live news, markets, military tracking, infrastructure monitoring, and geopolitical data." />
-    <meta name="twitter:image" content="https://www.worldmonitor.app/favico/og-image.png" />
-    <meta name="twitter:site" content="@worldmonitorai" />
-    <meta name="twitter:creator" content="@worldmonitorai" />
+  <!-- App Store Smart Banner -->
+  <meta name="apple-itunes-app" content="app-id=6760216152" />
 
-    <!-- JSON-LD Structured Data -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "WebApplication",
-      "name": "World Monitor",
-      "alternateName": "WorldMonitor",
-      "url": "https://www.worldmonitor.app/",
-      "description": "Open-source real-time OSINT dashboard for geopolitical monitoring, conflict tracking, military flight tracking, maritime AIS, and global threat intelligence. Used by 2M+ people across 190+ countries.",
-      "applicationCategory": "SecurityApplication",
-      "operatingSystem": "Web, Windows, macOS, Linux",
-      "offers": [
-        { "@type": "Offer", "price": "0", "priceCurrency": "USD", "name": "Free", "description": "Full dashboard with 435+ sources, 45 map layers, BYOK AI" },
-        { "@type": "Offer", "price": "0", "priceCurrency": "USD", "name": "Pro (Waitlist)", "url": "https://www.worldmonitor.app/pro" }
-      ],
-      "author": {
-        "@type": "Person",
-        "name": "Elie Habib",
-        "url": "https://x.com/eliehabib",
-        "jobTitle": "CEO",
-        "worksFor": { "@type": "Organization", "name": "Anghami", "url": "https://anghami.com" },
-        "sameAs": ["https://x.com/eliehabib", "https://github.com/koala73"]
-      },
-      "featureList": [
-        "Real-time conflict tracking (ACLED, UCDP)",
-        "Military ADS-B flight monitoring",
-        "Maritime AIS ship tracking and dark vessel detection",
-        "NASA FIRMS satellite fire detection",
-        "Nuclear installation and critical infrastructure mapping",
-        "Submarine cable and internet outage monitoring",
-        "GPS jamming zone detection",
-        "AI-powered intelligence synthesis and briefs",
-        "Country Instability Index (CII) scoring",
-        "Stock market, commodity, and crypto tracking",
-        "Earthquake and natural disaster alerts",
-        "Civil unrest and protest monitoring",
-        "Cyber threat and BGP anomaly detection",
-        "435+ curated RSS news feeds",
-        "21 language support with RTL"
-      ],
-      "screenshot": "https://www.worldmonitor.app/favico/og-image.png",
-      "sameAs": [
-        "https://github.com/koala73/worldmonitor",
-        "https://x.com/worldmonitorai",
-        "https://x.com/eliehabib",
-        "https://www.wired.me/story/the-music-streaming-ceo-who-built-a-global-war-map"
-      ],
-      "keywords": "OSINT dashboard, geopolitical monitoring, real-time intelligence, conflict tracker, threat intelligence, ADS-B tracking, AIS ship tracking, global risk monitoring, situational awareness"
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="/favico/favicon.png" />
+  <link rel="apple-touch-icon" href="/favico/apple-touch-icon.png" />
+
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "MobileApplication",
+    "name": "World Monitor - Real-time Intel",
+    "operatingSystem": "iOS",
+    "applicationCategory": "NewsApplication",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "aggregateRating": {
+      "@type": "AggregateRating",
+      "ratingValue": "4.8",
+      "ratingCount": "500"
+    },
+    "description": "Real-time global intelligence app tracking conflicts, live news, seismic events, cyber threats, wildfires, and infrastructure outages on an interactive globe.",
+    "url": "https://apps.apple.com/tr/app/world-monitor-real-time-intel/id6760216152"
+  }
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #080d12;
+      --bg2: #0d1520;
+      --bg3: #111c2a;
+      --cyan: #00d4ff;
+      --cyan-dim: #0096b8;
+      --green: #00ff88;
+      --orange: #ff7a00;
+      --red: #ff3b3b;
+      --text: #e8f0fe;
+      --muted: #8899aa;
+      --border: rgba(0, 212, 255, 0.15);
     }
-    </script>
 
-    <!-- Favicons -->
-    <link rel="icon" type="image/x-icon" href="/favico/favicon.ico" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favico/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/favico/favicon-16x16.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/favico/apple-touch-icon.png" />
+    html { scroll-behavior: smooth; }
 
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
 
-    <!-- Theme: apply stored preference before first paint to prevent FOUC -->
-    <script>(function(){try{var h=location.hostname;var v;if(h.startsWith('happy.'))v='happy';else if(h.startsWith('tech.'))v='tech';else if(h.startsWith('finance.'))v='finance';if(!v&&(h==='localhost'||h==='127.0.0.1'||'__TAURI_INTERNALS__' in window))v=localStorage.getItem('worldmonitor-variant');if(v)document.documentElement.dataset.variant=v;else document.documentElement.removeAttribute('data-variant');var t=localStorage.getItem('worldmonitor-theme');if(t==='dark'||t==='light'){document.documentElement.dataset.theme=t;}else if(v==='happy'){document.documentElement.dataset.theme='light';}}catch(e){}document.documentElement.classList.add('no-transition');})()</script>
+    /* ── NAV ── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(8, 13, 18, 0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
 
-    <!-- Critical CSS: inline skeleton visible before JS boots -->
-    <style>
-      /* ---------- skeleton shell (dark default) ---------- */
-      .skeleton-shell{display:flex;flex-direction:column;height:100vh;background:#0a0a0a;font-family:'SF Mono','Monaco','Cascadia Code','Fira Code','DejaVu Sans Mono','Liberation Mono',monospace;overflow:hidden}
-      .skeleton-header{display:flex;align-items:center;justify-content:space-between;height:40px;padding:8px 16px;background:#141414;border-bottom:1px solid #2a2a2a;flex-shrink:0}
-      .skeleton-header-left{display:flex;align-items:center;gap:12px}
-      .skeleton-header-right{display:flex;align-items:center;gap:12px}
-      .skeleton-pill{height:24px;border-radius:4px;background:#1e1e1e}
-      .skeleton-dot{width:8px;height:8px;border-radius:50%;background:#0f5040}
-      .skeleton-main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#0a0a0a}
-      .skeleton-map{height:50vh;min-height:200px;border:1px solid #2a2a2a;background:#020a08;display:flex;flex-direction:column;flex-shrink:0}
-      .skeleton-map-bar{height:32px;display:flex;align-items:center;padding:0 12px;background:#141414;border-bottom:1px solid #2a2a2a}
-      .skeleton-map-body{flex:1;position:relative;overflow:hidden}
-      .skeleton-map-body::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 50% at 50% 50%,#0a2a20 0%,#020a08 100%);opacity:.5}
-      .skeleton-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:4px;padding:4px;align-content:start}
-      .skeleton-panel{height:320px;background:#141414;border:1px solid #2a2a2a;border-radius:0;display:flex;flex-direction:column}
-      .skeleton-panel-header{height:36px;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid #1a1a1a}
-      .skeleton-panel-body{flex:1;padding:12px;display:flex;flex-direction:column;gap:10px}
-      .skeleton-line{height:14px;border-radius:4px;background:linear-gradient(90deg,rgba(255,255,255,.05) 25%,rgba(255,255,255,.1) 50%,rgba(255,255,255,.05) 75%);background-size:200% 100%;animation:skel-shimmer 1.5s infinite}
-      .skeleton-line.w75{width:75%}.skeleton-line.w60{width:60%}.skeleton-line.w50{width:50%}.skeleton-line.w85{width:85%}.skeleton-line.w40{width:40%}
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text);
+    }
 
-      @keyframes skel-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+    .nav-logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #00d4ff, #0068a8);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
 
-      /* ---------- skeleton shell (light theme) ---------- */
-      [data-theme="light"] .skeleton-shell{background:#f8f9fa}
-      [data-theme="light"] .skeleton-header{background:#fff;border-bottom-color:#d4d4d4}
-      [data-theme="light"] .skeleton-pill{background:#f0f0f0}
-      [data-theme="light"] .skeleton-dot{background:#16a34a}
-      [data-theme="light"] .skeleton-main{background:#f8f9fa}
-      [data-theme="light"] .skeleton-map{border-color:#d4d4d4;background:#e8f0f8}
-      [data-theme="light"] .skeleton-map-bar{background:#fff;border-bottom-color:#d4d4d4}
-      [data-theme="light"] .skeleton-map-body::after{background:radial-gradient(ellipse 60% 50% at 50% 50%,#b0c8d8 0%,#e8f0f8 100%)}
-      [data-theme="light"] .skeleton-panel{background:#fff;border-color:#d4d4d4}
-      [data-theme="light"] .skeleton-panel-header{border-bottom-color:#e8e8e8}
-      [data-theme="light"] .skeleton-line{background:linear-gradient(90deg,rgba(0,0,0,.04) 25%,rgba(0,0,0,.08) 50%,rgba(0,0,0,.04) 75%);background-size:200% 100%;animation:skel-shimmer 1.5s infinite}
+    .nav-logo-text {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
 
-      /* ---------- skeleton shell (happy variant — light) ---------- */
-      [data-variant="happy"] .skeleton-shell{background:#FAFAF5;font-family:'Nunito',system-ui,sans-serif}
-      [data-variant="happy"] .skeleton-header{background:#FFFFFF;border-bottom-color:#DDD9CF}
-      [data-variant="happy"] .skeleton-pill{background:#F2EFE8;border-radius:8px}
-      [data-variant="happy"] .skeleton-dot{background:#6B8F5E}
-      [data-variant="happy"] .skeleton-main{background:#FAFAF5}
-      [data-variant="happy"] .skeleton-map{border-color:#DDD9CF;background:#D4E6EC;border-radius:14px}
-      [data-variant="happy"] .skeleton-map-bar{background:#FFFFFF;border-bottom-color:#DDD9CF}
-      [data-variant="happy"] .skeleton-map-body::after{background:radial-gradient(ellipse 60% 50% at 50% 50%,#B9CDA8 0%,#D4E6EC 100%);opacity:.3}
-      [data-variant="happy"] .skeleton-panel{background:#FFFFFF;border-color:#DDD9CF;border-radius:14px}
-      [data-variant="happy"] .skeleton-panel-header{border-bottom-color:#EBE8E0}
-      [data-variant="happy"] .skeleton-line{background:linear-gradient(90deg,rgba(107,143,94,.06) 25%,rgba(107,143,94,.12) 50%,rgba(107,143,94,.06) 75%);background-size:200% 100%;animation:skel-shimmer 1.5s infinite}
+    .nav-cta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--cyan);
+      color: #000;
+      text-decoration: none;
+      padding: 9px 18px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      transition: opacity 0.2s;
+    }
 
-      /* ---------- skeleton shell (happy variant — dark) ---------- */
-      [data-variant="happy"][data-theme="dark"] .skeleton-shell{background:#1A2332}
-      [data-variant="happy"][data-theme="dark"] .skeleton-header{background:#222E3E;border-bottom-color:#344050}
-      [data-variant="happy"][data-theme="dark"] .skeleton-pill{background:#2A3848}
-      [data-variant="happy"][data-theme="dark"] .skeleton-dot{background:#8BAF7A}
-      [data-variant="happy"][data-theme="dark"] .skeleton-main{background:#1A2332}
-      [data-variant="happy"][data-theme="dark"] .skeleton-map{border-color:#344050;background:#16202E}
-      [data-variant="happy"][data-theme="dark"] .skeleton-map-bar{background:#222E3E;border-bottom-color:#344050}
-      [data-variant="happy"][data-theme="dark"] .skeleton-map-body::after{background:radial-gradient(ellipse 60% 50% at 50% 50%,#2D4035 0%,#16202E 100%);opacity:.3}
-      [data-variant="happy"][data-theme="dark"] .skeleton-panel{background:#222E3E;border-color:#344050}
-      [data-variant="happy"][data-theme="dark"] .skeleton-panel-header{border-bottom-color:#283545}
-      [data-variant="happy"][data-theme="dark"] .skeleton-line{background:linear-gradient(90deg,rgba(139,175,122,.05) 25%,rgba(139,175,122,.10) 50%,rgba(139,175,122,.05) 75%);background-size:200% 100%;animation:skel-shimmer 1.5s infinite}
-    </style>
+    .nav-cta:hover { opacity: 0.85; }
 
-    <!-- Preconnect: map tiles + assets -->
-    <link rel="preconnect" href="https://maps.worldmonitor.app" crossorigin>
-    <link rel="dns-prefetch" href="https://protomaps.github.io">
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      position: relative;
+      overflow: hidden;
+    }
 
-    <!-- Google Fonts (Nunito for happy variant, Tajawal for Arabic) -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Tajawal:wght@200;300;400;500;700;800;900&display=swap" rel="stylesheet">
-  </head>
-  <body>
-    <div id="app">
-      <!-- Pre-render skeleton: visible instantly, replaced when JS calls renderLayout() -->
-      <div class="skeleton-shell" aria-hidden="true">
-        <div class="skeleton-header">
-          <div class="skeleton-header-left">
-            <div class="skeleton-pill" style="width:120px"></div>
-            <div class="skeleton-pill" style="width:72px"></div>
-            <div class="skeleton-dot"></div>
+    .hero-globe {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 700px;
+      height: 700px;
+      border-radius: 50%;
+      background: radial-gradient(ellipse at 35% 35%, rgba(0, 212, 255, 0.06), transparent 60%),
+                  radial-gradient(ellipse at 65% 65%, rgba(0, 104, 168, 0.08), transparent 60%);
+      border: 1px solid rgba(0, 212, 255, 0.08);
+      pointer-events: none;
+    }
+
+    .hero-globe::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 50%;
+      background: conic-gradient(
+        from 0deg,
+        transparent 0deg,
+        rgba(0, 212, 255, 0.12) 60deg,
+        transparent 120deg,
+        rgba(0, 212, 255, 0.06) 180deg,
+        transparent 240deg,
+        rgba(0, 212, 255, 0.10) 300deg,
+        transparent 360deg
+      );
+      animation: globe-spin 20s linear infinite;
+    }
+
+    @keyframes globe-spin { to { transform: rotate(360deg); } }
+
+    .hero-ping {
+      position: absolute;
+      border-radius: 50%;
+      animation: ping 2s ease-out infinite;
+      pointer-events: none;
+    }
+
+    .hero-ping-1 { width: 8px; height: 8px; background: var(--red); top: 42%; left: 46%; animation-delay: 0s; }
+    .hero-ping-2 { width: 6px; height: 6px; background: var(--orange); top: 55%; left: 55%; animation-delay: 0.7s; }
+    .hero-ping-3 { width: 7px; height: 7px; background: var(--cyan); top: 38%; left: 60%; animation-delay: 1.3s; }
+    .hero-ping-4 { width: 5px; height: 5px; background: var(--green); top: 60%; left: 42%; animation-delay: 0.4s; }
+
+    @keyframes ping {
+      0% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+      70% { box-shadow: 0 0 0 12px transparent; }
+      100% { box-shadow: 0 0 0 0 transparent; opacity: 0.8; }
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0, 212, 255, 0.1);
+      border: 1px solid rgba(0, 212, 255, 0.3);
+      color: var(--cyan);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 28px;
+      position: relative;
+    }
+
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--cyan);
+      border-radius: 50%;
+      animation: blink 1.4s ease-in-out infinite;
+    }
+
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+    h1 {
+      font-size: clamp(36px, 6vw, 68px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin-bottom: 20px;
+      position: relative;
+    }
+
+    h1 .accent { color: var(--cyan); }
+
+    .hero-sub {
+      font-size: clamp(15px, 2vw, 18px);
+      color: var(--muted);
+      max-width: 540px;
+      margin: 0 auto 40px;
+      position: relative;
+    }
+
+    .cta-group {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+      position: relative;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--cyan);
+      color: #000;
+      text-decoration: none;
+      padding: 16px 32px;
+      border-radius: 14px;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 0 30px rgba(0, 212, 255, 0.3);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 40px rgba(0, 212, 255, 0.5);
+    }
+
+    .btn-primary svg { flex-shrink: 0; }
+
+    .free-tag {
+      font-size: 12px;
+      color: var(--muted);
+      position: relative;
+      letter-spacing: 0.04em;
+    }
+
+    /* ── STATS BAR ── */
+    .stats-bar {
+      display: flex;
+      justify-content: center;
+      gap: clamp(24px, 4vw, 64px);
+      flex-wrap: wrap;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+
+    .stat-item { text-align: center; }
+
+    .stat-num {
+      font-size: clamp(24px, 4vw, 36px);
+      font-weight: 800;
+      color: var(--cyan);
+      letter-spacing: -0.02em;
+      line-height: 1;
+    }
+
+    .stat-num.orange { color: var(--orange); }
+    .stat-num.green { color: var(--green); }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 6px;
+    }
+
+    /* ── FEATURES ── */
+    section {
+      padding: clamp(60px, 8vw, 100px) 24px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: 11px;
+      color: var(--cyan);
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    h2 {
+      font-size: clamp(26px, 4vw, 40px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      margin-bottom: 16px;
+    }
+
+    .section-desc {
+      font-size: 16px;
+      color: var(--muted);
+      max-width: 520px;
+      margin-bottom: 48px;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    .feature-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .feature-card:hover {
+      border-color: rgba(0, 212, 255, 0.35);
+      transform: translateY(-2px);
+    }
+
+    .feature-icon {
+      font-size: 28px;
+      margin-bottom: 16px;
+      display: block;
+    }
+
+    .feature-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+
+    .feature-desc {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .feature-tag {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .tag-live { background: rgba(255, 59, 59, 0.15); color: var(--red); border: 1px solid rgba(255,59,59,0.25); }
+    .tag-ai { background: rgba(0, 212, 255, 0.1); color: var(--cyan); border: 1px solid rgba(0,212,255,0.2); }
+    .tag-realtime { background: rgba(0, 255, 136, 0.1); color: var(--green); border: 1px solid rgba(0,255,136,0.2); }
+    .tag-intel { background: rgba(255, 122, 0, 0.1); color: var(--orange); border: 1px solid rgba(255,122,0,0.2); }
+
+    /* ── SCREENSHOT SHOWCASE ── */
+    .showcase {
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .showcase-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: clamp(60px, 8vw, 100px) 24px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      align-items: center;
+    }
+
+    @media (max-width: 700px) {
+      .showcase-inner { grid-template-columns: 1fr; }
+      .showcase-phones { order: -1; }
+    }
+
+    .phone-mockup {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      align-items: flex-end;
+    }
+
+    .phone {
+      background: var(--bg3);
+      border: 2px solid rgba(0, 212, 255, 0.2);
+      border-radius: 28px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 30px rgba(0, 212, 255, 0.08);
+      position: relative;
+    }
+
+    .phone-main {
+      width: 160px;
+      height: 290px;
+    }
+
+    .phone-secondary {
+      width: 140px;
+      height: 255px;
+      transform: translateY(10px);
+      opacity: 0.8;
+    }
+
+    .phone-screen {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      font-size: 8px;
+      padding: 10px 8px 8px;
+    }
+
+    /* Map screen mockup */
+    .screen-map { background: #0a1a14; }
+
+    .map-globe {
+      flex: 1;
+      border-radius: 8px;
+      background:
+        radial-gradient(ellipse at 40% 45%, rgba(0, 212, 255, 0.12) 0%, transparent 50%),
+        linear-gradient(160deg, #0d2218 0%, #071510 100%);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .map-dot {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      animation: map-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes map-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.5); } }
+
+    .map-bottom {
+      display: flex;
+      gap: 4px;
+      margin-top: 5px;
+    }
+
+    .map-btn {
+      flex: 1;
+      height: 14px;
+      border-radius: 4px;
+      background: rgba(0, 212, 255, 0.15);
+      border: 1px solid rgba(0, 212, 255, 0.2);
+      font-size: 6px;
+      color: var(--cyan);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+    }
+
+    .map-btn.active {
+      background: var(--cyan);
+      color: #000;
+    }
+
+    /* Overview screen mockup */
+    .screen-overview { background: #080d12; }
+
+    .overview-title {
+      font-size: 7px;
+      font-weight: 700;
+      color: var(--text);
+      text-align: center;
+      margin-bottom: 6px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .overview-card {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 6px;
+      margin-bottom: 4px;
+    }
+
+    .ov-label {
+      font-size: 5px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+
+    .ov-val {
+      font-size: 10px;
+      font-weight: 800;
+      color: var(--cyan);
+    }
+
+    .ov-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    /* ── SITREP SECTION ── */
+    .sitrep-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      margin-top: 48px;
+    }
+
+    .sitrep-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .sitrep-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--red), transparent);
+    }
+
+    .sitrep-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .sitrep-label {
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .badge-high {
+      background: rgba(255, 59, 59, 0.15);
+      color: var(--red);
+      border: 1px solid rgba(255,59,59,0.25);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .sitrep-title {
+      font-size: 18px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+
+    .sitrep-meta {
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .sitrep-meta span { display: flex; align-items: center; gap: 4px; }
+
+    /* ── CHANNELS ── */
+    .channels-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 32px;
+    }
+
+    .channel-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      transition: border-color 0.2s;
+    }
+
+    .channel-chip:hover { border-color: rgba(0, 212, 255, 0.4); }
+
+    .live-badge {
+      width: 6px; height: 6px;
+      background: var(--red);
+      border-radius: 50%;
+      flex-shrink: 0;
+      animation: blink 1.2s ease-in-out infinite;
+    }
+
+    /* ── DOWNLOAD CTA ── */
+    .download-section {
+      text-align: center;
+      padding: clamp(80px, 10vw, 120px) 24px;
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .download-section::before {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 600px; height: 600px;
+      border-radius: 50%;
+      background: radial-gradient(ellipse, rgba(0, 212, 255, 0.06) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .download-section h2 {
+      font-size: clamp(28px, 5vw, 48px);
+      max-width: 600px;
+      margin: 0 auto 16px;
+    }
+
+    .download-section p {
+      color: var(--muted);
+      font-size: 16px;
+      margin-bottom: 40px;
+      max-width: 460px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .appstore-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: #fff;
+      color: #000;
+      text-decoration: none;
+      padding: 14px 28px;
+      border-radius: 14px;
+      font-weight: 700;
+      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 4px 30px rgba(255, 255, 255, 0.15);
+    }
+
+    .appstore-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 40px rgba(255, 255, 255, 0.25);
+    }
+
+    .appstore-btn-text { text-align: left; }
+    .appstore-btn-sub { font-size: 10px; font-weight: 500; opacity: 0.6; display: block; }
+    .appstore-btn-main { font-size: 16px; font-weight: 800; display: block; }
+
+    /* ── FOOTER ── */
+    footer {
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      padding: 32px 24px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--cyan); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 600px) {
+      nav { padding: 12px 16px; }
+      .stats-bar { gap: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="/">
+    <div class="nav-logo-icon">🌍</div>
+    <span class="nav-logo-text">WORLD MONITOR</span>
+  </a>
+  <a class="nav-cta" href="https://apps.apple.com/tr/app/world-monitor-real-time-intel/id6760216152" target="_blank" rel="noopener">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+    Download Free
+  </a>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-globe">
+    <div class="hero-ping hero-ping-1"></div>
+    <div class="hero-ping hero-ping-2"></div>
+    <div class="hero-ping hero-ping-3"></div>
+    <div class="hero-ping hero-ping-4"></div>
+  </div>
+
+  <div class="hero-badge">
+    <div class="live-dot"></div>
+    Live Intelligence Feed
+  </div>
+
+  <h1>
+    The World, <span class="accent">Real-Time</span><br>In Your Pocket
+  </h1>
+
+  <p class="hero-sub">
+    Track global conflicts, breaking news, seismic activity, cyber threats, and infrastructure outages — all on a live interactive globe. The OSINT app built for situational awareness.
+  </p>
+
+  <div class="cta-group">
+    <a class="btn-primary" href="https://apps.apple.com/tr/app/world-monitor-real-time-intel/id6760216152" target="_blank" rel="noopener">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+      Download on the App Store
+    </a>
+  </div>
+  <p class="free-tag">Free · iPhone &amp; iPad · iOS 16+</p>
+</div>
+
+<!-- STATS BAR -->
+<div class="stats-bar">
+  <div class="stat-item">
+    <div class="stat-num">2,100+</div>
+    <div class="stat-label">Active Conflict Events</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num green">28+</div>
+    <div class="stat-label">Live News Channels</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num orange">9</div>
+    <div class="stat-label">War Theaters Tracked</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num">304</div>
+    <div class="stat-label">Active Cyber Threats</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num green">Real-Time</div>
+    <div class="stat-label">Data Updates</div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<section>
+  <div class="section-label">Core Features</div>
+  <h2>Everything Happening<br>in the World, Right Now</h2>
+  <p class="section-desc">World Monitor aggregates hundreds of live data sources into one clean, powerful interface on your iPhone.</p>
+
+  <div class="features-grid">
+    <div class="feature-card">
+      <span class="feature-icon">🗺️</span>
+      <div class="feature-title">Interactive Conflict Globe</div>
+      <div class="feature-desc">Fly across a real-time 3D globe with live conflict zones, military movements, nuclear facilities, and geopolitical flashpoints marked and updated continuously.</div>
+      <span class="feature-tag tag-live">Live</span>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">📡</span>
+      <div class="feature-title">Situation Reports</div>
+      <div class="feature-desc">Detailed theater-level situation reports covering intensity, casualties, displaced populations, opposing forces, and active operations — updated as events unfold.</div>
+      <span class="feature-tag tag-intel">Intel</span>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">📺</span>
+      <div class="feature-title">28+ Live News Channels</div>
+      <div class="feature-desc">Stream Bloomberg, CNN, CNBC, Sky News, Euronews, DW, France 24, Yahoo Finance and more — all categorized by region and accessible in one tap.</div>
+      <span class="feature-tag tag-live">Live</span>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🤖</span>
+      <div class="feature-title">AI World Brief</div>
+      <div class="feature-desc">AI-generated world briefings powered by Gemini 2.5, synthesizing hundreds of sources into concise, critical intelligence summaries every 10 minutes.</div>
+      <span class="feature-tag tag-ai">AI Powered</span>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🍕</span>
+      <div class="feature-title">Pentagon Pizza Index</div>
+      <div class="feature-desc">The famous intelligence indicator — tracks late-night pizza orders near defense buildings as a proxy for elevated military activity. Currently at DEFCON 2.</div>
+      <span class="feature-tag tag-realtime">Real-Time</span>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🌋</span>
+      <div class="feature-title">Seismic & Natural Events</div>
+      <div class="feature-desc">Real-time earthquake tracking with magnitude, depth, and location data. Monitor volcanic activity, tsunami warnings, and extreme weather events globally.</div>
+      <span class="feature-tag tag-realtime">Real-Time</span>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🛡️</span>
+      <div class="feature-title">Cyber Threat Monitor</div>
+      <div class="feature-desc">Track 300+ active cyber threats, nation-state attacks, infrastructure breaches, and zero-day exploits as they're reported across global security feeds.</div>
+      <span class="feature-tag tag-intel">Intel</span>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🔥</span>
+      <div class="feature-title">Wildfire Tracking</div>
+      <div class="feature-desc">Over 3,300 active wildfire detections mapped in real-time using satellite imagery, with containment status and evacuation zones highlighted.</div>
+      <span class="feature-tag tag-live">Live</span>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">⚡</span>
+      <div class="feature-title">Infrastructure Outages</div>
+      <div class="feature-desc">Monitor power grid failures, internet outages, pipeline disruptions, and critical infrastructure incidents across 30 tracked services worldwide.</div>
+      <span class="feature-tag tag-realtime">Real-Time</span>
+    </div>
+  </div>
+</section>
+
+<!-- SHOWCASE -->
+<div class="showcase">
+  <div class="showcase-inner">
+    <div>
+      <div class="section-label">What You'll See</div>
+      <h2>A Mission Control for the World</h2>
+      <p style="color: var(--muted); font-size: 15px; margin-bottom: 28px;">From the Iran War Theater to record snowfall in the Midwest — World Monitor surfaces what matters, the moment it happens. No noise, just signal.</p>
+
+      <div class="sitrep-grid" style="margin-top: 0; grid-template-columns: 1fr;">
+        <div class="sitrep-card">
+          <div class="sitrep-header">
+            <span class="sitrep-label">Situation Report</span>
+            <span class="badge-high">High · Day 17</span>
           </div>
-          <div class="skeleton-header-right">
-            <div class="skeleton-pill" style="width:80px"></div>
-            <div class="skeleton-pill" style="width:28px;height:28px"></div>
-            <div class="skeleton-pill" style="width:64px"></div>
+          <div class="sitrep-title">Iran War Theater</div>
+          <div class="sitrep-meta">
+            <span>💀 4,300+ KIA</span>
+            <span>🏃 3.2M displaced</span>
+            <span>🛢️ Strait of Hormuz</span>
           </div>
         </div>
-        <div class="skeleton-main">
-          <div class="skeleton-map">
-            <div class="skeleton-map-bar">
-              <div class="skeleton-pill" style="width:48px;height:16px"></div>
+      </div>
+
+      <div style="margin-top: 24px;">
+        <div class="section-label" style="margin-bottom: 12px;">Live News Channels</div>
+        <div class="channels-row">
+          <div class="channel-chip"><div class="live-badge"></div>Bloomberg</div>
+          <div class="channel-chip"><div class="live-badge"></div>CNN</div>
+          <div class="channel-chip"><div class="live-badge"></div>CNBC</div>
+          <div class="channel-chip"><div class="live-badge"></div>Sky News</div>
+          <div class="channel-chip"><div class="live-badge"></div>Euronews</div>
+          <div class="channel-chip"><div class="live-badge"></div>DW News</div>
+          <div class="channel-chip"><div class="live-badge"></div>France 24</div>
+          <div class="channel-chip" style="color: var(--muted);">+21 more</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phone mockups -->
+    <div class="showcase-phones">
+      <div class="phone-mockup">
+        <!-- Map phone -->
+        <div class="phone phone-main">
+          <div class="phone-screen screen-map">
+            <div class="map-globe">
+              <div class="map-dot" style="background:#ff3b3b; top:38%; left:52%; animation-delay:0s;"></div>
+              <div class="map-dot" style="background:#ff7a00; top:55%; left:58%; animation-delay:0.5s;"></div>
+              <div class="map-dot" style="background:#00d4ff; top:30%; left:45%; animation-delay:0.9s;"></div>
+              <div class="map-dot" style="background:#00ff88; top:48%; left:38%; animation-delay:1.3s;"></div>
+              <div class="map-dot" style="background:#ff3b3b; top:62%; left:50%; animation-delay:0.3s;"></div>
+              <div class="map-dot" style="background:#ff7a00; top:42%; left:66%; animation-delay:0.7s;"></div>
             </div>
-            <div class="skeleton-map-body"></div>
+            <div class="map-bottom">
+              <div class="map-btn active">SAT</div>
+              <div class="map-btn">DUSK</div>
+              <div class="map-btn">OPS</div>
+            </div>
           </div>
-          <div class="skeleton-grid">
-            <div class="skeleton-panel"><div class="skeleton-panel-header"><div class="skeleton-pill" style="width:80px;height:14px"></div></div><div class="skeleton-panel-body"><div class="skeleton-line w85"></div><div class="skeleton-line w75"></div><div class="skeleton-line w60"></div><div class="skeleton-line"></div><div class="skeleton-line w50"></div><div class="skeleton-line w75"></div></div></div>
-            <div class="skeleton-panel"><div class="skeleton-panel-header"><div class="skeleton-pill" style="width:64px;height:14px"></div></div><div class="skeleton-panel-body"><div class="skeleton-line w75"></div><div class="skeleton-line"></div><div class="skeleton-line w60"></div><div class="skeleton-line w85"></div><div class="skeleton-line w40"></div><div class="skeleton-line w75"></div></div></div>
-            <div class="skeleton-panel"><div class="skeleton-panel-header"><div class="skeleton-pill" style="width:96px;height:14px"></div></div><div class="skeleton-panel-body"><div class="skeleton-line"></div><div class="skeleton-line w60"></div><div class="skeleton-line w85"></div><div class="skeleton-line w50"></div><div class="skeleton-line w75"></div><div class="skeleton-line w40"></div></div></div>
-            <div class="skeleton-panel"><div class="skeleton-panel-header"><div class="skeleton-pill" style="width:72px;height:14px"></div></div><div class="skeleton-panel-body"><div class="skeleton-line w60"></div><div class="skeleton-line w85"></div><div class="skeleton-line w75"></div><div class="skeleton-line"></div><div class="skeleton-line w50"></div><div class="skeleton-line w60"></div></div></div>
-            <div class="skeleton-panel"><div class="skeleton-panel-header"><div class="skeleton-pill" style="width:88px;height:14px"></div></div><div class="skeleton-panel-body"><div class="skeleton-line w85"></div><div class="skeleton-line w50"></div><div class="skeleton-line w75"></div><div class="skeleton-line w60"></div><div class="skeleton-line"></div><div class="skeleton-line w40"></div></div></div>
-            <div class="skeleton-panel"><div class="skeleton-panel-header"><div class="skeleton-pill" style="width:56px;height:14px"></div></div><div class="skeleton-panel-body"><div class="skeleton-line w75"></div><div class="skeleton-line w60"></div><div class="skeleton-line"></div><div class="skeleton-line w85"></div><div class="skeleton-line w50"></div><div class="skeleton-line w75"></div></div></div>
+        </div>
+        <!-- Overview phone -->
+        <div class="phone phone-secondary">
+          <div class="phone-screen screen-overview">
+            <div class="overview-title">Overview</div>
+            <div class="overview-card">
+              <div class="ov-label">Pentagon Pizza Index</div>
+              <div class="ov-val">9/10</div>
+            </div>
+            <div class="ov-row">
+              <div class="overview-card" style="margin-bottom:0;">
+                <div class="ov-label">Conflict</div>
+                <div class="ov-val" style="color:#ff7a00;">2,100</div>
+              </div>
+              <div class="overview-card" style="margin-bottom:0;">
+                <div class="ov-label">Seismic</div>
+                <div class="ov-val" style="color:#00d4ff;">12</div>
+              </div>
+            </div>
+            <div class="ov-row" style="margin-top:4px;">
+              <div class="overview-card" style="margin-bottom:0;">
+                <div class="ov-label">Cyber</div>
+                <div class="ov-val" style="color:#ff3b3b;">304</div>
+              </div>
+              <div class="overview-card" style="margin-bottom:0;">
+                <div class="ov-label">Wildfire</div>
+                <div class="ov-val" style="color:#ff7a00;">3.3K</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
-    <aside id="country-deep-dive-panel" class="country-deep-dive" aria-label="Country Intelligence" aria-hidden="true">
-      <div class="country-deep-dive-shell">
-        <button id="deep-dive-close" class="panel-close" aria-label="Close">×</button>
-        <div id="deep-dive-content" class="panel-content"></div>
-      </div>
-    </aside>
-    <noscript>
-      <div style="max-width:800px;margin:0 auto;padding:40px 20px;font-family:system-ui,sans-serif;color:#e5e5e5;background:#0a0a0a;">
-        <h1>World Monitor — Real-Time Global Intelligence Dashboard</h1>
-        <p>AI-powered real-time global intelligence dashboard with live news, markets, military tracking, infrastructure monitoring, and geopolitical data. Used by 2M+ people across 190+ countries.</p>
-        <h2>Features</h2>
-        <ul>
-          <li>Real-time conflict tracking (ACLED, UCDP)</li>
-          <li>Military ADS-B flight monitoring</li>
-          <li>Maritime AIS ship tracking and dark vessel detection</li>
-          <li>Stock market, commodity, and crypto tracking</li>
-          <li>AI-powered intelligence synthesis and daily briefs</li>
-          <li>Country Instability Index (CII) scoring</li>
-          <li>435+ curated RSS news feeds, 45 map layers</li>
-          <li>21 language support</li>
-        </ul>
-        <p><a href="https://www.worldmonitor.app/pro" style="color:#4ade80;">Upgrade to World Monitor Pro</a></p>
-      </div>
-    </noscript>
-    <!-- Force-clear stale service worker if module scripts 404 (post-deploy cache mismatch) -->
-    <script>
-    (function(){
-      if(!('serviceWorker' in navigator))return;
-      var key='wm-sw-nuke';
-      if(sessionStorage.getItem(key))return;
-      window.addEventListener('error',function(e){
-        var u=e.target&&(e.target.src||e.target.href)||'';
-        if(u&&/\/assets\//.test(u)){
-          sessionStorage.setItem(key,'1');
-          navigator.serviceWorker.getRegistrations().then(function(regs){
-            var p=regs.map(function(r){return r.unregister()});
-            Promise.all(p).then(function(){
-              if(caches&&caches.keys){
-                caches.keys().then(function(ks){
-                  return Promise.all(ks.map(function(k){return caches.delete(k)}));
-                }).then(function(){location.reload()});
-              }else{location.reload()}
-            });
-          });
-        }
-      },true);
-    })()
-    </script>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+  </div>
+</div>
+
+<!-- DOWNLOAD CTA -->
+<div class="download-section">
+  <div class="section-label" style="margin-bottom: 16px;">Available Now on iOS</div>
+  <h2>Stay Ahead of the World</h2>
+  <p>Free to download. Real-time data. No account required to start. The intelligence feed you've been missing.</p>
+
+  <a class="appstore-btn" href="https://apps.apple.com/tr/app/world-monitor-real-time-intel/id6760216152" target="_blank" rel="noopener">
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="#000"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+    <div class="appstore-btn-text">
+      <span class="appstore-btn-sub">Download on the</span>
+      <span class="appstore-btn-main">App Store</span>
+    </div>
+  </a>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <p style="margin-bottom: 8px;">
+    <a href="https://apps.apple.com/tr/app/world-monitor-real-time-intel/id6760216152" target="_blank" rel="noopener">World Monitor</a>
+    &nbsp;·&nbsp; Real-Time Global Intelligence
+  </p>
+  <p>© 2025–2026 World Monitor. All rights reserved.</p>
+</footer>
+
+</body>
 </html>
