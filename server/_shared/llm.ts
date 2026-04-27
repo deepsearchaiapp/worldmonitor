@@ -120,6 +120,15 @@ export interface ClaudeCallOptions {
   temperature?: number;
   /** Hard timeout for the HTTPS round-trip. */
   timeoutMs?: number;
+  /**
+   * Override the env var name used to look up the Anthropic API key.
+   * Defaults to `ANTHROPIC_API_KEY`. Pass a different name (e.g.
+   * `ANTHROPIC_API_KEY_PARAPHRASE`) so that distinct features can bill
+   * against separate keys for cost visibility in Anthropic's dashboard.
+   * Falls back to `ANTHROPIC_API_KEY` if the specified env var is unset,
+   * so a missing config doesn't silently kill the feature.
+   */
+  apiKeyEnv?: string;
 }
 
 export interface ClaudeCallResult {
@@ -136,10 +145,23 @@ export interface ClaudeCallResult {
  * it's typically a soft fail (item just doesn't get a location).
  */
 export async function callClaude(opts: ClaudeCallOptions): Promise<ClaudeCallResult | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // Resolve which env var to read. If the caller asked for a specific one
+  // (e.g. ANTHROPIC_API_KEY_PARAPHRASE) and it's set, use that. Otherwise
+  // fall back to the default ANTHROPIC_API_KEY so a missing optional key
+  // doesn't silently break the feature.
+  const preferredEnvName = opts.apiKeyEnv;
+  const preferredKey = preferredEnvName ? process.env[preferredEnvName] : undefined;
+  const fallbackKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = preferredKey || fallbackKey;
+  const usedEnvName = preferredKey ? preferredEnvName! : 'ANTHROPIC_API_KEY';
+
   if (!apiKey) {
-    console.warn('[llm:claude] ANTHROPIC_API_KEY missing — skipping');
+    console.warn(`[llm:claude] ${preferredEnvName ?? 'ANTHROPIC_API_KEY'} missing (and ANTHROPIC_API_KEY also unset) — skipping`);
     return null;
+  }
+
+  if (preferredEnvName && !preferredKey) {
+    console.warn(`[llm:claude] ${preferredEnvName} unset — falling back to ANTHROPIC_API_KEY (cost will land on the default key)`);
   }
 
   const {

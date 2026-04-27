@@ -20,6 +20,7 @@
 import { cachedFetchJson } from '../../_shared/redis';
 import { buildBaseDigest, type LiveNewsItem } from './_normalize';
 import { attachCachedLocations, enrichMissingLocations } from './_enrich';
+import { attachCachedSummaries, paraphraseMissingSummaries } from './_paraphrase';
 
 const TOP_LEVEL_TTL_S = 30;
 const NEGATIVE_TTL_S = 30;
@@ -31,6 +32,8 @@ export interface ListUsHeadlinesResponse {
   generatedAt: string;
   /** Diagnostic — how many items were missing a cached location at digest time. */
   pendingEnrichment: number;
+  /** Diagnostic — how many items were missing a cached LLM summary at digest time. */
+  pendingParaphrase: number;
 }
 
 /** In-memory last-good — fallback if Redis is hard-down on a cold instance. */
@@ -43,19 +46,29 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
   try {
     const { items, feedStatuses } = await buildBaseDigest(deadline.signal);
 
-    // Read path — attach already-enriched locations.
-    const missing = await attachCachedLocations(items);
+    // Read path — attach already-enriched locations and summaries in parallel.
+    // Both are independent BATCH GETs against different cache namespaces,
+    // so we pipeline them.
+    const [missingLocations, missingSummaries] = await Promise.all([
+      attachCachedLocations(items),
+      attachCachedSummaries(items),
+    ]);
 
-    // Write path — fire-and-forget. We deliberately don't `await` here so
-    // the response returns immediately. The promise keeps running on the
-    // edge instance long enough to finish the LLM call (Claude Haiku
-    // typically returns in < 3 s for 20 headlines).
-    if (missing.length > 0) {
-      console.log(`[live-news] Kicking off enrichment for ${missing.length} missing items`);
-      // No `await` — but we catch so an unhandled rejection doesn't crash
-      // the function. Errors land in Vercel logs via the helper itself.
-      enrichMissingLocations(missing).catch((err) => {
-        console.warn('[live-news] enrichment promise rejected:', err);
+    // Write path — fire-and-forget. We deliberately don't `await` either
+    // so the response returns immediately. Both promises keep running on
+    // the edge instance long enough to finish the LLM calls. Claude Haiku
+    // typically returns in < 3 s for the location batch and < 5 s for the
+    // paraphrase batch.
+    if (missingLocations.length > 0) {
+      console.log(`[live-news] Kicking off location enrichment for ${missingLocations.length} items`);
+      enrichMissingLocations(missingLocations).catch((err) => {
+        console.warn('[live-news] location enrichment promise rejected:', err);
+      });
+    }
+    if (missingSummaries.length > 0) {
+      console.log(`[live-news] Kicking off paraphrase for ${missingSummaries.length} items`);
+      paraphraseMissingSummaries(missingSummaries).catch((err) => {
+        console.warn('[live-news] paraphrase promise rejected:', err);
       });
     }
 
@@ -63,7 +76,8 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
       items,
       feedStatuses,
       generatedAt: new Date().toISOString(),
-      pendingEnrichment: missing.length,
+      pendingEnrichment: missingLocations.length,
+      pendingParaphrase: missingSummaries.length,
     };
   } finally {
     clearTimeout(deadlineTimer);
@@ -101,5 +115,6 @@ export async function listUsHeadlines(): Promise<ListUsHeadlinesResponse> {
     feedStatuses: {},
     generatedAt: new Date().toISOString(),
     pendingEnrichment: 0,
+    pendingParaphrase: 0,
   };
 }

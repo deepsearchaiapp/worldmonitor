@@ -23,15 +23,28 @@ export interface LiveNewsItem {
   link: string;
   publishedAt: number;     // ms since epoch
   isAlert: boolean;
-  /** SHA-256 of normalized title — used as the cache key for LLM enrichment. */
+  /** SHA-256 of normalized title — used as the cache key for both location
+   *  and paraphrase LLM enrichments. */
   titleHash: string;
-  /** Filled in by the enrichment step; absent on first poll. */
+  /** Filled in by the location-enrichment step; absent on first poll. */
   location: { latitude: number; longitude: number } | null;
   locationName: string | null;
   /** LLM confidence 0..1 (only meaningful when location is non-null). */
   confidence: number | null;
   /** Optional ISO country code from the LLM. Useful for client-side filtering. */
   country: string | null;
+  /** Neutral 2–3 sentence summary written by the paraphrase LLM. Null when
+   *  enrichment hasn't run yet, or when the LLM declined to summarize
+   *  (sparse RSS description, paywalled story, etc.). iOS falls back to
+   *  the source web view when null. */
+  summary: string | null;
+  /**
+   * Internal-only — RSS description/excerpt forwarded to the paraphrase LLM
+   * as the source material. Strip-tagged plain text. Not displayed in the
+   * iOS UI; the LLM's `summary` is the user-visible output. We expose it
+   * on the wire so any future tooling can re-summarize from the same source.
+   */
+  rawDescription: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,6 +91,22 @@ interface RawItem {
   title: string;
   link: string;
   publishedAt: number;
+  /** RSS `<description>` or Atom `<summary>` / `<content>` — HTML stripped. */
+  rawDescription: string;
+}
+
+/**
+ * Crude HTML-tag stripper for RSS description content.
+ * Many feeds embed `<p>`, `<a>`, `<img>`, etc. inside their descriptions;
+ * we don't want to send that to the LLM (wastes tokens, distracts the model).
+ */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 async function fetchRssText(url: string, signal: AbortSignal): Promise<string | null> {
@@ -134,7 +163,16 @@ function parseFeed(xml: string, source: NewsSource): RawItem[] {
     const date = pubStr ? new Date(pubStr) : null;
     const publishedAt = date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
 
-    items.push({ source: source.name, title, link, publishedAt });
+    // Pull RSS description / Atom summary / RSS 2.0 content:encoded.
+    // Different feeds use different tags; we take whichever is longest.
+    const candidates = [
+      extractTag(block, 'description'),
+      extractTag(block, 'summary'),
+      extractTag(block, 'content'),
+    ].map(stripHtml).filter((s) => s.length > 0);
+    const rawDescription = candidates.sort((a, b) => b.length - a.length)[0] ?? '';
+
+    items.push({ source: source.name, title, link, publishedAt, rawDescription });
   }
 
   return items;
@@ -244,6 +282,11 @@ export async function buildBaseDigest(signal: AbortSignal): Promise<{
   const items: LiveNewsItem[] = await Promise.all(
     top.map(async (it) => {
       const breaking = detectBreaking(it.title, it.publishedAt, now);
+      // Cap rawDescription so a single chatty feed doesn't blow our LLM
+      // context budget. 1200 chars ≈ 300 tokens — enough to summarize from.
+      const cappedDescription = it.rawDescription.length > 1200
+        ? it.rawDescription.slice(0, 1200) + '…'
+        : it.rawDescription;
       return {
         source: it.source,
         title: it.title,
@@ -255,6 +298,8 @@ export async function buildBaseDigest(signal: AbortSignal): Promise<{
         locationName: null,
         confidence: null,
         country: null,
+        summary: null,
+        rawDescription: cappedDescription || null,
       };
     }),
   );
