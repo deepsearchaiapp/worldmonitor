@@ -72,18 +72,29 @@ async function fetchLeagueWithCache(league: LeagueConfig): Promise<{
   league: LeagueConfig;
   raw: unknown | null;
 }> {
-  const cacheKey = `live-sports:espn:v1:${league.espnPath}`;
-  const raw = await cachedFetchJson<{ payload: unknown }>(
-    cacheKey,
-    PER_LEAGUE_TTL_S,
-    async () => {
-      const payload = await fetchEspnScoreboard(league);
-      if (payload == null) return null;
-      return { payload };
-    },
-    NEGATIVE_TTL_S,
-  );
-  return { league, raw: raw?.payload ?? null };
+  // v2 — bumped from v1 to evict any poisoned negative-cache entries from
+  // the original deploy. New deploys get a clean cache namespace.
+  const cacheKey = `live-sports:espn:v2:${league.espnPath}`;
+  try {
+    const raw = await cachedFetchJson<{ payload: unknown }>(
+      cacheKey,
+      PER_LEAGUE_TTL_S,
+      async () => {
+        const payload = await fetchEspnScoreboard(league);
+        if (payload == null) return null;
+        return { payload };
+      },
+      NEGATIVE_TTL_S,
+    );
+    return { league, raw: raw?.payload ?? null };
+  } catch (err) {
+    // Any error here propagates as a rejection from Promise.allSettled,
+    // showing up as `'error'` in our league-status map. We log it so
+    // real ESPN/Redis issues are visible (the previous all-`'error'`
+    // status was actually the dead-end fallback below, not a real error).
+    console.warn(`[live-sports] ${league.shortName} pipeline error:`, err instanceof Error ? err.message : err);
+    return { league, raw: null };
+  }
 }
 
 /** Build the digest from scratch — runs only on Redis miss. */
@@ -101,6 +112,9 @@ async function buildDigest(): Promise<ListUsSportsEventsResponse> {
     const result = settled[i]!;
 
     if (result.status === 'rejected') {
+      // With the try/catch in fetchLeagueWithCache this branch should be
+      // unreachable, but log loud if we ever land here so it's diagnosable.
+      console.warn(`[live-sports] ${league.shortName} unexpected rejection:`, result.reason);
       leagueStatuses[league.shortName] = 'error';
       perLeagueCounts[league.shortName] = { raw: 'rejected', kept: 0 };
       continue;
@@ -141,23 +155,29 @@ async function buildDigest(): Promise<ListUsSportsEventsResponse> {
 
 /**
  * Public entrypoint — used by the HTTP handler.
- * Always returns a response object; on total upstream failure returns the
- * last good payload (or an empty digest if we have never had a good fetch).
+ * Always returns a response object. We deliberately *never* let
+ * `cachedFetchJson` write its negative-cache sentinel: a poisoned `null`
+ * with a 60 s TTL would short-circuit subsequent requests and produce a
+ * dead-end empty payload until the TTL expires. Instead we cache the real
+ * digest (even when empty), so natural 30 s expiry retries on its own.
+ *
+ * Cache key is `v2` — versioning lets us evict any previously-poisoned
+ * `v1` entry without manually deleting it from Redis.
  */
 export async function listUsSportsEvents(): Promise<ListUsSportsEventsResponse> {
-  const cacheKey = 'live-sports:us:v1';
+  const cacheKey = 'live-sports:us:v2';
 
   try {
     const result = await cachedFetchJson<ListUsSportsEventsResponse>(
       cacheKey,
       TOP_LEVEL_TTL_S,
       async () => {
-        const digest = await buildDigest();
-        // Treat fully-empty digest as a soft failure (don't poison cache).
-        if (digest.items.length === 0 && Object.values(digest.leagueStatuses).every((s) => s !== 'ok')) {
-          return null;
-        }
-        return digest;
+        // Always return the digest — even an all-error digest. This avoids
+        // the negative-sentinel poisoning path. The fetcher returning null
+        // would cause `cachedFetchJson` to write `__WM_NEG__` for 60 s,
+        // during which every caller gets a synthetic empty list with no
+        // way to refresh until TTL expiry.
+        return await buildDigest();
       },
       NEGATIVE_TTL_S,
     );
@@ -171,7 +191,8 @@ export async function listUsSportsEvents(): Promise<ListUsSportsEventsResponse> 
     console.warn('[live-sports] listUsSportsEvents failed:', msg);
   }
 
-  // Hard fallback path — Redis down + every league failed.
+  // Hard fallback — only reached if Redis itself is unreachable AND we
+  // have never seen a good response in this function's lifetime.
   if (lastGoodResponse) {
     return lastGoodResponse;
   }
