@@ -35,6 +35,7 @@ let lastGoodResponse: ListUsSportsEventsResponse | null = null;
 async function fetchEspnScoreboard(league: LeagueConfig): Promise<unknown | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ESPN_FETCH_TIMEOUT_MS);
+  const startedAt = Date.now();
   try {
     const resp = await fetch(espnScoreboardUrl(league), {
       headers: {
@@ -44,13 +45,18 @@ async function fetchEspnScoreboard(league: LeagueConfig): Promise<unknown | null
       signal: controller.signal,
     });
     if (!resp.ok) {
-      console.warn(`[live-sports] ESPN ${league.shortName} → HTTP ${resp.status}`);
+      console.warn(`[live-sports] ESPN ${league.shortName} → HTTP ${resp.status} (${Date.now() - startedAt}ms)`);
       return null;
     }
-    return await resp.json();
+    const body = await resp.json();
+    const eventCount = (body && typeof body === 'object' && Array.isArray((body as { events?: unknown[] }).events))
+      ? (body as { events: unknown[] }).events.length
+      : 0;
+    console.log(`[live-sports] ESPN ${league.shortName} → ${eventCount} raw events (${Date.now() - startedAt}ms)`);
+    return body;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[live-sports] ESPN ${league.shortName} fetch failed:`, msg);
+    console.warn(`[live-sports] ESPN ${league.shortName} fetch failed (${Date.now() - startedAt}ms):`, msg);
     return null;
   } finally {
     clearTimeout(timer);
@@ -83,10 +89,12 @@ async function fetchLeagueWithCache(league: LeagueConfig): Promise<{
 /** Build the digest from scratch — runs only on Redis miss. */
 async function buildDigest(): Promise<ListUsSportsEventsResponse> {
   const now = Date.now();
+  console.log(`[live-sports] buildDigest start — fetching ${LEAGUES.length} leagues`);
   const settled = await Promise.allSettled(LEAGUES.map(fetchLeagueWithCache));
 
   const leagueStatuses: ListUsSportsEventsResponse['leagueStatuses'] = {};
   let allItems: SportEventItem[] = [];
+  const perLeagueCounts: Record<string, { raw: number | string; kept: number }> = {};
 
   for (let i = 0; i < settled.length; i++) {
     const league = LEAGUES[i]!;
@@ -94,19 +102,27 @@ async function buildDigest(): Promise<ListUsSportsEventsResponse> {
 
     if (result.status === 'rejected') {
       leagueStatuses[league.shortName] = 'error';
+      perLeagueCounts[league.shortName] = { raw: 'rejected', kept: 0 };
       continue;
     }
 
     const raw = result.value.raw;
     if (raw == null) {
       leagueStatuses[league.shortName] = 'timeout';
+      perLeagueCounts[league.shortName] = { raw: 'null', kept: 0 };
       continue;
     }
 
+    const rawCount = Array.isArray((raw as { events?: unknown[] }).events)
+      ? (raw as { events: unknown[] }).events.length
+      : 0;
     const items = normalizeScoreboard(league, raw, now);
     leagueStatuses[league.shortName] = items.length > 0 ? 'ok' : 'empty';
+    perLeagueCounts[league.shortName] = { raw: rawCount, kept: items.length };
     allItems = allItems.concat(items);
   }
+
+  console.log(`[live-sports] buildDigest done — ${allItems.length} items total. Per-league:`, JSON.stringify(perLeagueCounts));
 
   // Sort: live first (priority 0), then upcoming by start time asc,
   // then finished by start time desc.

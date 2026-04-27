@@ -146,6 +146,9 @@ export function normalizeScoreboard(
   const board = raw as EspnScoreboard | null;
   const events = board?.events ?? [];
   const items: SportEventItem[] = [];
+  let droppedNoDate = 0;
+  let droppedWindow = 0;
+  const stateCounts: Record<string, number> = {};
 
   for (const event of events) {
     const competition = event.competitions?.[0];
@@ -153,8 +156,16 @@ export function normalizeScoreboard(
     const startIso = event.date;
     const gameStartMs = startIso ? Date.parse(startIso) : NaN;
 
-    if (!Number.isFinite(gameStartMs)) continue;
-    if (!shouldInclude(state, gameStartMs, now)) continue;
+    stateCounts[state ?? 'unknown'] = (stateCounts[state ?? 'unknown'] ?? 0) + 1;
+
+    if (!Number.isFinite(gameStartMs)) {
+      droppedNoDate++;
+      continue;
+    }
+    if (!shouldInclude(state, gameStartMs, now)) {
+      droppedWindow++;
+      continue;
+    }
 
     const title = buildTitle(league, state, competition, event);
     const link = pickGameLink(event) ?? `https://www.espn.com/${league.espnPath}/`;
@@ -175,6 +186,14 @@ export function normalizeScoreboard(
       state: (state ?? 'pre') as 'pre' | 'in' | 'post',
       sortPriority: priorityFor(state),
     });
+  }
+
+  if (events.length > 0 && items.length === 0) {
+    console.log(
+      `[live-sports] normalize ${league.shortName}: ${events.length} raw, 0 kept ` +
+      `(dropped ${droppedNoDate} no-date, ${droppedWindow} out-of-window). ` +
+      `States: ${JSON.stringify(stateCounts)}`,
+    );
   }
 
   return items;
