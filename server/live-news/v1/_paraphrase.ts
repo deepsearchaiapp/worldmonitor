@@ -56,6 +56,10 @@ export async function attachCachedSummaries(items: LiveNewsItem[]): Promise<Live
   const cache = await getCachedJsonBatch(keys);
 
   const missing: LiveNewsItem[] = [];
+  let attached = 0;
+  let negativeHits = 0;
+  let malformed = 0;
+
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!;
     const cached = cache.get(keys[i]!);
@@ -65,11 +69,30 @@ export async function attachCachedSummaries(items: LiveNewsItem[]): Promise<Live
     }
     if (cached === UNPARAPHRASED_MARKER) {
       // LLM previously declined — leave summary null so iOS falls back to source.
+      negativeHits++;
       continue;
     }
     const c = cached as CachedSummary;
     if (c && typeof c.summary === 'string' && c.summary.length > 0) {
       item.summary = c.summary;
+      attached++;
+    } else {
+      // Cached but unexpected shape — note it so we can spot data corruption.
+      malformed++;
+    }
+  }
+
+  console.log(
+    `[live-news:para] attachCachedSummaries: ${items.length} items, ` +
+    `${attached} attached, ${negativeHits} negative, ${malformed} malformed, ${missing.length} missing. ` +
+    `cache.size=${cache.size}`,
+  );
+  if (attached === 0 && cache.size > 0) {
+    // Sanity check — log a sample so we can see what shape Redis actually returned.
+    const firstKey = keys.find((k) => cache.has(k));
+    if (firstKey) {
+      const sample = cache.get(firstKey);
+      console.warn(`[live-news:para] zero attachments despite ${cache.size} cache hits. sample key="${firstKey}" value=`, JSON.stringify(sample).slice(0, 300));
     }
   }
 

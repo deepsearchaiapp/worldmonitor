@@ -128,17 +128,39 @@ export async function getCachedJsonBatch(keys: string[]): Promise<Map<string, un
       body: JSON.stringify(pipeline),
       signal: AbortSignal.timeout(REDIS_PIPELINE_TIMEOUT_MS),
     });
-    if (!resp.ok) return result;
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      console.warn(`[redis] getCachedJsonBatch HTTP ${resp.status} for ${keys.length} keys:`, body.slice(0, 200));
+      return result;
+    }
 
-    const data = (await resp.json()) as Array<{ result?: string }>;
+    const data = (await resp.json()) as Array<{ result?: string | object | null }>;
+    let parsedOk = 0;
+    let parsedFail = 0;
     for (let i = 0; i < keys.length; i++) {
       const raw = data[i]?.result;
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          if (parsed !== NEG_SENTINEL) result.set(keys[i]!, parsed);
-        } catch { /* skip malformed */ }
+      if (raw === undefined || raw === null) continue;
+      // Upstash REST may return the value either as a string (raw stored
+      // form, requiring JSON.parse) or as an already-parsed object/array
+      // (depending on whether the value was stored via raw POST body or
+      // via path-based encoding). Handle both for robustness.
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (parsed !== NEG_SENTINEL) {
+          result.set(keys[i]!, parsed);
+          parsedOk++;
+        }
+      } catch (err) {
+        parsedFail++;
+        if (parsedFail <= 2) {
+          // Log only the first couple of malformed entries to avoid spam.
+          const sample = typeof raw === 'string' ? raw.slice(0, 120) : JSON.stringify(raw).slice(0, 120);
+          console.warn(`[redis] getCachedJsonBatch JSON.parse failed for "${keys[i]}":`, sample);
+        }
       }
+    }
+    if (parsedFail > 0) {
+      console.warn(`[redis] getCachedJsonBatch: ${parsedOk} parsed, ${parsedFail} malformed of ${keys.length} keys`);
     }
   } catch (err) {
     console.warn('[redis] getCachedJsonBatch failed:', errMsg(err));
