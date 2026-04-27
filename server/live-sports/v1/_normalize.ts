@@ -13,9 +13,20 @@
 import type { LeagueConfig } from './_leagues';
 import { lookupVenueCoords } from './_venue-coords';
 
-/** Window (in ms) before/after game time during which we still surface it. */
-const PRE_WINDOW_MS = 6 * 60 * 60 * 1000;   // 6 h before
-const POST_WINDOW_MS = 6 * 60 * 60 * 1000;  // 6 h after
+/**
+ * Window (in ms) before/after game time during which we still surface it.
+ *
+ * 24 h is wide enough to cover:
+ *   - "Just finished" games from last evening (most games end 3 h after start;
+ *     a 24 h post window catches games that started up to a day ago).
+ *   - "Today's matchups" — every game scheduled to start within the next day.
+ *
+ * It also implicitly hides off-season schedules (e.g. ESPN's NCAAF endpoint
+ * returns the entire next season as `pre` events months in advance — those
+ * fall well outside a 24 h pre window).
+ */
+const PRE_WINDOW_MS = 24 * 60 * 60 * 1000;   // 24 h before
+const POST_WINDOW_MS = 24 * 60 * 60 * 1000;  // 24 h after
 
 /** Output shape — mirrors iOS `NewsItem` plus `isLive`. */
 export interface SportEventItem {
