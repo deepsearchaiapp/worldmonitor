@@ -26,7 +26,11 @@ import type { LiveNewsItem } from './_normalize';
 const SUMMARY_TTL_S = 30 * 24 * 60 * 60; // 30 days
 const PARAPHRASE_BATCH_SIZE = 8;          // smaller than location — bigger inputs per item
 const MAX_PARAPHRASE_PER_REQUEST = 40;
-const CACHE_PREFIX = 'live-news:para:v1:';
+// Bumped v1 → v2 when we widened the prompt to paragraph-length output.
+// The previous prompt produced ~3 sentence / 60 word summaries, which read
+// as essentially title-paraphrases. Rotating the cache namespace evicts
+// those old short entries without manually deleting Redis keys.
+const CACHE_PREFIX = 'live-news:para:v2:';
 
 /** Sentinel — LLM declined to summarize this story. iOS falls back to source. */
 const UNPARAPHRASED_MARKER = '__WM_LIVE_NEWS_UNPARAPHRASED__';
@@ -77,25 +81,32 @@ export async function attachCachedSummaries(items: LiveNewsItem[]): Promise<Live
 
 const SYSTEM_PROMPT = `You are a neutral news summarizer for a multi-source live news feed.
 
-For each news item you receive, write a concise factual summary that:
-- Leads with the key event (who, what)
-- Includes essential context (when, where, why) where the source provides it
-- Uses neutral, plain language — no headline-style framing or sensationalism
-- Reads as self-contained — the reader should grasp the story without external context
+For each news item, write a paragraph-length factual summary that gives the reader the substance of the story — not just a rephrased headline.
 
-Style requirements:
-- 2 to 3 sentences total, 40 to 90 words
-- Past or present tense, never future tense
-- Active voice when possible
-- No editorial spin, no quoted headlines, no source attribution
-- Avoid speculation; only state what is supported by the input description
-- If the input description is too sparse to summarize without speculating, set summary to null
+Structure:
+- Sentence 1: lead with the key event (who, what, where, when).
+- Sentences 2 to 4: expand on the substance: how it happened, who is affected, what numbers / parties / timeline are involved, what the immediate consequences are.
+- Closing sentence: the implication, the next step, or the broader context that helps the reader understand why this matters.
+
+Length:
+- 4 to 6 sentences total, 100 to 180 words.
+- Aim for the upper end of that range when the source description is rich; never artificially pad if there isn't enough substance.
+
+Sourcing rules:
+- Use ONLY the facts present in the input title and description. Do not invent specifics (numbers, names, quotes, dates) that are not in the input.
+- You MAY add neutral background context drawn from common knowledge about named entities (e.g. what an agency is, where a location is, what a recurring event represents). Do not stretch this into specific claims.
+- No editorial spin, no rhetorical questions, no source attribution ("According to the New York Times..."), no quoted headlines.
+- Past or present tense, never future tense. Active voice when possible.
+
+Sparse-input fallback:
+- If the input description is genuinely too thin to support a paragraph (for example: just a video link, podcast intro, or one-line headline with no body), still produce the best possible 3 to 4 sentence summary using only what is supported. Do not hallucinate.
+- Set summary to null only when the input is so devoid of newsworthy substance that any expansion would be speculation.
 
 Output a JSON object with a "results" array, one entry per input id:
 - id: string (matches input)
-- summary: 2 to 3 sentence factual summary, or null
+- summary: paragraph-length factual summary as plain text, or null
 
-Return JSON ONLY. No prose, no markdown, no code fences.`;
+Return JSON ONLY. No prose outside the JSON, no markdown fences, no code fences.`;
 
 interface LlmResultEntry {
   id: string;
@@ -134,8 +145,14 @@ function toCachedSummary(entry: LlmResultEntry): CachedSummary | null {
   const summary = entry.summary;
   if (typeof summary !== 'string') return null;
   const trimmed = summary.trim();
-  if (trimmed.length < 30) return null;       // too short to be useful
-  if (trimmed.length > 1500) return null;     // suspicious — over the prompt budget
+  // Floor: 80 chars is roughly two short sentences. Below that the LLM
+  // probably echoed the title back instead of expanding — caching it
+  // would mean shipping a "title twice" experience to users.
+  if (trimmed.length < 80) return null;
+  // Ceiling: paragraph-length spec is ~180 words ≈ 1100 chars. 2000
+  // gives headroom for occasional verbose outputs without letting a
+  // runaway response leak into the response payload.
+  if (trimmed.length > 2000) return null;
   return { summary: trimmed };
 }
 
@@ -161,11 +178,11 @@ async function paraphraseBatch(batch: LiveNewsItem[]): Promise<void> {
   const result = await callClaude({
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(withDesc),
-    maxTokens: 2500,
+    // 4000 token cap for batch of 8 = ~500 tokens per item.
+    // Paragraph-length output is ~250–350 tokens per item; the headroom
+    // covers JSON envelope overhead and occasional longer entries.
+    maxTokens: 4000,
     temperature: 0.3,
-    // Bill paraphrase calls to a dedicated key so its cost shows up as a
-    // separate line item in Anthropic's usage dashboard. Falls back to the
-    // default `ANTHROPIC_API_KEY` if this env var isn't configured.
     apiKeyEnv: 'ANTHROPIC_API_KEY_PARAPHRASE',
   });
 
