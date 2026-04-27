@@ -18,6 +18,7 @@
  */
 
 import { cachedFetchJson } from '../../_shared/redis';
+import { keepAlive } from '../../_shared/keep-alive';
 import { buildBaseDigest, type LiveNewsItem } from './_normalize';
 import { attachCachedLocations, enrichMissingLocations } from './_enrich';
 import { attachCachedSummaries, paraphraseMissingSummaries } from './_paraphrase';
@@ -54,22 +55,20 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
       attachCachedSummaries(items),
     ]);
 
-    // Write path — fire-and-forget. We deliberately don't `await` either
-    // so the response returns immediately. Both promises keep running on
-    // the edge instance long enough to finish the LLM calls. Claude Haiku
-    // typically returns in < 3 s for the location batch and < 5 s for the
-    // paraphrase batch.
+    // Write path — fire-and-forget BUT registered with Vercel's `waitUntil`
+    // via our `keepAlive` helper. Without that registration the Edge
+    // runtime kills the isolate the moment we return the response, which
+    // silently cancels the LLM calls and leaves Redis empty (the bug we
+    // hit on first deploy: every poll saw `pendingEnrichment=60` because
+    // the writes never happened). With `keepAlive` the runtime keeps the
+    // isolate alive ~up to 30 s so Claude can finish.
     if (missingLocations.length > 0) {
       console.log(`[live-news] Kicking off location enrichment for ${missingLocations.length} items`);
-      enrichMissingLocations(missingLocations).catch((err) => {
-        console.warn('[live-news] location enrichment promise rejected:', err);
-      });
+      keepAlive(enrichMissingLocations(missingLocations), 'live-news:enrich');
     }
     if (missingSummaries.length > 0) {
       console.log(`[live-news] Kicking off paraphrase for ${missingSummaries.length} items`);
-      paraphraseMissingSummaries(missingSummaries).catch((err) => {
-        console.warn('[live-news] paraphrase promise rejected:', err);
-      });
+      keepAlive(paraphraseMissingSummaries(missingSummaries), 'live-news:para');
     }
 
     return {
