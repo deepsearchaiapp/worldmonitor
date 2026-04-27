@@ -33,9 +33,28 @@ export async function getCachedJson(key: string, raw = false): Promise<unknown |
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(REDIS_OP_TIMEOUT_MS),
     });
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as { result?: string };
-    return data.result ? JSON.parse(data.result) : null;
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      console.warn(`[redis] getCachedJson HTTP ${resp.status} for "${finalKey}":`, body.slice(0, 200));
+      return null;
+    }
+    // Same dual-shape handling as `getCachedJsonBatch`: Upstash sometimes
+    // returns the value as a string (needs JSON.parse), sometimes as an
+    // already-parsed object (when the value was stored via body-based
+    // POST and Upstash inferred its content type). Unconditional
+    // JSON.parse used to throw on the parsed-object path, silently
+    // returning null and producing infinite cache misses.
+    const data = (await resp.json()) as { result?: string | object | null };
+    if (data.result === undefined || data.result === null) return null;
+    try {
+      return typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+    } catch (err) {
+      const sample = typeof data.result === 'string'
+        ? data.result.slice(0, 120)
+        : JSON.stringify(data.result).slice(0, 120);
+      console.warn(`[redis] getCachedJson JSON.parse failed for "${finalKey}":`, sample, errMsg(err));
+      return null;
+    }
   } catch (err) {
     console.warn('[redis] getCachedJson failed:', errMsg(err));
     return null;

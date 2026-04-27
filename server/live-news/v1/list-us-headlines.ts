@@ -71,6 +71,15 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
       keepAlive(paraphraseMissingSummaries(missingSummaries), 'live-news:para');
     }
 
+    // Final-mile diagnostic: confirms how many items have summary
+    // populated AT THE MOMENT the response is being constructed. If
+    // this prints "withSummary=57" but iOS reports "summaries=0", the
+    // disconnect is in serialization or transport, not in the build
+    // pipeline. If this also prints 0, the bug is server-side.
+    const withSummary = items.filter((it) => typeof it.summary === 'string' && it.summary.length > 0).length;
+    const withLocation = items.filter((it) => it.location !== null).length;
+    console.log(`[live-news] returning digest withSummary=${withSummary}/${items.length} withLocation=${withLocation}/${items.length}`);
+
     return {
       items,
       feedStatuses,
