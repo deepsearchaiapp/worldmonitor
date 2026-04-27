@@ -88,6 +88,8 @@ function decodeXmlEntities(s: string): string {
 
 interface RawItem {
   source: string;
+  /** Lower number = more authoritative; used for dedup tie-breaks. */
+  sourcePriority: number;
   title: string;
   link: string;
   publishedAt: number;
@@ -172,7 +174,14 @@ function parseFeed(xml: string, source: NewsSource): RawItem[] {
     ].map(stripHtml).filter((s) => s.length > 0);
     const rawDescription = candidates.sort((a, b) => b.length - a.length)[0] ?? '';
 
-    items.push({ source: source.name, title, link, publishedAt, rawDescription });
+    items.push({
+      source: source.name,
+      sourcePriority: source.priority,
+      title,
+      link,
+      publishedAt,
+      rawDescription,
+    });
   }
 
   return items;
@@ -204,18 +213,55 @@ async function fetchSourceWithCache(source: NewsSource, signal: AbortSignal): Pr
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Normalise a title for fingerprinting:
- *   - lowercase
- *   - strip punctuation/symbols
- *   - collapse whitespace
- *   - take first 80 chars (most stories share the same opening)
+ * Common headline noise that obscures dedup. Each pattern is anchored to
+ * the start of the (already-lowercased) title because outlet-branding
+ * prefixes virtually always appear there.
+ */
+const HEADLINE_NOISE_PATTERNS: readonly RegExp[] = [
+  /^breaking[:\-\s]+/i,
+  /^live[:\-\s]+/i,
+  /^update[:\-\s]+/i,
+  /^updated[:\-\s]+/i,
+  /^developing[:\-\s]+/i,
+  /^exclusive[:\-\s]+/i,
+  /^just\s+in[:\-\s]+/i,
+  /^urgent[:\-\s]+/i,
+  /^watch[:\-\s]+/i,
+  /^opinion[:\-\s]+/i,
+  /^analysis[:\-\s]+/i,
+];
+
+/**
+ * Outlet branding suffixes — `" - BBC News"`, `" | Reuters"`, etc. We
+ * strip everything from the first occurrence of these separators to the
+ * end so headlines that re-broadcast the same wire story converge.
+ */
+const OUTLET_SEPARATOR_RE = /[\s]*[\-\|–—:][\s]*[A-Z][A-Za-z0-9'&\.]+(\s+[A-Z][A-Za-z0-9'&\.]+){0,4}\s*$/;
+
+/**
+ * Normalize a title for fingerprinting. Steps:
+ *   1. Lowercase.
+ *   2. Strip outlet-branding suffix (`" – Reuters"`, `" | NPR"`, etc.).
+ *   3. Strip breaking/live/update prefixes (`"BREAKING: "`, `"LIVE — "`).
+ *   4. Drop punctuation/symbols, collapse whitespace.
+ *   5. Truncate to first 80 chars (most outlets share opening wording).
  *
- * The 80-char prefix is the dedup heuristic: AP/Reuters/CNN often headline
- * the same event with near-identical openings.
+ * The result is a stable fingerprint that catches near-identical wording
+ * across outlets. Semantic-but-differently-worded duplicates still slip
+ * through; those need LLM-based clustering (separate proposal).
  */
 export function normalizeTitle(title: string): string {
-  return title
-    .toLowerCase()
+  let s = title;
+  // Strip outlet branding suffix BEFORE lowercasing so the regex can use
+  // capitalization to anchor on outlet names (which are usually
+  // PascalCase / TitleCase). A bare lowercased "- bbc" would match too
+  // aggressively and chop real titles.
+  s = s.replace(OUTLET_SEPARATOR_RE, '');
+  s = s.toLowerCase();
+  for (const pattern of HEADLINE_NOISE_PATTERNS) {
+    s = s.replace(pattern, '');
+  }
+  return s
     .replace(/[^\w\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -260,20 +306,39 @@ export async function buildBaseDigest(signal: AbortSignal): Promise<{
     allRaw.push(...arr);
   });
 
-  // Dedup by 80-char title fingerprint, keeping the freshest copy.
+  // Dedup by 80-char title fingerprint, picking the most authoritative
+  // copy of each story. Tie-break order:
+  //   1. Lower `sourcePriority` wins (1 = wires, beats 4 = analysis).
+  //   2. Among same-priority, freshest `publishedAt` wins.
+  // This makes Reuters/AP the canonical version when the same story is
+  // also reported by BBC/Guardian/etc.
   const dedupMap = new Map<string, RawItem>();
   for (const item of allRaw) {
     const key = normalizeTitle(item.title);
+    if (!key) continue; // skip items whose title normalizes to empty
     const existing = dedupMap.get(key);
-    if (!existing || item.publishedAt > existing.publishedAt) {
+    if (!existing) {
+      dedupMap.set(key, item);
+      continue;
+    }
+    const incomingWins =
+      item.sourcePriority < existing.sourcePriority ||
+      (item.sourcePriority === existing.sourcePriority && item.publishedAt > existing.publishedAt);
+    if (incomingWins) {
       dedupMap.set(key, item);
     }
   }
 
-  // Age filter — drop anything older than 3 days (and items with no date,
-  // which would otherwise sort to the bottom and cap our digest size with
-  // junk).
-  const fresh = [...dedupMap.values()].filter((it) => it.publishedAt > 0 && it.publishedAt >= cutoff);
+  // Time-based filter: items WITH a publishedAt must fall within MAX_AGE_MS
+  // of now. Items WITHOUT a publishedAt are kept (sorted to the bottom)
+  // — many feeds still emit valuable stories with malformed/missing dates,
+  // and the global MAX_ITEMS cap prevents these from drowning the digest.
+  const fresh = [...dedupMap.values()].filter((it) => {
+    if (it.publishedAt > 0) {
+      return it.publishedAt >= cutoff;
+    }
+    return true;
+  });
 
   fresh.sort((a, b) => b.publishedAt - a.publishedAt);
   const top = fresh.slice(0, MAX_ITEMS);

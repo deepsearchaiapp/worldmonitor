@@ -87,25 +87,24 @@ export async function attachCachedLocations(items: LiveNewsItem[]): Promise<Live
 // Write path: LLM enrichment + Redis cache write
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a geographic location classifier for US news headlines.
+const SYSTEM_PROMPT = `You are a geographic location classifier for international news headlines.
 
 For each headline you receive, identify where the news is HAPPENING (not where the outlet is based).
 
 Rules:
 - ALWAYS return a best-guess location, even when uncertain. Lower the confidence rather than returning null.
-- "Pentagon" → Arlington, VA, US (38.8719, -77.0563)
-- "Wall Street" / "Federal Reserve" → New York / Washington DC respectively
-- Disambiguate names by surrounding context (Springfield in IL vs MA vs MO)
-- For multi-location stories ("US sanctions Russia"), pick the one most central to the news event itself, not the actor.
-- For purely abstract/national stories ("Inflation hits 3%"), use country centroid (USA: 39.5, -98.35)
+- Resolve indirect references: "the Kremlin" → Moscow, Russia; "Pentagon" → Arlington, VA, US; "the Élysée" → Paris, France.
+- Disambiguate by context: "Springfield" can mean IL, MA, MO; "Sydney" is usually Australia but can be Nova Scotia.
+- For multi-location stories (e.g. sanctions, summits, conflicts), pick the location most central to the news event itself — usually where the action is, not where it was announced from.
+- For purely abstract/global stories (e.g. "Global inflation rises"), pick the country centroid most relevant to the headline, or fall back to a sensible regional centroid.
 - Confidence: 0.9+ when a specific city is named, 0.6–0.8 for inferred city, 0.3–0.5 for country-level guess, 0.1–0.3 for very speculative.
-- Set lat/lng to null ONLY if the headline has no geographic component at all (e.g., a tech-product review). This should be rare.
+- Set lat/lng to null ONLY if the headline has no geographic component at all (e.g. a tech-product review or generic op-ed). This should be rare.
 
 Output format: a JSON object with a "results" array. Each entry must include:
 - id: string (matches input)
 - city: string or null
 - country: ISO 3166-1 alpha-2 code (uppercase) or null
-- locationName: human-readable label like "Washington, D.C." or "Beijing, China" — short, suitable for a map detail row
+- locationName: human-readable label like "Kyiv, Ukraine" or "Beijing, China" — short, suitable for a map detail row
 - lat: number or null
 - lng: number or null
 - confidence: number between 0 and 1
