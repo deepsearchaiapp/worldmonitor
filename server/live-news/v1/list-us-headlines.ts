@@ -90,12 +90,11 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
  * on cache-poisoning. Empty digests cache normally for 30 s.
  */
 export async function listUsHeadlines(): Promise<ListUsHeadlinesResponse> {
-  // Bumped v1 → v2 alongside the paraphrase cache rotation. The previous
-  // digest cache held items with `summary: null` from the pre-paragraph
-  // build window — fresh requests would have served that stale shape for
-  // up to 30 s after deploy. Rotating the digest prefix evicts it
-  // instantly and forces every caller to rebuild.
-  const cacheKey = 'live-news:us:v2';
+  // v3 — paired with the paraphrase cache rotation triggered by the
+  // body-based-SET fix. Bumping the digest prefix forces an immediate
+  // rebuild so callers don't wait the 30 s top-level TTL before seeing
+  // freshly-written summaries.
+  const cacheKey = 'live-news:us:v3';
 
   try {
     const result = await cachedFetchJson<ListUsHeadlinesResponse>(

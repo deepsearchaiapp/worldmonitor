@@ -46,13 +46,34 @@ export async function setCachedJson(key: string, value: unknown, ttlSeconds: num
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return;
+
+  // Send the value in the POST body rather than URL-encoded into the path.
+  //
+  // Why: Upstash's path-based SET (`/set/{key}/{value}/EX/{seconds}`) silently
+  // fails when the URL grows long enough — typical for any payload above a
+  // few hundred chars (e.g. LLM-generated paragraph summaries). The fetch
+  // resolves with a 4xx status, which our previous try/catch *did not
+  // catch* because `fetch` only throws on network errors. Result: callers
+  // saw "write succeeded" but nothing was in Redis. Body-based SET handles
+  // arbitrarily large values cleanly.
+  //
+  // We also explicitly check `resp.ok` and surface non-2xx via console.warn
+  // so the next time something like this fails, it's obvious in Vercel logs.
+  const finalKey = prefixKey(key);
   try {
-    // Atomic SET with EX — single call avoids race between SET and EXPIRE (C-3 fix)
-    await fetch(`${url}/set/${encodeURIComponent(prefixKey(key))}/${encodeURIComponent(JSON.stringify(value))}/EX/${ttlSeconds}`, {
+    const resp = await fetch(`${url}/set/${encodeURIComponent(finalKey)}?EX=${ttlSeconds}`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(value),
       signal: AbortSignal.timeout(REDIS_OP_TIMEOUT_MS),
     });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      console.warn(`[redis] setCachedJson HTTP ${resp.status} for "${finalKey}" (value ~${JSON.stringify(value).length} chars):`, body.slice(0, 200));
+    }
   } catch (err) {
     console.warn('[redis] setCachedJson failed:', errMsg(err));
   }

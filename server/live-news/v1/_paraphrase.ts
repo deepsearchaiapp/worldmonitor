@@ -26,11 +26,12 @@ import type { LiveNewsItem } from './_normalize';
 const SUMMARY_TTL_S = 30 * 24 * 60 * 60; // 30 days
 const PARAPHRASE_BATCH_SIZE = 8;          // smaller than location — bigger inputs per item
 const MAX_PARAPHRASE_PER_REQUEST = 40;
-// Bumped v1 → v2 when we widened the prompt to paragraph-length output.
-// The previous prompt produced ~3 sentence / 60 word summaries, which read
-// as essentially title-paraphrases. Rotating the cache namespace evicts
-// those old short entries without manually deleting Redis keys.
-const CACHE_PREFIX = 'live-news:para:v2:';
+// v3 — bumped after we discovered Upstash silently dropped large SET
+// values in v2 because we were URL-encoding them into the path. The fix
+// (body-based SET) lives in `_shared/redis.ts`. We rotate the prefix so
+// the next build starts with a clean namespace, free of the partial
+// negative-cache markers written before the bug was found.
+const CACHE_PREFIX = 'live-news:para:v3:';
 
 /** Sentinel — LLM declined to summarize this story. iOS falls back to source. */
 const UNPARAPHRASED_MARKER = '__WM_LIVE_NEWS_UNPARAPHRASED__';
