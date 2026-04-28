@@ -52,9 +52,33 @@ import type { LiveNewsItem } from './_normalize';
 
 const CACHE_PREFIX = 'live-news:dedup:v1:';
 const DEDUP_TTL_S = 30 * 24 * 60 * 60; // 30 days
-/** Cap on items sent to the LLM in a single dedup pass — protects against
- *  runaway prompt sizes during a flood of new stories. */
-const MAX_LLM_ITEMS_PER_PASS = 60;
+/**
+ * Cap on items sent to the LLM in a single dedup pass.
+ *
+ * Math with the new short-snippet representation (~100 tokens per item):
+ *   50 items × 100 tokens = 5 000 input tokens
+ *   Output: 50 × 30 tokens = 1 500
+ *   Wall time with Haiku ≈ 8–11 s, comfortably inside 60 s timeout.
+ *
+ * Previously this was 30 because we were sending full paragraph summaries
+ * (~280 tokens each), which blew prompts to 8 K + tokens and routinely
+ * timed out. The single-sentence snippet approach (`summarySnippet`)
+ * cut per-item token cost ~3× — same cap budget, more items per pass.
+ *
+ * Items beyond the cap roll over to the next poll. Convergence: 150
+ * unknowns clear in 3 polls (~90 s), vs 5 polls (~150 s) at 30/pass.
+ */
+const MAX_LLM_ITEMS_PER_PASS = 50;
+
+/**
+ * Per-call timeout for the dedup LLM request. The default in `callClaude`
+ * is 25 s, which we kept hitting on busy news days when the prompt was
+ * large AND Anthropic was slow. 60 s is generous enough to absorb
+ * occasional API jitter without blocking forever — we're inside a
+ * `keepAlive`-wrapped background task, so even a long call doesn't
+ * delay the user's response.
+ */
+const DEDUP_LLM_TIMEOUT_MS = 60_000;
 
 interface CachedDedupDecision {
   /** titleHash of the representative item this hash collapses to. */
@@ -148,16 +172,46 @@ interface ItemForLlm {
   id: string;
   status: 'anchor' | 'unknown';
   title: string;
-  summary: string;
+  /** Brief snippet — never the full paragraph summary. See `summarySnippet`. */
+  snippet: string;
 }
 
 interface LlmResponse {
   results: Array<{ id: string; canonical: string }>;
 }
 
+/**
+ * Trim the LLM-paraphrased summary down to a single-sentence snippet for
+ * dedup purposes. Sending full paragraph summaries (~600 chars × 30 items)
+ * blew the prompt past 8 K input tokens and made every dedup call take
+ * 15–20 s before output even started — frequently exceeding our timeout
+ * window.
+ *
+ * For dedup, the question we're asking is "is this the same news event?"
+ * — and the lead sentence carries virtually all the signal needed. The
+ * remaining sentences add context that doesn't change the answer.
+ *
+ * Heuristic: take the first sentence (split on `.!?`), cap at 200 chars.
+ * Falls back to a 200-char prefix if no sentence boundary is found.
+ */
+function summarySnippet(summary: string): string {
+  const trimmed = summary.trim();
+  if (trimmed.length === 0) return '';
+  // First sentence boundary in the first ~250 chars
+  const head = trimmed.slice(0, 250);
+  const sentenceEnd = head.search(/[.!?](?:\s|$)/);
+  if (sentenceEnd > 30) {
+    return head.slice(0, sentenceEnd + 1);
+  }
+  // No clean sentence boundary — fall back to a hard 200-char prefix.
+  return trimmed.slice(0, 200);
+}
+
 function buildPrompt(byCountry: Map<string, ItemForLlm[]>): string {
+  // Compact JSON (no indentation) to save ~25% tokens vs pretty-print.
+  // The LLM reads it just fine without whitespace.
   const groups = [...byCountry.entries()].map(([country, items]) => ({ country, items }));
-  return `Country-grouped news items to deduplicate:\n\n${JSON.stringify(groups, null, 2)}`;
+  return `Country-grouped news items to deduplicate:\n\n${JSON.stringify(groups)}`;
 }
 
 function extractJson(text: string): unknown | null {
@@ -222,8 +276,18 @@ export async function classifyUnknownsAsync(
     if (unknowns.length === 0) continue;
     if (unknowns.length + anchors.length < 2) continue; // nothing to compare against
     const list: ItemForLlm[] = [
-      ...anchors.map((a) => ({ id: a.titleHash, status: 'anchor' as const, title: a.title, summary: a.summary! })),
-      ...unknowns.map((u) => ({ id: u.titleHash, status: 'unknown' as const, title: u.title, summary: u.summary! })),
+      ...anchors.map((a) => ({
+        id: a.titleHash,
+        status: 'anchor' as const,
+        title: a.title,
+        snippet: summarySnippet(a.summary!),
+      })),
+      ...unknowns.map((u) => ({
+        id: u.titleHash,
+        status: 'unknown' as const,
+        title: u.title,
+        snippet: summarySnippet(u.summary!),
+      })),
     ];
     llmGroups.set(country, list);
     unknownCount += unknowns.length;
@@ -246,6 +310,11 @@ export async function classifyUnknownsAsync(
     prompt: buildPrompt(llmGroups),
     maxTokens: 2500,
     temperature: 0.1,
+    // Override the default 25 s timeout — dedup prompts can be the
+    // largest LLM calls in the system (full paragraph summaries × N
+    // items) and routinely take 15–30 s. 60 s gives margin for
+    // Anthropic-side jitter without leaving the call hanging forever.
+    timeoutMs: DEDUP_LLM_TIMEOUT_MS,
     // Bill dedup against the same key as paraphrase so its cost is
     // separable from location enrichment. Reuses the existing
     // ANTHROPIC_API_KEY_PARAPHRASE env var — no new key needed.
