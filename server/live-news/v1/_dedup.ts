@@ -1,0 +1,305 @@
+/**
+ * Country-scoped LLM-driven deduplication for Live News items.
+ *
+ * # Why
+ *
+ * Title-fingerprint dedup (in `_normalize.ts`) catches near-identical
+ * wording across outlets but misses semantic duplicates — three sources
+ * reporting the same event with very different headlines:
+ *   • Reuters: "U.S. Senate passes border security bill 71-29"
+ *   • BBC:     "American senators back immigration legislation"
+ *   • AP:      "Senate clears bipartisan border deal"
+ *
+ * # Approach
+ *
+ * Each item is assigned a `canonical` hash:
+ *   - For unique items: canonical = item's own titleHash.
+ *   - For duplicates: canonical = the titleHash of the representative
+ *     item it's a duplicate of.
+ *
+ * Items grouped by canonical hash collapse into one entry — we keep the
+ * highest-priority source as the visible item for each group.
+ *
+ * # Why country-scoped
+ *
+ * Limits the LLM comparison space dramatically: ~180 items spread across
+ * ~30 countries means ~6 items per country on average. The LLM only ever
+ * compares within a country bucket, so a single batched call covers
+ * every newly-seen item with very few input tokens.
+ *
+ * # Caching strategy
+ *
+ * Per-item, "canonical" decisions are cached at:
+ *   `live-news:dedup:v1:{titleHash}` → { canonical: string }
+ *
+ * TTL: 30 days. Once an item is classified, we **never** re-evaluate it
+ * — even if the items it was originally compared against have rolled
+ * off. This is by design (per product spec): "when we forget this news,
+ * we shouldn't try to control it again after some time later". A
+ * duplicate stays a duplicate forever.
+ *
+ * # Pre-conditions
+ *
+ * Dedup needs `summary` and `country` populated to be effective. On the
+ * first poll after a deploy these are missing (LLM enrichment hasn't
+ * run yet) → no dedup happens that round. By the second/third poll,
+ * caches warm up and dedup kicks in. Acceptable progressive behavior.
+ */
+
+import { callClaude } from '../../_shared/llm';
+import { getCachedJsonBatch, setCachedJson } from '../../_shared/redis';
+import type { LiveNewsItem } from './_normalize';
+
+const CACHE_PREFIX = 'live-news:dedup:v1:';
+const DEDUP_TTL_S = 30 * 24 * 60 * 60; // 30 days
+/** Cap on items sent to the LLM in a single dedup pass — protects against
+ *  runaway prompt sizes during a flood of new stories. */
+const MAX_LLM_ITEMS_PER_PASS = 60;
+
+interface CachedDedupDecision {
+  /** titleHash of the representative item this hash collapses to. */
+  canonical: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read path: load cached decisions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Map of titleHash → canonical hash for every item with a cached decision.
+ * Items missing from the map are "unknown" and need LLM evaluation.
+ */
+export async function loadCachedDedupMap(items: LiveNewsItem[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (items.length === 0) return map;
+
+  const keys = items.map((it) => `${CACHE_PREFIX}${it.titleHash}`);
+  const cache = await getCachedJsonBatch(keys);
+
+  for (let i = 0; i < items.length; i++) {
+    const cached = cache.get(keys[i]!);
+    if (cached && typeof cached === 'object' && 'canonical' in (cached as Record<string, unknown>)) {
+      const c = cached as CachedDedupDecision;
+      if (typeof c.canonical === 'string' && c.canonical.length > 0) {
+        map.set(items[i]!.titleHash, c.canonical);
+      }
+    }
+  }
+
+  return map;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Apply dedup using current map (drop duplicates, keep canonicals)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Reduce `items` to unique stories using the dedup map. Items without
+ * an entry in the map keep their own titleHash as canonical, so they
+ * pass through unaffected — letting the system progressively dedup as
+ * cache warms up without ever blocking item visibility.
+ *
+ * Tie-break when multiple items share a canonical: keeps the one
+ * already chosen as canonical (matched titleHash === canonical), or
+ * falls back to first-seen.
+ */
+export function applyDedup(items: LiveNewsItem[], dedupMap: Map<string, string>): LiveNewsItem[] {
+  // Group items by canonical
+  const byCanonical = new Map<string, LiveNewsItem[]>();
+  for (const item of items) {
+    const canonical = dedupMap.get(item.titleHash) ?? item.titleHash;
+    const bucket = byCanonical.get(canonical) ?? [];
+    bucket.push(item);
+    byCanonical.set(canonical, bucket);
+  }
+
+  // For each canonical group, pick the representative:
+  //   1. The item whose titleHash IS the canonical wins (it was named the canonical).
+  //   2. Otherwise the first-encountered (most recent due to upstream sort).
+  const result: LiveNewsItem[] = [];
+  for (const [canonical, group] of byCanonical) {
+    const representative = group.find((it) => it.titleHash === canonical) ?? group[0]!;
+    result.push(representative);
+  }
+
+  // Re-sort by recency since map iteration order isn't guaranteed.
+  result.sort((a, b) => b.publishedAt - a.publishedAt);
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Write path: classify "unknown" items via LLM (per-country)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SYSTEM_PROMPT = `You are a news deduplication classifier. Items are grouped by the country they're about.
+
+For each item flagged "unknown", determine whether it reports the SAME underlying news event as any other item in the same country group (whether "unknown" or "anchor"). Be strict: items are duplicates only when they cover the same specific event (same shooting, same vote, same diplomatic announcement). Different events on the same topic — separate protests, different earnings reports, different speeches by the same person — are NOT duplicates.
+
+For each "unknown" item, return:
+- id: the input id
+- canonical: either "self" (if the item is unique / not a duplicate of anything in its group), or the id of the item it duplicates.
+
+Output a JSON object with a "results" array, one entry per "unknown" item:
+{"results": [{"id": "...", "canonical": "self" | "<other id>"}]}
+
+Return JSON ONLY. No prose, no markdown, no code fences.`;
+
+interface ItemForLlm {
+  id: string;
+  status: 'anchor' | 'unknown';
+  title: string;
+  summary: string;
+}
+
+interface LlmResponse {
+  results: Array<{ id: string; canonical: string }>;
+}
+
+function buildPrompt(byCountry: Map<string, ItemForLlm[]>): string {
+  const groups = [...byCountry.entries()].map(([country, items]) => ({ country, items }));
+  return `Country-grouped news items to deduplicate:\n\n${JSON.stringify(groups, null, 2)}`;
+}
+
+function extractJson(text: string): unknown | null {
+  try { return JSON.parse(text); } catch { /* fall through */ }
+  const stripped = text.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+  try { return JSON.parse(stripped); } catch { /* fall through */ }
+  const start = stripped.indexOf('{');
+  const end = stripped.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(stripped.slice(start, end + 1)); } catch { /* fall through */ }
+  }
+  return null;
+}
+
+/**
+ * Classify the "unknown" items by country using the LLM, write decisions
+ * to Redis. Caller fires-and-forgets so the digest response isn't blocked.
+ *
+ * `allItems` is the full digest (anchors + unknowns); we use the anchors
+ * as comparison context. Items missing `summary` or `country` are skipped
+ * — they can't be reliably deduped without those fields.
+ */
+export async function classifyUnknownsAsync(
+  allItems: LiveNewsItem[],
+  knownMap: Map<string, string>,
+): Promise<void> {
+  // Partition: anchors are items with a known canonical; unknowns are the rest.
+  // Skip items missing summary or country (insufficient signal to dedup).
+  const eligibleItems = allItems.filter(
+    (it) => typeof it.summary === 'string' && it.summary.length > 0 && typeof it.country === 'string' && it.country.length > 0,
+  );
+
+  const byCountry = new Map<string, { anchors: LiveNewsItem[]; unknowns: LiveNewsItem[] }>();
+  for (const item of eligibleItems) {
+    const country = item.country!;
+    const bucket = byCountry.get(country) ?? { anchors: [], unknowns: [] };
+    if (knownMap.has(item.titleHash)) {
+      bucket.anchors.push(item);
+    } else {
+      bucket.unknowns.push(item);
+    }
+    byCountry.set(country, bucket);
+  }
+
+  // Special case: countries with exactly one unknown and no anchors.
+  // The item is unique by definition — cache it directly without an LLM call.
+  const singletonsToCache: LiveNewsItem[] = [];
+  for (const [country, { anchors, unknowns }] of byCountry) {
+    if (unknowns.length === 1 && anchors.length === 0) {
+      singletonsToCache.push(unknowns[0]!);
+      byCountry.delete(country);
+    }
+  }
+  await Promise.all(singletonsToCache.map(async (item) => {
+    await setCachedJson(`${CACHE_PREFIX}${item.titleHash}`, { canonical: item.titleHash } as CachedDedupDecision, DEDUP_TTL_S);
+  }));
+
+  // Build LLM payload: only countries with unknowns AND comparison material.
+  const llmGroups = new Map<string, ItemForLlm[]>();
+  let unknownCount = 0;
+  for (const [country, { anchors, unknowns }] of byCountry) {
+    if (unknowns.length === 0) continue;
+    if (unknowns.length + anchors.length < 2) continue; // nothing to compare against
+    const list: ItemForLlm[] = [
+      ...anchors.map((a) => ({ id: a.titleHash, status: 'anchor' as const, title: a.title, summary: a.summary! })),
+      ...unknowns.map((u) => ({ id: u.titleHash, status: 'unknown' as const, title: u.title, summary: u.summary! })),
+    ];
+    llmGroups.set(country, list);
+    unknownCount += unknowns.length;
+  }
+
+  if (llmGroups.size === 0) {
+    if (singletonsToCache.length > 0) {
+      console.log(`[live-news:dedup] cached ${singletonsToCache.length} singleton(s); no LLM call needed`);
+    }
+    return;
+  }
+
+  // Cap items if the prompt is getting too big — runaway protection.
+  if (unknownCount > MAX_LLM_ITEMS_PER_PASS) {
+    console.log(`[live-news:dedup] capping dedup at ${MAX_LLM_ITEMS_PER_PASS}/${unknownCount} unknowns`);
+  }
+
+  const result = await callClaude({
+    system: SYSTEM_PROMPT,
+    prompt: buildPrompt(llmGroups),
+    maxTokens: 2500,
+    temperature: 0.1,
+    // Bill dedup against the same key as paraphrase so its cost is
+    // separable from location enrichment. Reuses the existing
+    // ANTHROPIC_API_KEY_PARAPHRASE env var — no new key needed.
+    apiKeyEnv: 'ANTHROPIC_API_KEY_PARAPHRASE',
+  });
+
+  if (!result) {
+    console.warn('[live-news:dedup] LLM call returned null');
+    return;
+  }
+
+  const parsed = extractJson(result.content) as LlmResponse | null;
+  if (!parsed?.results || !Array.isArray(parsed.results)) {
+    console.warn('[live-news:dedup] failed to parse LLM JSON:', result.content.slice(0, 200));
+    return;
+  }
+
+  // Validate canonical references — the LLM might point at an id that
+  // doesn't exist in the input. Fall back to "self" in that case.
+  const knownIds = new Set<string>();
+  for (const items of llmGroups.values()) {
+    for (const item of items) knownIds.add(item.id);
+  }
+
+  let writtenUnique = 0;
+  let writtenDuplicate = 0;
+  await Promise.all(parsed.results.map(async (entry) => {
+    if (!entry?.id) return;
+    let canonical: string;
+    if (entry.canonical === 'self' || !entry.canonical) {
+      canonical = entry.id;
+      writtenUnique++;
+    } else if (entry.canonical === entry.id) {
+      // LLM pointed at itself — treat as unique
+      canonical = entry.id;
+      writtenUnique++;
+    } else if (knownIds.has(entry.canonical)) {
+      canonical = entry.canonical;
+      writtenDuplicate++;
+    } else {
+      // Hallucinated canonical — fall back to self
+      canonical = entry.id;
+      writtenUnique++;
+    }
+    await setCachedJson(
+      `${CACHE_PREFIX}${entry.id}`,
+      { canonical } as CachedDedupDecision,
+      DEDUP_TTL_S,
+    );
+  }));
+
+  console.log(
+    `[live-news:dedup] classified ${parsed.results.length} unknowns: ${writtenUnique} unique, ${writtenDuplicate} duplicate. ` +
+    `(+ ${singletonsToCache.length} singleton-cached). ` +
+    `Tokens: in=${result.inputTokens} out=${result.outputTokens}`,
+  );
+}

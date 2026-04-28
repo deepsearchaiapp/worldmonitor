@@ -22,6 +22,7 @@ import { keepAlive } from '../../_shared/keep-alive';
 import { buildBaseDigest, type LiveNewsItem } from './_normalize';
 import { attachCachedLocations, enrichMissingLocations } from './_enrich';
 import { attachCachedSummaries, paraphraseMissingSummaries } from './_paraphrase';
+import { loadCachedDedupMap, applyDedup, classifyUnknownsAsync } from './_dedup';
 
 const TOP_LEVEL_TTL_S = 30;
 const NEGATIVE_TTL_S = 30;
@@ -47,21 +48,18 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
   try {
     const { items, feedStatuses } = await buildBaseDigest(deadline.signal);
 
-    // Read path — attach already-enriched locations and summaries in parallel.
-    // Both are independent BATCH GETs against different cache namespaces,
-    // so we pipeline them.
-    const [missingLocations, missingSummaries] = await Promise.all([
+    // Read path — attach already-enriched locations + summaries + load
+    // dedup decisions in parallel. All three are independent BATCH GETs
+    // against different cache namespaces.
+    const [missingLocations, missingSummaries, dedupMap] = await Promise.all([
       attachCachedLocations(items),
       attachCachedSummaries(items),
+      loadCachedDedupMap(items),
     ]);
 
-    // Write path — fire-and-forget BUT registered with Vercel's `waitUntil`
-    // via our `keepAlive` helper. Without that registration the Edge
-    // runtime kills the isolate the moment we return the response, which
-    // silently cancels the LLM calls and leaves Redis empty (the bug we
-    // hit on first deploy: every poll saw `pendingEnrichment=60` because
-    // the writes never happened). With `keepAlive` the runtime keeps the
-    // isolate alive ~up to 30 s so Claude can finish.
+    // Write path — fire-and-forget enrichment + dedup classification.
+    // Each promise is wrapped with `keepAlive` so the Vercel Edge runtime
+    // doesn't kill the isolate before they finish.
     if (missingLocations.length > 0) {
       console.log(`[live-news] Kicking off location enrichment for ${missingLocations.length} items`);
       keepAlive(enrichMissingLocations(missingLocations), 'live-news:enrich');
@@ -70,18 +68,32 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
       console.log(`[live-news] Kicking off paraphrase for ${missingSummaries.length} items`);
       keepAlive(paraphraseMissingSummaries(missingSummaries), 'live-news:para');
     }
+    // Dedup classification — find items whose dedup decision isn't cached
+    // yet. The classifier groups by country, sends to LLM, and writes
+    // per-item decisions to Redis for the NEXT poll to pick up via
+    // `loadCachedDedupMap`. Items missing summary or country are skipped
+    // by the classifier itself (insufficient signal).
+    const unknownDedup = items.filter((it) => !dedupMap.has(it.titleHash));
+    if (unknownDedup.length > 0) {
+      console.log(`[live-news] Kicking off dedup classification for ${unknownDedup.length} items`);
+      keepAlive(classifyUnknownsAsync(items, dedupMap), 'live-news:dedup');
+    }
 
-    // Final-mile diagnostic: confirms how many items have summary
-    // populated AT THE MOMENT the response is being constructed. If
-    // this prints "withSummary=57" but iOS reports "summaries=0", the
-    // disconnect is in serialization or transport, not in the build
-    // pipeline. If this also prints 0, the bug is server-side.
-    const withSummary = items.filter((it) => typeof it.summary === 'string' && it.summary.length > 0).length;
-    const withLocation = items.filter((it) => it.location !== null).length;
-    console.log(`[live-news] returning digest withSummary=${withSummary}/${items.length} withLocation=${withLocation}/${items.length}`);
+    // Apply dedup *now* using whatever decisions are already cached.
+    // Items not yet classified pass through unchanged (their titleHash
+    // serves as their own canonical) — no items are dropped because
+    // we lack a decision. Each subsequent poll picks up freshly-classified
+    // items from the cache, progressively tightening the digest.
+    const deduped = applyDedup(items, dedupMap);
+
+    // Diagnostic: composition of the response right before send.
+    const withSummary = deduped.filter((it) => typeof it.summary === 'string' && it.summary.length > 0).length;
+    const withLocation = deduped.filter((it) => it.location !== null).length;
+    const dropped = items.length - deduped.length;
+    console.log(`[live-news] returning digest withSummary=${withSummary}/${deduped.length} withLocation=${withLocation}/${deduped.length} dedup-dropped=${dropped}`);
 
     return {
-      items,
+      items: deduped,
       feedStatuses,
       generatedAt: new Date().toISOString(),
       pendingEnrichment: missingLocations.length,
@@ -99,11 +111,13 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
  * on cache-poisoning. Empty digests cache normally for 30 s.
  */
 export async function listUsHeadlines(): Promise<ListUsHeadlinesResponse> {
-  // v3 — paired with the paraphrase cache rotation triggered by the
-  // body-based-SET fix. Bumping the digest prefix forces an immediate
-  // rebuild so callers don't wait the 30 s top-level TTL before seeing
-  // freshly-written summaries.
-  const cacheKey = 'live-news:us:v3';
+  // v4 — bumped when we added country-based LLM dedup + balanced US
+  // sources + removed the strict time window. The response shape is
+  // unchanged but the digest content is materially different; rotating
+  // the prefix evicts the old `live-news:us:v3` blobs immediately so
+  // users see the new digest on the very next poll instead of waiting
+  // up to 30 s for TTL expiry.
+  const cacheKey = 'live-news:us:v4';
 
   try {
     const result = await cachedFetchJson<ListUsHeadlinesResponse>(

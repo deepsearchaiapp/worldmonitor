@@ -61,6 +61,12 @@ export const US_NEWS_SOURCES: readonly NewsSource[] = [
   { name: 'The Guardian World',   url: 'https://www.theguardian.com/world/rss',                     priority: 3 },
   { name: 'NYT World',            url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',    priority: 3 },
 
+  // ── Tier 3 — Balanced US perspective (left + right) ──────────────────
+  // Two outlets with overtly different editorial leans, kept at the same
+  // priority. We're aiming for a viewpoint balance, not source weighting.
+  { name: 'CNN Top',              url: 'https://rss.cnn.com/rss/cnn_topstories.rss',                priority: 3, relayOnly: true },
+  { name: 'Fox News',             url: 'https://moxie.foxnews.com/google-publisher/latest.xml',     priority: 3 },
+
   // ── Tier 4 — Analysis / regional specialists ─────────────────────────
   { name: 'Foreign Policy',       url: 'https://foreignpolicy.com/feed/',                           priority: 4 },
   { name: 'The Diplomat',         url: 'https://thediplomat.com/feed/',                             priority: 4 },
@@ -83,9 +89,12 @@ export const ITEMS_PER_FEED = 15;
 export const MAX_ITEMS = 180;
 
 /**
- * Time window: items must be published within this many ms of "now" to
- * appear. 6 h gives the user a "what happened today" feel without
- * polluting with day-old re-runs. Items missing pubDate are kept (and
- * sorted to the bottom) and rely on `MAX_ITEMS` as a fallback bound.
+ * Maximum age of items considered fresh enough to appear, used purely as
+ * a sanity safeguard against feeds emitting weeks-old archive content.
+ *
+ * The PRIMARY trim is the `MAX_ITEMS` cap on recency-sorted items — a
+ * tight time window was too aggressive for a 180-slot feed and dropped
+ * stories users wanted to see. 14 days lets even quieter feeds contribute
+ * while still protecting against literal-archive reposts.
  */
-export const MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+export const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days

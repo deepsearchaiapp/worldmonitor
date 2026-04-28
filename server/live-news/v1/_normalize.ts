@@ -52,7 +52,7 @@ export interface LiveNewsItem {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TAG_REGEX_CACHE = new Map<string, { cdata: RegExp; plain: RegExp }>();
-for (const tag of ['title', 'link', 'pubDate', 'published', 'updated', 'description', 'summary']) {
+for (const tag of ['title', 'link', 'pubDate', 'published', 'updated', 'description', 'summary', 'content', 'dc:date']) {
   TAG_REGEX_CACHE.set(tag, {
     cdata: new RegExp(`<${tag}[^>]*>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*<\\/${tag}>`, 'i'),
     plain: new RegExp(`<${tag}[^>]*>([^<]*)<\\/${tag}>`, 'i'),
@@ -159,11 +159,25 @@ function parseFeed(xml: string, source: NewsSource): RawItem[] {
     }
     if (!link) continue;
 
+    // Date extraction — try every known tag variant in order. Different
+    // feed formats use different conventions:
+    //   - RSS 2.0: `<pubDate>`
+    //   - RDF (RSS 1.0 — Deutsche Welle, some others): `<dc:date>`
+    //   - Atom: `<published>` / `<updated>`
+    //   - Some feeds also expose `<dc:date>` even in RSS 2.0
+    // Without the dc:date fallback, Deutsche Welle items would parse to
+    // publishedAt=0 and sink to the bottom of the digest — effectively
+    // disappearing under the MAX_ITEMS cap.
     const pubStr = isAtom
-      ? (extractTag(block, 'published') || extractTag(block, 'updated'))
-      : extractTag(block, 'pubDate');
-    const date = pubStr ? new Date(pubStr) : null;
-    const publishedAt = date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+      ? (extractTag(block, 'published') || extractTag(block, 'updated') || extractTag(block, 'dc:date'))
+      : (extractTag(block, 'pubDate') || extractTag(block, 'dc:date') || extractTag(block, 'published'));
+    let publishedAt = 0;
+    if (pubStr) {
+      const parsed = new Date(pubStr);
+      if (!Number.isNaN(parsed.getTime())) {
+        publishedAt = parsed.getTime();
+      }
+    }
 
     // Pull RSS description / Atom summary / RSS 2.0 content:encoded.
     // Different feeds use different tags; we take whichever is longest.
