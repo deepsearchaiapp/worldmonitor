@@ -331,8 +331,16 @@ export async function classifyUnknownsAsync(
     return;
   }
 
-  const parsed = extractJson(result.content) as LlmResponse | null;
-  if (!parsed?.results || !Array.isArray(parsed.results)) {
+  // Gemini's JSON mode sometimes returns the bare array instead of the
+  // wrapped `{ results: [...] }` we ask for. Accept both shapes.
+  const parsed = extractJson(result.content);
+  type DedupEntry = LlmResponse['results'][number];
+  const results: DedupEntry[] | null =
+    Array.isArray(parsed) ? (parsed as DedupEntry[])
+    : (parsed && typeof parsed === 'object' && Array.isArray((parsed as { results?: unknown }).results)
+        ? (parsed as { results: DedupEntry[] }).results
+        : null);
+  if (!results) {
     console.warn('[live-news:dedup] failed to parse LLM JSON:', result.content.slice(0, 200));
     return;
   }
@@ -346,7 +354,7 @@ export async function classifyUnknownsAsync(
 
   let writtenUnique = 0;
   let writtenDuplicate = 0;
-  await Promise.all(parsed.results.map(async (entry) => {
+  await Promise.all(results.map(async (entry) => {
     if (!entry?.id) return;
     let canonical: string;
     if (entry.canonical === 'self' || !entry.canonical) {

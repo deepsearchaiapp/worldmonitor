@@ -229,14 +229,23 @@ async function paraphraseBatch(batch: LiveNewsItem[]): Promise<void> {
     return;
   }
 
-  const parsed = extractJson(result.content) as LlmResponse | null;
-  if (!parsed || !Array.isArray(parsed.results)) {
+  // Gemini's JSON mode is loose about output shape: it sometimes returns
+  // the wrapped object we asked for (`{ results: [...] }`), other times
+  // it returns the bare array (`[...]`) when the prompt was about a list.
+  // Accept both.
+  const parsed = extractJson(result.content);
+  const results: LlmResultEntry[] | null =
+    Array.isArray(parsed) ? (parsed as LlmResultEntry[])
+    : (parsed && typeof parsed === 'object' && Array.isArray((parsed as { results?: unknown }).results)
+        ? (parsed as { results: LlmResultEntry[] }).results
+        : null);
+  if (!results) {
     console.warn(`[live-news:para] Failed to parse LLM JSON output:`, result.content.slice(0, 200));
     return;
   }
 
   const byId = new Map<string, LlmResultEntry>();
-  for (const entry of parsed.results) {
+  for (const entry of results) {
     if (entry?.id) byId.set(entry.id, entry);
   }
 
