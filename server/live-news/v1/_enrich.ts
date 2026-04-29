@@ -154,16 +154,28 @@ function extractJson(text: string): unknown | null {
   return null;
 }
 
+/**
+ * Coerce a value that should be numeric. Gemini sometimes returns lat/lng
+ * as strings (`"40.7128"`) despite the prompt asking for numbers — Claude
+ * was strict about types, Gemini is loose. Accept both shapes.
+ */
+function toFiniteNumber(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string') {
+    const parsed = parseFloat(v);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 /** Validate + clamp a single LLM result entry into our cache shape. */
 function toCachedLocation(entry: LlmResultEntry): CachedLocation | null {
-  const lat = entry.lat;
-  const lng = entry.lng;
-  if (typeof lat !== 'number' || typeof lng !== 'number') return null;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const lat = toFiniteNumber(entry.lat);
+  const lng = toFiniteNumber(entry.lng);
+  if (lat === null || lng === null) return null;
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  const confidence = typeof entry.confidence === 'number'
-    ? Math.min(1, Math.max(0, entry.confidence))
-    : 0.5;
+  const confRaw = toFiniteNumber(entry.confidence);
+  const confidence = confRaw !== null ? Math.min(1, Math.max(0, confRaw)) : 0.5;
   return {
     latitude: lat,
     longitude: lng,
@@ -242,6 +254,19 @@ async function enrichBatch(batch: LiveNewsItem[]): Promise<void> {
     `[live-news:enrich] LLM enriched ${written}/${batch.length} items (${unlocated} unlocated). ` +
     `Tokens: in=${result.inputTokens} out=${result.outputTokens}`,
   );
+
+  // Diagnostic: if EVERY item failed validation despite Gemini producing
+  // output, dump the first parsed entry so we can see what shape it
+  // actually returned. Catches regressions where Gemini emits new field
+  // types (string lat/lng, alpha-3 country codes, etc.) that we'd
+  // otherwise silently negative-cache forever.
+  if (written === 0 && batch.length > 0 && results.length > 0) {
+    const sample = results[0];
+    console.warn(
+      `[live-news:enrich] zero successes — sample entry shape:`,
+      JSON.stringify(sample).slice(0, 400),
+    );
+  }
 }
 
 /**
