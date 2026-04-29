@@ -26,12 +26,12 @@ import type { LiveNewsItem } from './_normalize';
 const SUMMARY_TTL_S = 30 * 24 * 60 * 60; // 30 days
 const PARAPHRASE_BATCH_SIZE = 8;          // smaller than location — bigger inputs per item
 const MAX_PARAPHRASE_PER_REQUEST = 40;
-// v3 — bumped after we discovered Upstash silently dropped large SET
-// values in v2 because we were URL-encoding them into the path. The fix
-// (body-based SET) lives in `_shared/redis.ts`. We rotate the prefix so
-// the next build starts with a clean namespace, free of the partial
-// negative-cache markers written before the bug was found.
-const CACHE_PREFIX = 'live-news:para:v3:';
+// v4 — bumped when we tightened the prompt from "100–180 word paragraph"
+// down to "40–80 word plain-English short summary". Mixing old verbose
+// entries with new concise ones in the same digest produces inconsistent
+// UX, so we rotate the namespace to force a fresh generation pass.
+// Backfill cost: ~150 cache misses × Gemini Flash Lite = ~$0.05 one-time.
+const CACHE_PREFIX = 'live-news:para:v4:';
 
 /** Sentinel — LLM declined to summarize this story. iOS falls back to source. */
 const UNPARAPHRASED_MARKER = '__WM_LIVE_NEWS_UNPARAPHRASED__';
@@ -105,22 +105,29 @@ export async function attachCachedSummaries(items: LiveNewsItem[]): Promise<Live
 
 const SYSTEM_PROMPT = `You are a neutral news summarizer for a multi-source live news feed.
 
-For each news item, write a paragraph-length factual summary that gives the reader the substance of the story — not just a rephrased headline.
+The reader should grasp the story at a glance, with low effort. Write the way a thoughtful person would explain the news to a friend who hadn't heard it yet — clear, plain, and to the point.
 
 Structure:
-- Sentence 1: lead with the key event (who, what, where, when).
-- Sentences 2 to 4: expand on the substance: how it happened, who is affected, what numbers / parties / timeline are involved, what the immediate consequences are.
-- Closing sentence: the implication, the next step, or the broader context that helps the reader understand why this matters.
+- Sentence 1: the key event (who, what, where, when).
+- Sentences 2 to 3: the substance — how it happened, who is affected, what numbers / parties / timeline matter.
+- Sentence 4: any context that helps the reader understand why this matters or what's next (only if the source supports it).
 
 Length:
-- 4 to 6 sentences total, 100 to 180 words.
-- Aim for the upper end of that range when the source description is rich; never artificially pad if there isn't enough substance.
+- 3 to 5 sentences total, 60 to 120 words. Aim for the middle of that range. Stop when the story is told — do not pad to fill the upper bound.
+
+Language (most important):
+- Plain English. Use everyday words instead of formal, technical, or bureaucratic ones:
+    "agreed" not "concurred", "talks" not "negotiations" when interchangeable,
+    "stopped" not "discontinued", "started" not "commenced", "tried" not "attempted",
+    "asked" not "requested", "showed" not "demonstrated", "wants" not "seeks".
+- Short, direct sentences. One idea per sentence.
+- Active voice. Past or present tense, never future.
+- No filler phrases ("It is important to note that...", "In a recent development..."), no rhetorical questions, no editorial spin.
+- No source attribution ("According to Reuters..."), no quoted headlines.
 
 Sourcing rules:
-- Use ONLY the facts present in the input title and description. Do not invent specifics (numbers, names, quotes, dates) that are not in the input.
-- You MAY add neutral background context drawn from common knowledge about named entities (e.g. what an agency is, where a location is, what a recurring event represents). Do not stretch this into specific claims.
-- No editorial spin, no rhetorical questions, no source attribution ("According to the New York Times..."), no quoted headlines.
-- Past or present tense, never future tense. Active voice when possible.
+- Use ONLY facts in the input title and description. Do not invent specifics (numbers, names, quotes, dates) that are not in the input.
+- You MAY add neutral background context drawn from common knowledge about named entities (e.g. what an agency is, where a location is). Do not stretch this into specific claims.
 
 Sparse-input fallback:
 - If the input description is genuinely too thin to support a paragraph (for example: just a video link, podcast intro, or one-line headline with no body), still produce the best possible 3 to 4 sentence summary using only what is supported. Do not hallucinate.
@@ -169,14 +176,14 @@ function toCachedSummary(entry: LlmResultEntry): CachedSummary | null {
   const summary = entry.summary;
   if (typeof summary !== 'string') return null;
   const trimmed = summary.trim();
-  // Floor: 80 chars is roughly two short sentences. Below that the LLM
-  // probably echoed the title back instead of expanding — caching it
+  // Floor: 60 chars ≈ one short sentence. Below that the LLM probably
+  // echoed the title back instead of writing something new — caching it
   // would mean shipping a "title twice" experience to users.
-  if (trimmed.length < 80) return null;
-  // Ceiling: paragraph-length spec is ~180 words ≈ 1100 chars. 2000
-  // gives headroom for occasional verbose outputs without letting a
-  // runaway response leak into the response payload.
-  if (trimmed.length > 2000) return null;
+  if (trimmed.length < 60) return null;
+  // Ceiling: spec is 40–80 words ≈ 250–500 chars. 1 200 gives plenty
+  // of headroom for occasionally longer outputs without letting a
+  // runaway response leak into the digest payload.
+  if (trimmed.length > 1200) return null;
   return { summary: trimmed };
 }
 
@@ -202,10 +209,12 @@ async function paraphraseBatch(batch: LiveNewsItem[]): Promise<void> {
   const result = await callGemini({
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(withDesc),
-    // 4000 token cap for batch of 8 = ~500 tokens per item.
-    // Paragraph-length output is ~250–350 tokens per item; the headroom
-    // covers JSON envelope overhead and occasional longer entries.
-    maxTokens: 4000,
+    // 6 000 token cap for batch of 8 = 750 tokens / item.
+    // Paragraph output is ~250–350 tokens per item with Claude;
+    // Gemini's pretty-printed JSON inflates this to ~400–500 tokens.
+    // Bumped from 4 000 to leave headroom for occasional longer summaries
+    // and prevent the truncation we saw on the first deploy.
+    maxTokens: 6000,
     temperature: 0.3,
     // Reuse the optional separate-key pattern for billing-separation
     // parity with the Claude pipeline. Falls back to GEMINI_API_KEY if

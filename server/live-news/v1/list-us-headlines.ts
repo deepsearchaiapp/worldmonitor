@@ -111,13 +111,12 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
  * on cache-poisoning. Empty digests cache normally for 30 s.
  */
 export async function listUsHeadlines(): Promise<ListUsHeadlinesResponse> {
-  // v4 — bumped when we added country-based LLM dedup + balanced US
-  // sources + removed the strict time window. The response shape is
-  // unchanged but the digest content is materially different; rotating
-  // the prefix evicts the old `live-news:us:v3` blobs immediately so
-  // users see the new digest on the very next poll instead of waiting
-  // up to 30 s for TTL expiry.
-  const cacheKey = 'live-news:us:v4';
+  // v5 — paired with the paraphrase v4 rotation when we tightened the
+  // summary prompt to short plain-English style (40–80 words, was
+  // 100–180). Bumping the digest prefix forces an immediate rebuild
+  // so users don't see the old verbose summaries for the 30 s TTL
+  // tail after deploy.
+  const cacheKey = 'live-news:us:v5';
 
   try {
     const result = await cachedFetchJson<ListUsHeadlinesResponse>(

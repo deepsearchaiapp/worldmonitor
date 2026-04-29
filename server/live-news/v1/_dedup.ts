@@ -308,7 +308,12 @@ export async function classifyUnknownsAsync(
   const result = await callGemini({
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(llmGroups),
-    maxTokens: 2500,
+    // 4 000 token cap for batch of 50 = 80 tokens / item.
+    // Each dedup decision is small (id + canonical hash + small overhead)
+    // — ~30–50 tokens with compact JSON, ~60–80 with Gemini's
+    // pretty-print. Bumped from 2 500 for headroom against full-batch
+    // 50-item passes.
+    maxTokens: 4000,
     temperature: 0.1,
     // Keep the longer timeout — dedup is still the largest prompt in
     // the system. Gemini Flash Lite is ~3× faster than Claude Haiku in

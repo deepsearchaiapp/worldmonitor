@@ -180,7 +180,13 @@ async function enrichBatch(batch: LiveNewsItem[]): Promise<void> {
   const result = await callGemini({
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(batch),
-    maxTokens: 2500,
+    // 8 000 token cap for batch of 20 = 400 tokens / item.
+    // Each item emits ~150 tokens with Gemini's pretty-printed JSON
+    // (longer than Claude's output for the same prompt — Gemini's
+    // tokenizer counts whitespace more aggressively). 2 500 was the
+    // previous Claude-tuned cap; raising it eliminates the
+    // "Failed to parse" truncation we hit after the model swap.
+    maxTokens: 8000,
     temperature: 0.2,
     // Gemini's JSON mode guarantees a syntactically valid response,
     // eliminating the "wrapped in code fences" failure mode.
