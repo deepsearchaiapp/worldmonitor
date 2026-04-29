@@ -52,6 +52,21 @@ import type { LiveNewsItem } from './_normalize';
 
 const CACHE_PREFIX = 'live-news:dedup:v1:';
 const DEDUP_TTL_S = 30 * 24 * 60 * 60; // 30 days
+
+/**
+ * Short TTL for the auto-cached "ineligible — pass as unique" decisions
+ * we write for items that lack summary or country at evaluation time.
+ *
+ * Why short? These items might gain a summary or country on a future
+ * cycle (location enrichment runs async, paraphrase can fail and retry).
+ * If they later become eligible, we want them to be re-evaluated as
+ * potentially-duplicate rather than permanently locked as "unique".
+ *
+ * 6 hours is long enough to absorb the steady-state convergence
+ * (most enrichment finishes within ~2 minutes) and short enough to
+ * give re-evaluation a meaningful window.
+ */
+const INELIGIBLE_DEDUP_TTL_S = 6 * 60 * 60; // 6 hours
 /**
  * Cap on items sent to the LLM in a single dedup pass.
  *
@@ -238,8 +253,32 @@ export async function classifyUnknownsAsync(
   allItems: LiveNewsItem[],
   knownMap: Map<string, string>,
 ): Promise<void> {
+  // Items missing summary or country can't be deduped — there's nothing
+  // to compare against. They'd otherwise sit in "unknown" limbo forever:
+  // every cycle they'd show up in the unknownDedup count, the dedup
+  // function would silently skip them, and the next cycle would repeat.
+  // Cache them as self-canonical (treat as unique) on a SHORT TTL so:
+  //   1. They stop polluting the unknownDedup count
+  //   2. If their location/summary later fills in, the short TTL lets
+  //      them get re-evaluated rather than locking the decision forever
+  const ineligibleUnknowns = allItems.filter(
+    (it) => !knownMap.has(it.titleHash) &&
+      (typeof it.summary !== 'string' || it.summary.length === 0 ||
+       typeof it.country !== 'string' || it.country.length === 0),
+  );
+  if (ineligibleUnknowns.length > 0) {
+    await Promise.all(ineligibleUnknowns.map(async (item) => {
+      await setCachedJson(
+        `${CACHE_PREFIX}${item.titleHash}`,
+        { canonical: item.titleHash } as CachedDedupDecision,
+        INELIGIBLE_DEDUP_TTL_S,
+      );
+    }));
+    console.log(`[live-news:dedup] auto-cached ${ineligibleUnknowns.length} ineligible items as self-canonical (no summary/country yet)`);
+  }
+
   // Partition: anchors are items with a known canonical; unknowns are the rest.
-  // Skip items missing summary or country (insufficient signal to dedup).
+  // At this point only items WITH both summary and country are still in play.
   const eligibleItems = allItems.filter(
     (it) => typeof it.summary === 'string' && it.summary.length > 0 && typeof it.country === 'string' && it.country.length > 0,
   );
