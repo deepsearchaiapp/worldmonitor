@@ -19,7 +19,7 @@
  * iOS falls back to the source webpage view (existing behavior).
  */
 
-import { callClaude } from '../../_shared/llm';
+import { callGemini } from '../../_shared/llm';
 import { getCachedJsonBatch, setCachedJson } from '../../_shared/redis';
 import type { LiveNewsItem } from './_normalize';
 
@@ -199,7 +199,7 @@ async function paraphraseBatch(batch: LiveNewsItem[]): Promise<void> {
     return;
   }
 
-  const result = await callClaude({
+  const result = await callGemini({
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(withDesc),
     // 4000 token cap for batch of 8 = ~500 tokens per item.
@@ -207,7 +207,12 @@ async function paraphraseBatch(batch: LiveNewsItem[]): Promise<void> {
     // covers JSON envelope overhead and occasional longer entries.
     maxTokens: 4000,
     temperature: 0.3,
-    apiKeyEnv: 'ANTHROPIC_API_KEY_PARAPHRASE',
+    // Reuse the optional separate-key pattern for billing-separation
+    // parity with the Claude pipeline. Falls back to GEMINI_API_KEY if
+    // the dedicated key isn't configured (it usually isn't, since
+    // Gemini's costs are low enough that splitting billing matters less).
+    apiKeyEnv: 'GEMINI_API_KEY_PARAPHRASE',
+    jsonMode: true,
   });
 
   if (!result) {

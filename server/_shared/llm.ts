@@ -226,6 +226,155 @@ export async function callClaude(opts: ClaudeCallOptions): Promise<ClaudeCallRes
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Google Gemini — generateContent API (Google AI Studio, key-auth)
+//
+// Designed as a drop-in cost-replacement for `callClaude`: same option shape,
+// same return shape. Roughly 10–25× cheaper than Claude Haiku at comparable
+// quality for structured-extraction tasks (location, summarization, dedup).
+//
+// Pricing reference (as of 2025-Q4) for gemini-2.5-flash-lite:
+//   $0.10 / 1M input tokens   (vs Haiku $1.00)
+//   $0.40 / 1M output tokens  (vs Haiku $5.00)
+//
+// Quality reference: noticeably weaker than Claude on creative writing
+// or nuanced reasoning, on par or faster than Claude on structured-output
+// tasks (JSON extraction, classification, fixed-schema summarization).
+//
+// Failure handling: returns null on any error (missing key, HTTP fail,
+// malformed response, timeout). Mirrors `callClaude` semantics exactly so
+// existing call-site try/catch patterns work unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+
+export interface GeminiCallOptions {
+  /** System prompt — mapped to `system_instruction` in the request body. */
+  system?: string;
+  /** Single user-turn prompt. */
+  prompt: string;
+  /** Default `gemini-2.5-flash-lite`. Override only if a specific feature
+   *  needs a stronger / different model. */
+  model?: string;
+  /** Cap output tokens. */
+  maxTokens?: number;
+  /** Lower for deterministic JSON. Default 0.2. */
+  temperature?: number;
+  /** Hard timeout for the HTTPS round-trip. */
+  timeoutMs?: number;
+  /**
+   * Override the env var name used to look up the Gemini API key.
+   * Defaults to `GEMINI_API_KEY`. Pass a different name (e.g.
+   * `GEMINI_API_KEY_PARAPHRASE`) for billing-separation parity with
+   * the Claude call path. Falls back to `GEMINI_API_KEY` if the
+   * specified env var is unset.
+   */
+  apiKeyEnv?: string;
+  /**
+   * When true, sets `responseMimeType: "application/json"` so Gemini
+   * guarantees a syntactically valid JSON response. Use this for any
+   * call site that asks the model to return JSON — eliminates the
+   * "wrapped in code fences" failure mode common with free-form prompts.
+   */
+  jsonMode?: boolean;
+}
+
+export interface GeminiCallResult {
+  content: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export async function callGemini(opts: GeminiCallOptions): Promise<GeminiCallResult | null> {
+  const preferredEnvName = opts.apiKeyEnv;
+  const preferredKey = preferredEnvName ? process.env[preferredEnvName] : undefined;
+  const fallbackKey = process.env.GEMINI_API_KEY;
+  const apiKey = preferredKey || fallbackKey;
+
+  if (!apiKey) {
+    console.warn(`[llm:gemini] ${preferredEnvName ?? 'GEMINI_API_KEY'} missing (and GEMINI_API_KEY also unset) — skipping`);
+    return null;
+  }
+
+  if (preferredEnvName && !preferredKey) {
+    console.warn(`[llm:gemini] ${preferredEnvName} unset — falling back to GEMINI_API_KEY (cost will land on the default key)`);
+  }
+
+  const {
+    system,
+    prompt,
+    model = 'gemini-2.5-flash-lite',
+    maxTokens = 2000,
+    temperature = 0.2,
+    timeoutMs = 25_000,
+    jsonMode = false,
+  } = opts;
+
+  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
+
+  const generationConfig: Record<string, unknown> = {
+    temperature,
+    maxOutputTokens: maxTokens,
+  };
+  if (jsonMode) {
+    generationConfig.responseMimeType = 'application/json';
+  }
+
+  const body: Record<string, unknown> = {
+    contents: [
+      { role: 'user', parts: [{ text: prompt }] },
+    ],
+    generationConfig,
+  };
+  if (system) {
+    body.system_instruction = { parts: [{ text: system }] };
+  }
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => '');
+      console.warn(`[llm:gemini] HTTP ${resp.status} ${errBody.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = (await resp.json()) as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: string }> };
+        finishReason?: string;
+      }>;
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+    };
+
+    const text = (data.candidates?.[0]?.content?.parts ?? [])
+      .map((p) => p.text ?? '')
+      .join('')
+      .trim();
+
+    if (!text) {
+      console.warn(`[llm:gemini] empty response body (finish=${data.candidates?.[0]?.finishReason ?? 'unknown'})`);
+      return null;
+    }
+
+    return {
+      content: text,
+      model,
+      inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
+      outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+    };
+  } catch (err) {
+    console.warn(`[llm:gemini] ${(err as Error).message}`);
+    return null;
+  }
+}
+
 export interface LlmCallOptions {
   messages: Array<{ role: string; content: string }>;
   temperature?: number;

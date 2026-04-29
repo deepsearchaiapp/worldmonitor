@@ -19,7 +19,7 @@
  * up with some not accurate data, it would also work, doesn't hurt".
  */
 
-import { callClaude } from '../../_shared/llm';
+import { callGemini } from '../../_shared/llm';
 import { getCachedJsonBatch, setCachedJson } from '../../_shared/redis';
 import type { LiveNewsItem } from './_normalize';
 
@@ -177,11 +177,14 @@ function toCachedLocation(entry: LlmResultEntry): CachedLocation | null {
 async function enrichBatch(batch: LiveNewsItem[]): Promise<void> {
   if (batch.length === 0) return;
 
-  const result = await callClaude({
+  const result = await callGemini({
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(batch),
     maxTokens: 2500,
     temperature: 0.2,
+    // Gemini's JSON mode guarantees a syntactically valid response,
+    // eliminating the "wrapped in code fences" failure mode.
+    jsonMode: true,
   });
 
   if (!result) {

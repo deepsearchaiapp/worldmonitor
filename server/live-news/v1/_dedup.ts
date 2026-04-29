@@ -46,7 +46,7 @@
  * caches warm up and dedup kicks in. Acceptable progressive behavior.
  */
 
-import { callClaude } from '../../_shared/llm';
+import { callGemini } from '../../_shared/llm';
 import { getCachedJsonBatch, setCachedJson } from '../../_shared/redis';
 import type { LiveNewsItem } from './_normalize';
 
@@ -71,7 +71,7 @@ const DEDUP_TTL_S = 30 * 24 * 60 * 60; // 30 days
 const MAX_LLM_ITEMS_PER_PASS = 50;
 
 /**
- * Per-call timeout for the dedup LLM request. The default in `callClaude`
+ * Per-call timeout for the dedup LLM request. The default in `callGemini`
  * is 25 s, which we kept hitting on busy news days when the prompt was
  * large AND Anthropic was slow. 60 s is generous enough to absorb
  * occasional API jitter without blocking forever — we're inside a
@@ -305,20 +305,20 @@ export async function classifyUnknownsAsync(
     console.log(`[live-news:dedup] capping dedup at ${MAX_LLM_ITEMS_PER_PASS}/${unknownCount} unknowns`);
   }
 
-  const result = await callClaude({
+  const result = await callGemini({
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(llmGroups),
     maxTokens: 2500,
     temperature: 0.1,
-    // Override the default 25 s timeout — dedup prompts can be the
-    // largest LLM calls in the system (full paragraph summaries × N
-    // items) and routinely take 15–30 s. 60 s gives margin for
-    // Anthropic-side jitter without leaving the call hanging forever.
+    // Keep the longer timeout — dedup is still the largest prompt in
+    // the system. Gemini Flash Lite is ~3× faster than Claude Haiku in
+    // practice, so 60 s gives ample margin.
     timeoutMs: DEDUP_LLM_TIMEOUT_MS,
-    // Bill dedup against the same key as paraphrase so its cost is
-    // separable from location enrichment. Reuses the existing
-    // ANTHROPIC_API_KEY_PARAPHRASE env var — no new key needed.
-    apiKeyEnv: 'ANTHROPIC_API_KEY_PARAPHRASE',
+    // Bill dedup against the same dedicated paraphrase key so its cost
+    // is separable from location enrichment in the Gemini console.
+    // Falls back to GEMINI_API_KEY when the dedicated key is unset.
+    apiKeyEnv: 'GEMINI_API_KEY_PARAPHRASE',
+    jsonMode: true,
   });
 
   if (!result) {
