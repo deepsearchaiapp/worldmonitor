@@ -20,8 +20,12 @@
 import { cachedFetchJson } from '../../_shared/redis';
 import { keepAlive } from '../../_shared/keep-alive';
 import { buildBaseDigest, type LiveNewsItem } from './_normalize';
-import { attachCachedLocations, enrichMissingLocations } from './_enrich';
-import { attachCachedSummaries, paraphraseMissingSummaries } from './_paraphrase';
+// Combined enrichment replaces the old `_enrich.ts` (location-only) +
+// `_paraphrase.ts` (summary-only) split. One LLM call, one cache namespace,
+// one validation gate. Falls back to Claude Haiku for items where Gemini
+// produces invalid output. Items that fail both providers get permanently
+// marked `UNENRICHABLE` and never retried.
+import { attachCachedEnrichment, enrichMissingAsync } from './_enrich-combined';
 import { loadCachedDedupMap, applyDedup, classifyUnknownsAsync } from './_dedup';
 
 const TOP_LEVEL_TTL_S = 30;
@@ -48,25 +52,21 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
   try {
     const { items, feedStatuses } = await buildBaseDigest(deadline.signal);
 
-    // Read path — attach already-enriched locations + summaries + load
-    // dedup decisions in parallel. All three are independent BATCH GETs
-    // against different cache namespaces.
-    const [missingLocations, missingSummaries, dedupMap] = await Promise.all([
-      attachCachedLocations(items),
-      attachCachedSummaries(items),
+    // Read path — attach cached enrichment (single namespace covering
+    // summary + location + country) and load dedup decisions in parallel.
+    const [missingEnrichment, dedupMap] = await Promise.all([
+      attachCachedEnrichment(items),
       loadCachedDedupMap(items),
     ]);
 
     // Write path — fire-and-forget enrichment + dedup classification.
     // Each promise is wrapped with `keepAlive` so the Vercel Edge runtime
-    // doesn't kill the isolate before they finish.
-    if (missingLocations.length > 0) {
-      console.log(`[live-news] Kicking off location enrichment for ${missingLocations.length} items`);
-      keepAlive(enrichMissingLocations(missingLocations), 'live-news:enrich');
-    }
-    if (missingSummaries.length > 0) {
-      console.log(`[live-news] Kicking off paraphrase for ${missingSummaries.length} items`);
-      keepAlive(paraphraseMissingSummaries(missingSummaries), 'live-news:para');
+    // doesn't kill the isolate before they finish. Combined enrichment
+    // tries Gemini first, falls back to Claude for invalid responses,
+    // and marks items unenrichable when both fail.
+    if (missingEnrichment.length > 0) {
+      console.log(`[live-news] Kicking off enrichment for ${missingEnrichment.length} items (Gemini → Claude fallback)`);
+      keepAlive(enrichMissingAsync(missingEnrichment), 'live-news:enrich');
     }
     // Dedup classification — find items whose dedup decision isn't cached
     // yet. The classifier groups by country, sends to LLM, and writes
@@ -96,8 +96,11 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
       items: deduped,
       feedStatuses,
       generatedAt: new Date().toISOString(),
-      pendingEnrichment: missingLocations.length,
-      pendingParaphrase: missingSummaries.length,
+      // After combined-call refactor, summary + location come from one
+      // pipeline. We keep `pendingParaphrase` mirrored for iOS Codable
+      // compatibility — both fields point at the same number now.
+      pendingEnrichment: missingEnrichment.length,
+      pendingParaphrase: missingEnrichment.length,
     };
   } finally {
     clearTimeout(deadlineTimer);
@@ -111,12 +114,12 @@ async function buildDigestPayload(): Promise<ListUsHeadlinesResponse> {
  * on cache-poisoning. Empty digests cache normally for 30 s.
  */
 export async function listUsHeadlines(): Promise<ListUsHeadlinesResponse> {
-  // v5 — paired with the paraphrase v4 rotation when we tightened the
-  // summary prompt to short plain-English style (40–80 words, was
-  // 100–180). Bumping the digest prefix forces an immediate rebuild
-  // so users don't see the old verbose summaries for the 30 s TTL
-  // tail after deploy.
-  const cacheKey = 'live-news:us:v5';
+  // v6 — paired with the combined-enrichment refactor. Old v5 digests
+  // hold items with separately-cached summary + location + country,
+  // backed by `live-news:loc:v1` and `live-news:para:v4`. New digests
+  // pull from `live-news:enrichment:v1` (single namespace). Bumping
+  // forces immediate rebuild so iOS doesn't see mixed-shape responses.
+  const cacheKey = 'live-news:us:v6';
 
   try {
     const result = await cachedFetchJson<ListUsHeadlinesResponse>(
