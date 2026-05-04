@@ -167,6 +167,82 @@ export function applyDedup(items: LiveNewsItem[], dedupMap: Map<string, string>)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Variant: dedup that PRESERVES duplicates as `sources[]` on the canonical
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A single outlet's view of the same underlying story. */
+export interface AlternateSource {
+  source: string;       // e.g. "Reuters", "BBC News"
+  title: string;        // headline as that outlet phrased it (often differs)
+  link: string;         // URL to that outlet's article
+  publishedAt: number;  // ms since epoch — when that outlet published it
+}
+
+/** Canonical news story enriched with every outlet that reported on it. */
+export interface LiveNewsItemWithSources extends LiveNewsItem {
+  /**
+   * All outlets reporting on this story, representative first.
+   *   - For unique stories (no duplicates known yet): length 1, contains
+   *     just the canonical itself. Always at least 1 entry.
+   *   - For deduped stories: representative + each duplicate outlet,
+   *     ordered by publishedAt DESC after the lead.
+   *
+   * Note: the representative's source/title/link are mirrored both at
+   * the top level (legacy fields) AND in sources[0] so iOS clients can
+   * decode either way without conditionals.
+   */
+  sources: AlternateSource[];
+}
+
+/**
+ * Same grouping logic as `applyDedup`, but instead of dropping duplicate
+ * items it attaches them to the canonical as a `sources` array. Used by
+ * the v2 endpoint (`list-us-headlines` v2). v1 stays on `applyDedup`.
+ *
+ * The representative item is picked identically to v1 (canonical match
+ * first, then first-encountered) — so for stories already classified by
+ * v1, the same article surfaces as the lead in both endpoints.
+ */
+export function applyDedupWithSources(
+  items: LiveNewsItem[],
+  dedupMap: Map<string, string>,
+): LiveNewsItemWithSources[] {
+  // Group items by canonical (identical to applyDedup)
+  const byCanonical = new Map<string, LiveNewsItem[]>();
+  for (const item of items) {
+    const canonical = dedupMap.get(item.titleHash) ?? item.titleHash;
+    const bucket = byCanonical.get(canonical) ?? [];
+    bucket.push(item);
+    byCanonical.set(canonical, bucket);
+  }
+
+  const result: LiveNewsItemWithSources[] = [];
+  for (const [canonical, group] of byCanonical) {
+    // Representative selection mirrors applyDedup so v1/v2 leads match.
+    const representative = group.find((it) => it.titleHash === canonical) ?? group[0]!;
+
+    // Build sources array: representative first, duplicates by recency after.
+    const others = group.filter((it) => it.titleHash !== representative.titleHash);
+    others.sort((a, b) => b.publishedAt - a.publishedAt);
+
+    const sources: AlternateSource[] = [representative, ...others].map((it) => ({
+      source: it.source,
+      title: it.title,
+      link: it.link,
+      publishedAt: it.publishedAt,
+    }));
+
+    result.push({
+      ...representative,
+      sources,
+    });
+  }
+
+  result.sort((a, b) => b.publishedAt - a.publishedAt);
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Write path: classify "unknown" items via LLM (per-country)
 // ─────────────────────────────────────────────────────────────────────────────
 
