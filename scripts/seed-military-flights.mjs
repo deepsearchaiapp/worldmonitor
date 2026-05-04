@@ -318,6 +318,164 @@ function proxyFetchJson(url, { headers = {}, timeout = 15000 } = {}) {
 // ── Data Sources ───────────────────────────────────────────
 const OPENSKY_BASE = 'https://opensky-network.org/api';
 const WINGBITS_BASE = 'https://customer-api.wingbits.com/v1/flights';
+const ADSBX_HOST = 'adsbexchange-com1.p.rapidapi.com';
+const ADSBX_MIL_URL = `https://${ADSBX_HOST}/v2/mil/`;
+
+// ICAO aircraft type code → high-level category (used for ADSBExchange's `t` field).
+// ADSBX returns canonical ICAO type codes (C17, F16, EC35, ...) which are far more
+// reliable than callsign heuristics. Fallback to detectAircraftType(callsign) if missing.
+const ICAO_TYPE_TO_CATEGORY = {
+  // Tankers / aerial refueling
+  K35R: 'tanker', K35E: 'tanker', K35T: 'tanker', KC10: 'tanker', KC30: 'tanker',
+  KC46: 'tanker', KDC1: 'tanker', VC10: 'tanker', A332: 'tanker', A310: 'tanker',
+  TRIS: 'tanker',
+  // AWACS / airborne early-warning / battle-mgmt
+  E3: 'awacs', E3CF: 'awacs', E3TF: 'awacs', E737: 'awacs', E2: 'awacs', E2D: 'awacs',
+  E6: 'awacs', E8: 'awacs',
+  // ISR / reconnaissance / patrol
+  U2: 'reconnaissance', RC35: 'reconnaissance', P3: 'reconnaissance', P8: 'reconnaissance',
+  RC1: 'reconnaissance', SR71: 'reconnaissance', E11: 'reconnaissance',
+  // UAVs / drones
+  MQ9: 'drone', MQ1: 'drone', RQ1: 'drone', RQ4: 'drone', MQ4: 'drone', MQ25: 'drone',
+  // Bombers
+  B1: 'bomber', B2: 'bomber', B52: 'bomber', TU95: 'bomber', TU22: 'bomber', TU60: 'bomber', H6: 'bomber',
+  // Fighters / attack
+  F15: 'fighter', F16: 'fighter', F18: 'fighter', F22: 'fighter', F35: 'fighter',
+  A10: 'fighter', EUFI: 'fighter', TYPH: 'fighter', RAFL: 'fighter', GR4: 'fighter',
+  J10: 'fighter', J11: 'fighter', J20: 'fighter', JH7: 'fighter',
+  SU25: 'fighter', SU27: 'fighter', SU30: 'fighter', SU34: 'fighter', SU35: 'fighter', SU57: 'fighter',
+  // Transport / cargo
+  C17: 'transport', C5: 'transport', C5M: 'transport', C130: 'transport', C30J: 'transport',
+  C160: 'transport', A400: 'transport', C295: 'transport', C212: 'transport', CN35: 'transport',
+  C40: 'transport', C2: 'transport', AN12: 'transport', AN26: 'transport', AN72: 'transport',
+  AN12: 'transport', IL76: 'transport', Y8: 'transport', Y9: 'transport', Y20: 'transport',
+  // VIP / executive
+  C32: 'vip', C32A: 'vip', C37: 'vip', GLF5: 'vip', GLF4: 'vip', GLEX: 'vip',
+  // Helicopters
+  H60: 'helicopter', S70: 'helicopter', H47: 'helicopter', H53: 'helicopter', H1: 'helicopter',
+  H64: 'helicopter', EC35: 'helicopter', AS65: 'helicopter', NH90: 'helicopter', PUMA: 'helicopter',
+  EH10: 'helicopter', AS32: 'helicopter', LYNX: 'helicopter', H145: 'helicopter', H225: 'helicopter',
+  // Trainers
+  TEX2: 'trainer', T6: 'trainer', T38: 'trainer', T1: 'trainer', T45: 'trainer', PC9: 'trainer',
+  PC21: 'trainer', HAWK: 'trainer', M345: 'trainer', M346: 'trainer', YK52: 'trainer',
+};
+
+function classifyByTypeCode(t) {
+  if (!t) return null;
+  return ICAO_TYPE_TO_CATEGORY[t.toUpperCase()] || null;
+}
+
+// Read ADSBExchange `dbFlags` bitfield: 1=military, 2=interesting, 4=PIA, 8=LADD
+function adsbxIsInteresting(dbFlags) {
+  return Number.isInteger(dbFlags) && (dbFlags & 2) === 2;
+}
+
+// ── ADSBExchange (RapidAPI) — Tier 0, authoritative military feed ─────────
+async function fetchADSBExchangeFlights() {
+  const key = process.env.RAPIDAPI_KEY || process.env.ADSBX_API_KEY;
+  if (!key) {
+    console.log('  [ADSBX] No RAPIDAPI_KEY — skipped');
+    return null;
+  }
+
+  const resp = await fetch(ADSBX_MIL_URL, {
+    headers: {
+      'x-rapidapi-host': ADSBX_HOST,
+      'x-rapidapi-key': key,
+      Accept: 'application/json',
+      'User-Agent': CHROME_UA,
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    throw new Error(`ADSBX HTTP ${resp.status}: ${body.substring(0, 200)}`);
+  }
+
+  const data = await resp.json();
+  const acs = Array.isArray(data?.ac) ? data.ac : [];
+  console.log(`  [ADSBX] ${acs.length} military aircraft (msg=${data?.msg || 'n/a'})`);
+
+  const flights = [];
+  const byType = {};
+
+  for (const ac of acs) {
+    const hex = String(ac.hex || '').toLowerCase();
+    if (!hex) continue;
+
+    const lat = typeof ac.lat === 'number' ? ac.lat : null;
+    const lon = typeof ac.lon === 'number' ? ac.lon : null;
+    if (lat == null || lon == null) continue; // no position → cannot map
+
+    const callsign = String(ac.flight || '').trim();
+    const registration = String(ac.r || '').trim();
+    const typeCode = String(ac.t || '').trim().toUpperCase();
+
+    const altRaw = ac.alt_baro;
+    const onGround = altRaw === 'ground';
+    const altitude = onGround ? 0 : (typeof altRaw === 'number' ? altRaw : 0);
+    const speed = typeof ac.gs === 'number' ? Math.round(ac.gs) : 0;
+    const heading = typeof ac.track === 'number' ? ac.track : 0;
+    const verticalRate = typeof ac.baro_rate === 'number' ? Math.round(ac.baro_rate)
+      : (typeof ac.geom_rate === 'number' ? Math.round(ac.geom_rate) : undefined);
+    const squawk = ac.squawk || undefined;
+
+    // Operator + country: prefer hex match (deterministic), fall back to callsign pattern.
+    const hexMatch = isKnownHex(hex);
+    const csMatch = callsign ? identifyByCallsign(callsign, '') : null;
+
+    let operator, operatorCountry;
+    if (hexMatch) {
+      operator = hexMatch.operator;
+      operatorCountry = hexMatch.country;
+    } else if (csMatch) {
+      operator = csMatch.operator;
+      operatorCountry = OPERATOR_COUNTRY[csMatch.operator] || 'Unknown';
+    } else {
+      operator = 'other';
+      operatorCountry = 'Unknown';
+    }
+
+    // Aircraft category: ICAO type code is most reliable; fall back to callsign heuristics.
+    const aircraftType = classifyByTypeCode(typeCode)
+      || csMatch?.aircraftType
+      || detectAircraftType(callsign);
+
+    const hotspot = getNearbyHotspot(lat, lon);
+    const isInteresting = adsbxIsInteresting(ac.dbFlags)
+      || (hotspot && hotspot.priority === 'high')
+      || aircraftType === 'bomber' || aircraftType === 'reconnaissance' || aircraftType === 'awacs';
+
+    const seenSec = typeof ac.seen === 'number' ? ac.seen : 0;
+    const lastSeenMs = Date.now() - Math.round(seenSec * 1000);
+
+    flights.push({
+      id: `adsbx-${hex}`,
+      callsign: callsign || `MIL-${hex.substring(0, 4).toUpperCase()}`,
+      hexCode: hex.toUpperCase(),
+      registration: registration || undefined,
+      aircraftType,
+      aircraftModel: typeCode || undefined,
+      operator,
+      operatorCountry,
+      lat,
+      lon,
+      altitude,
+      heading,
+      speed,
+      verticalRate,
+      onGround,
+      squawk,
+      confidence: 'high', // ADSBX explicitly tags military
+      isInteresting: !!isInteresting,
+      note: hotspot ? `Near ${hotspot.name}` : undefined,
+      lastSeenMs,
+    });
+    byType[aircraftType] = (byType[aircraftType] || 0) + 1;
+  }
+
+  return { flights, byType };
+}
 
 async function fetchOpenSkyAuthenticated(region) {
   const username = process.env.OPENSKY_USERNAME;
@@ -632,12 +790,44 @@ async function main() {
   }
 
   try {
-    console.log('  Fetching from all sources...');
-    const { allStates, source } = await fetchAllStates();
-    console.log(`  Raw states: ${allStates.length} (source: ${source})`);
+    // Tier 0 — ADSBExchange (authoritative military feed via RapidAPI). Returns final-shape flights.
+    let adsbx = null;
+    try {
+      adsbx = await fetchADSBExchangeFlights();
+    } catch (e) {
+      console.warn(`  [ADSBX] ${e.message}`);
+    }
 
-    const { flights, byType } = filterMilitaryFlights(allStates);
-    console.log(`  Military: ${flights.length} (${Object.entries(byType).map(([t, n]) => `${t}:${n}`).join(', ')})`);
+    console.log('  Fetching legacy sources (Wingbits/OpenSky)...');
+    const { allStates, source: legacySource } = await fetchAllStates();
+    console.log(`  Raw states: ${allStates.length} (source: ${legacySource})`);
+
+    const { flights: legacyFlights, byType: legacyByType } = filterMilitaryFlights(allStates);
+    console.log(`  Legacy military: ${legacyFlights.length} (${Object.entries(legacyByType).map(([t, n]) => `${t}:${n}`).join(', ')})`);
+
+    // Merge: ADSBX takes priority (richer metadata, authoritative). Legacy fills gaps.
+    const merged = new Map();
+    if (adsbx?.flights?.length) {
+      for (const f of adsbx.flights) merged.set(f.hexCode.toUpperCase(), f);
+    }
+    let legacyAdded = 0;
+    for (const f of legacyFlights) {
+      const k = (f.hexCode || '').toUpperCase();
+      if (!k || merged.has(k)) continue;
+      merged.set(k, f);
+      legacyAdded++;
+    }
+
+    const flights = Array.from(merged.values());
+    const byType = {};
+    for (const f of flights) byType[f.aircraftType] = (byType[f.aircraftType] || 0) + 1;
+
+    const source = adsbx?.flights?.length
+      ? (legacyAdded > 0 ? `adsbx+${legacySource}` : 'adsbx')
+      : legacySource;
+
+    console.log(`  Combined: ${flights.length} flights (adsbx: ${adsbx?.flights?.length || 0}, +legacy: ${legacyAdded}) — source: ${source}`);
+    console.log(`  Types: ${Object.entries(byType).map(([t, n]) => `${t}:${n}`).join(', ')}`);
 
     if (flights.length === 0) {
       console.log('  SKIPPED: 0 military flights — preserving stale data');

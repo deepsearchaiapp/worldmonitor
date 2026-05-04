@@ -11,10 +11,9 @@ import { isMilitaryCallsign, isMilitaryHex, detectAircraftType, UPSTREAM_TIMEOUT
 import { CHROME_UA } from '../../../_shared/constants';
 import { cachedFetchJson } from '../../../_shared/redis';
 import { markNoCacheResponse } from '../../../_shared/response-headers';
-import { fetchUpstream } from '../../../_shared/upstream';
 
 const REDIS_CACHE_KEY = 'military:flights:v1';
-const REDIS_CACHE_TTL = 600; // 10 min — reduce upstream API pressure
+const REDIS_CACHE_TTL = 600; // 10 min — bound RapidAPI quota burn under load
 
 /** Snap a coordinate to a grid step so nearby bbox values share cache entries. */
 const quantize = (v: number, step: number) => Math.round(v / step) * step;
@@ -62,70 +61,286 @@ function filterFlightsToBounds(
   });
 }
 
-const AIRCRAFT_TYPE_MAP: Record<string, string> = {
+// ──────────────────────────────────────────────────────────────────────────
+// ADSBExchange (RapidAPI) — primary source, authoritative military feed.
+// On Redis cache miss, this is what we hit; results are cached for REDIS_CACHE_TTL.
+// ──────────────────────────────────────────────────────────────────────────
+
+const ADSBX_HOST = 'adsbexchange-com1.p.rapidapi.com';
+const ADSBX_MIL_URL = `https://${ADSBX_HOST}/v2/mil/`;
+
+/** ICAO type code → high-level category enum string (subset of common military types). */
+const ICAO_TYPE_TO_ENUM: Record<string, MilitaryAircraftType> = {
+  // Tankers
+  K35R: 'MILITARY_AIRCRAFT_TYPE_TANKER', K35E: 'MILITARY_AIRCRAFT_TYPE_TANKER',
+  K35T: 'MILITARY_AIRCRAFT_TYPE_TANKER', KC10: 'MILITARY_AIRCRAFT_TYPE_TANKER',
+  KC30: 'MILITARY_AIRCRAFT_TYPE_TANKER', KC46: 'MILITARY_AIRCRAFT_TYPE_TANKER',
+  KDC1: 'MILITARY_AIRCRAFT_TYPE_TANKER', VC10: 'MILITARY_AIRCRAFT_TYPE_TANKER',
+  A332: 'MILITARY_AIRCRAFT_TYPE_TANKER', A310: 'MILITARY_AIRCRAFT_TYPE_TANKER',
+  // AWACS / battle management
+  E3: 'MILITARY_AIRCRAFT_TYPE_AWACS', E3CF: 'MILITARY_AIRCRAFT_TYPE_AWACS',
+  E3TF: 'MILITARY_AIRCRAFT_TYPE_AWACS', E737: 'MILITARY_AIRCRAFT_TYPE_AWACS',
+  E2: 'MILITARY_AIRCRAFT_TYPE_AWACS', E2D: 'MILITARY_AIRCRAFT_TYPE_AWACS',
+  E6: 'MILITARY_AIRCRAFT_TYPE_AWACS', E8: 'MILITARY_AIRCRAFT_TYPE_AWACS',
+  // ISR / patrol
+  U2: 'MILITARY_AIRCRAFT_TYPE_RECONNAISSANCE', RC35: 'MILITARY_AIRCRAFT_TYPE_RECONNAISSANCE',
+  P3: 'MILITARY_AIRCRAFT_TYPE_PATROL', P8: 'MILITARY_AIRCRAFT_TYPE_PATROL',
+  RC1: 'MILITARY_AIRCRAFT_TYPE_RECONNAISSANCE', E11: 'MILITARY_AIRCRAFT_TYPE_RECONNAISSANCE',
+  // UAVs
+  MQ9: 'MILITARY_AIRCRAFT_TYPE_DRONE', MQ1: 'MILITARY_AIRCRAFT_TYPE_DRONE',
+  RQ1: 'MILITARY_AIRCRAFT_TYPE_DRONE', RQ4: 'MILITARY_AIRCRAFT_TYPE_DRONE',
+  MQ4: 'MILITARY_AIRCRAFT_TYPE_DRONE', MQ25: 'MILITARY_AIRCRAFT_TYPE_DRONE',
+  // Bombers
+  B1: 'MILITARY_AIRCRAFT_TYPE_BOMBER', B2: 'MILITARY_AIRCRAFT_TYPE_BOMBER',
+  B52: 'MILITARY_AIRCRAFT_TYPE_BOMBER', TU95: 'MILITARY_AIRCRAFT_TYPE_BOMBER',
+  TU22: 'MILITARY_AIRCRAFT_TYPE_BOMBER', TU60: 'MILITARY_AIRCRAFT_TYPE_BOMBER',
+  H6: 'MILITARY_AIRCRAFT_TYPE_BOMBER',
+  // Fighters / attack
+  F15: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', F16: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  F18: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', F22: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  F35: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', A10: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  EUFI: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', TYPH: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  RAFL: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', GR4: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  J10: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', J11: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  J20: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', JH7: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  SU25: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', SU27: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  SU30: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', SU34: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  SU35: 'MILITARY_AIRCRAFT_TYPE_FIGHTER', SU57: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  // Transport / cargo
+  C17: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT', C5: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  C5M: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT', C130: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  C30J: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT', C160: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  A400: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT', C295: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  C212: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT', CN35: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  C40: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT', C2: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  AN12: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT', AN26: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  AN72: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT', IL76: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  Y8: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT', Y9: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  Y20: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
+  // VIP
+  C32: 'MILITARY_AIRCRAFT_TYPE_VIP', C32A: 'MILITARY_AIRCRAFT_TYPE_VIP',
+  C37: 'MILITARY_AIRCRAFT_TYPE_VIP', GLF5: 'MILITARY_AIRCRAFT_TYPE_VIP',
+  GLF4: 'MILITARY_AIRCRAFT_TYPE_VIP', GLEX: 'MILITARY_AIRCRAFT_TYPE_VIP',
+  // Helicopters
+  H60: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER', S70: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER',
+  H47: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER', H53: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER',
+  H1: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER', H64: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER',
+  EC35: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER', AS65: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER',
+  NH90: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER', PUMA: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER',
+  EH10: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER', AS32: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER',
+  LYNX: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER', H145: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER',
+  H225: 'MILITARY_AIRCRAFT_TYPE_HELICOPTER',
+};
+
+/** Lowercase callsign category (from detectAircraftType) → enum string. */
+const CATEGORY_TO_ENUM: Record<string, MilitaryAircraftType> = {
   tanker: 'MILITARY_AIRCRAFT_TYPE_TANKER',
   awacs: 'MILITARY_AIRCRAFT_TYPE_AWACS',
   transport: 'MILITARY_AIRCRAFT_TYPE_TRANSPORT',
   reconnaissance: 'MILITARY_AIRCRAFT_TYPE_RECONNAISSANCE',
   drone: 'MILITARY_AIRCRAFT_TYPE_DRONE',
   bomber: 'MILITARY_AIRCRAFT_TYPE_BOMBER',
+  fighter: 'MILITARY_AIRCRAFT_TYPE_FIGHTER',
+  patrol: 'MILITARY_AIRCRAFT_TYPE_PATROL',
 };
+
+/** Hex prefix → operator + country (covers the most common military air arms). */
+const HEX_RANGES: Array<{ start: number; end: number; operator: MilitaryOperator; country: string }> = [
+  { start: 0xADF7C8, end: 0xAFFFFF, operator: 'MILITARY_OPERATOR_USAF', country: 'USA' },
+  { start: 0x400000, end: 0x40003F, operator: 'MILITARY_OPERATOR_RAF', country: 'UK' },
+  { start: 0x43C000, end: 0x43CFFF, operator: 'MILITARY_OPERATOR_RAF', country: 'UK' },
+  { start: 0x3AA000, end: 0x3AFFFF, operator: 'MILITARY_OPERATOR_FAF', country: 'France' },
+  { start: 0x3B7000, end: 0x3BFFFF, operator: 'MILITARY_OPERATOR_FAF', country: 'France' },
+  { start: 0x3EA000, end: 0x3EBFFF, operator: 'MILITARY_OPERATOR_GAF', country: 'Germany' },
+  { start: 0x3F4000, end: 0x3FBFFF, operator: 'MILITARY_OPERATOR_GAF', country: 'Germany' },
+  { start: 0x738A00, end: 0x738BFF, operator: 'MILITARY_OPERATOR_IAF', country: 'Israel' },
+  { start: 0x4D0000, end: 0x4D03FF, operator: 'MILITARY_OPERATOR_NATO', country: 'NATO' },
+  { start: 0x33FF00, end: 0x33FFFF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Italy' },
+  { start: 0x350000, end: 0x3503FF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Spain' },
+  { start: 0x480000, end: 0x480FFF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Netherlands' },
+  { start: 0x4B8200, end: 0x4B82FF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Turkey' },
+  { start: 0x7CF800, end: 0x7CFAFF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Australia' },
+  { start: 0xC2D000, end: 0xC2DFFF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Canada' },
+  { start: 0x468000, end: 0x4683FF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Greece' },
+  { start: 0x478100, end: 0x4781FF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Norway' },
+  { start: 0x44F000, end: 0x44FFFF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Belgium' },
+  { start: 0x4B7000, end: 0x4B7FFF, operator: 'MILITARY_OPERATOR_OTHER', country: 'Switzerland' },
+  { start: 0x48D800, end: 0x48D87F, operator: 'MILITARY_OPERATOR_OTHER', country: 'Poland' },
+];
+
+function lookupHexOperator(hex: string): { operator: MilitaryOperator; country: string } {
+  const n = parseInt(hex, 16);
+  if (!Number.isFinite(n)) return { operator: 'MILITARY_OPERATOR_OTHER', country: '' };
+  for (const r of HEX_RANGES) {
+    if (n >= r.start && n <= r.end) return { operator: r.operator, country: r.country };
+  }
+  return { operator: 'MILITARY_OPERATOR_OTHER', country: '' };
+}
+
+function classifyAircraftType(typeCode: string, callsign: string): MilitaryAircraftType {
+  const tc = (typeCode || '').toUpperCase();
+  if (tc && ICAO_TYPE_TO_ENUM[tc]) return ICAO_TYPE_TO_ENUM[tc];
+  const category = detectAircraftType(callsign || '');
+  return CATEGORY_TO_ENUM[category] || 'MILITARY_AIRCRAFT_TYPE_UNKNOWN';
+}
+
+interface ADSBXAircraft {
+  hex?: string;
+  flight?: string;
+  r?: string;
+  t?: string;
+  dbFlags?: number;
+  lat?: number;
+  lon?: number;
+  alt_baro?: number | string;
+  gs?: number;
+  track?: number;
+  baro_rate?: number;
+  geom_rate?: number;
+  squawk?: string;
+  seen?: number;
+}
+
+interface ADSBXResponse {
+  ac?: ADSBXAircraft[];
+  msg?: string;
+  total?: number;
+}
+
+async function fetchADSBExchangeFlights(): Promise<ListMilitaryFlightsResponse['flights'] | null> {
+  const key = process.env.RAPIDAPI_KEY || process.env.ADSBX_API_KEY;
+  if (!key) {
+    console.warn('[military-flights] RAPIDAPI_KEY not configured — skipping ADSBX');
+    return null;
+  }
+
+  let resp: Response;
+  try {
+    resp = await fetch(ADSBX_MIL_URL, {
+      headers: {
+        'x-rapidapi-host': ADSBX_HOST,
+        'x-rapidapi-key': key,
+        Accept: 'application/json',
+        'User-Agent': CHROME_UA,
+      },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (err) {
+    console.warn('[military-flights] ADSBX fetch failed:', (err as Error).message);
+    return null;
+  }
+
+  if (!resp.ok) {
+    console.warn(`[military-flights] ADSBX HTTP ${resp.status}`);
+    return null;
+  }
+
+  const data = (await resp.json()) as ADSBXResponse;
+  const acs = Array.isArray(data?.ac) ? data.ac : [];
+
+  const flights: ListMilitaryFlightsResponse['flights'] = [];
+  const now = Date.now();
+
+  for (const ac of acs) {
+    const hex = String(ac.hex || '').toLowerCase();
+    if (!hex) continue;
+
+    const lat = typeof ac.lat === 'number' ? ac.lat : null;
+    const lon = typeof ac.lon === 'number' ? ac.lon : null;
+    if (lat == null || lon == null) continue; // skip aircraft with no position
+
+    const callsign = String(ac.flight || '').trim();
+    const registration = String(ac.r || '').trim();
+    const typeCode = String(ac.t || '').trim().toUpperCase();
+
+    const altRaw = ac.alt_baro;
+    const onGround = altRaw === 'ground';
+    const altitude = onGround ? 0 : (typeof altRaw === 'number' ? altRaw : 0);
+    const speed = typeof ac.gs === 'number' ? Math.round(ac.gs) : 0;
+    const heading = typeof ac.track === 'number' ? ac.track : 0;
+    const verticalRate = typeof ac.baro_rate === 'number'
+      ? Math.round(ac.baro_rate)
+      : (typeof ac.geom_rate === 'number' ? Math.round(ac.geom_rate) : 0);
+    const squawk = String(ac.squawk || '');
+    const seenSec = typeof ac.seen === 'number' ? ac.seen : 0;
+    const lastSeenAt = Math.floor((now - Math.round(seenSec * 1000)) / 1000); // seconds since epoch
+
+    const { operator, country } = lookupHexOperator(hex);
+    const aircraftType = classifyAircraftType(typeCode, callsign);
+    const isInteresting = (typeof ac.dbFlags === 'number' && (ac.dbFlags & 2) === 2)
+      || aircraftType === 'MILITARY_AIRCRAFT_TYPE_BOMBER'
+      || aircraftType === 'MILITARY_AIRCRAFT_TYPE_RECONNAISSANCE'
+      || aircraftType === 'MILITARY_AIRCRAFT_TYPE_AWACS';
+
+    flights.push({
+      id: `adsbx-${hex}`,
+      callsign: callsign || `MIL-${hex.substring(0, 4).toUpperCase()}`,
+      hexCode: hex.toUpperCase(),
+      registration,
+      aircraftType,
+      aircraftModel: typeCode,
+      operator,
+      operatorCountry: country,
+      location: { latitude: lat, longitude: lon },
+      altitude,
+      heading,
+      speed,
+      verticalRate,
+      onGround,
+      squawk,
+      origin: '',
+      destination: '',
+      lastSeenAt,
+      firstSeenAt: 0,
+      confidence: 'MILITARY_CONFIDENCE_HIGH' as MilitaryConfidence,
+      isInteresting,
+      note: '',
+      enrichment: undefined,
+    });
+  }
+
+  console.log(`[military-flights] ADSBX returned ${acs.length} aircraft (${flights.length} with positions)`);
+  return flights.length > 0 ? flights : null;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Main handler
+// ──────────────────────────────────────────────────────────────────────────
 
 export async function listMilitaryFlights(
   ctx: ServerContext,
   req: ListMilitaryFlightsRequest,
 ): Promise<ListMilitaryFlightsResponse> {
   try {
-    if (!req.neLat && !req.neLon && !req.swLat && !req.swLon) return { flights: [], clusters: [], pagination: undefined };
-    const requestBounds = normalizeBounds(req);
+    // Empty bbox → treat as global view (return everything from upstream).
+    // iOS clients fetch the layer once and render globally; bbox-filtering is reserved for web map pans.
+    const hasBounds = !!(req.neLat || req.neLon || req.swLat || req.swLon);
+    const requestBounds = hasBounds ? normalizeBounds(req) : null;
 
     // Quantize bbox to a 1° grid so nearby map views share cache entries.
     // Precise coordinates caused near-zero hit rate since every pan/zoom created a unique key.
-    const quantizedBB = [
-      quantize(req.swLat, BBOX_GRID_STEP),
-      quantize(req.swLon, BBOX_GRID_STEP),
-      quantize(req.neLat, BBOX_GRID_STEP),
-      quantize(req.neLon, BBOX_GRID_STEP),
-    ].join(':');
+    const quantizedBB = hasBounds
+      ? [
+          quantize(req.swLat, BBOX_GRID_STEP),
+          quantize(req.swLon, BBOX_GRID_STEP),
+          quantize(req.neLat, BBOX_GRID_STEP),
+          quantize(req.neLon, BBOX_GRID_STEP),
+        ].join(':')
+      : 'global';
     const cacheKey = `${REDIS_CACHE_KEY}:${quantizedBB}:${req.operator || ''}:${req.aircraftType || ''}:${req.pageSize || 0}`;
 
     const fullResult = await cachedFetchJson<ListMilitaryFlightsResponse>(
       cacheKey,
       REDIS_CACHE_TTL,
       async () => {
-        // ① Primary: fetch from upstream (their data is richer — enriched, classified, more aircraft)
-        const raw = await fetchUpstream<{ flights: Array<Record<string, unknown>> }>('/api/military-flights');
-        if (raw?.flights?.length) {
-          const flights: ListMilitaryFlightsResponse['flights'] = raw.flights.map((f: Record<string, unknown>) => ({
-            id: String(f.id || ''),
-            callsign: String(f.callsign || ''),
-            hexCode: String(f.hexCode || ''),
-            registration: String(f.registration || ''),
-            aircraftType: String(f.aircraftType || 'MILITARY_AIRCRAFT_TYPE_UNKNOWN') as MilitaryAircraftType,
-            aircraftModel: String(f.aircraftModel || ''),
-            operator: String(f.operator || 'MILITARY_OPERATOR_OTHER') as MilitaryOperator,
-            operatorCountry: String(f.operatorCountry || ''),
-            location: { latitude: Number(f.lat ?? f.latitude ?? 0), longitude: Number(f.lon ?? f.longitude ?? 0) },
-            altitude: Number(f.altitude ?? 0),
-            heading: Number(f.heading ?? 0),
-            speed: Number(f.speed ?? 0),
-            verticalRate: Number(f.verticalRate ?? 0),
-            onGround: Boolean(f.onGround),
-            squawk: String(f.squawk || ''),
-            origin: String(f.origin || ''),
-            destination: String(f.destination || ''),
-            lastSeenAt: Number(f.lastSeenAt ?? Date.now()),
-            firstSeenAt: Number(f.firstSeenAt ?? 0),
-            confidence: String(f.confidence || 'MILITARY_CONFIDENCE_LOW') as MilitaryConfidence,
-            isInteresting: Boolean(f.isInteresting),
-            note: String(f.note || ''),
-            enrichment: undefined,
-          }));
-          return { flights, clusters: [], pagination: undefined };
+        // ① Primary — ADSBExchange (RapidAPI). Authoritative military feed, rich metadata.
+        const adsbxFlights = await fetchADSBExchangeFlights();
+        if (adsbxFlights && adsbxFlights.length > 0) {
+          return { flights: adsbxFlights, clusters: [], pagination: undefined };
         }
 
-        // ② Fallback: our own relay/OpenSky
-        console.log('[military-flights] upstream failed, trying own relay');
+        // ② Fallback — OpenSky relay. Hex/callsign-classified, free but coverage gaps.
+        console.log('[military-flights] ADSBX unavailable, trying OpenSky relay');
         const isSidecar = (process.env.LOCAL_API_MODE || '').includes('sidecar');
         const baseUrl = isSidecar
           ? 'https://opensky-network.org/api/states/all'
@@ -133,17 +348,20 @@ export async function listMilitaryFlights(
 
         if (!baseUrl) return null;
 
-        const fetchBB = {
-          lamin: quantize(req.swLat, BBOX_GRID_STEP) - BBOX_GRID_STEP / 2,
-          lamax: quantize(req.neLat, BBOX_GRID_STEP) + BBOX_GRID_STEP / 2,
-          lomin: quantize(req.swLon, BBOX_GRID_STEP) - BBOX_GRID_STEP / 2,
-          lomax: quantize(req.neLon, BBOX_GRID_STEP) + BBOX_GRID_STEP / 2,
-        };
+        // Only constrain OpenSky to a bbox when the client provided one. Otherwise fetch globally.
         const params = new URLSearchParams();
-        params.set('lamin', String(fetchBB.lamin));
-        params.set('lamax', String(fetchBB.lamax));
-        params.set('lomin', String(fetchBB.lomin));
-        params.set('lomax', String(fetchBB.lomax));
+        if (hasBounds) {
+          const fetchBB = {
+            lamin: quantize(req.swLat, BBOX_GRID_STEP) - BBOX_GRID_STEP / 2,
+            lamax: quantize(req.neLat, BBOX_GRID_STEP) + BBOX_GRID_STEP / 2,
+            lomin: quantize(req.swLon, BBOX_GRID_STEP) - BBOX_GRID_STEP / 2,
+            lomax: quantize(req.neLon, BBOX_GRID_STEP) + BBOX_GRID_STEP / 2,
+          };
+          params.set('lamin', String(fetchBB.lamin));
+          params.set('lamax', String(fetchBB.lamax));
+          params.set('lomin', String(fetchBB.lomin));
+          params.set('lomax', String(fetchBB.lomax));
+        }
 
         const url = `${baseUrl!}${params.toString() ? '?' + params.toString() : ''}`;
         const resp = await fetch(url, {
@@ -164,17 +382,18 @@ export async function listMilitaryFlights(
           if (lat == null || lon == null || onGround) continue;
           if (!isMilitaryCallsign(callsign) && !isMilitaryHex(icao24)) continue;
 
-          const aircraftType = detectAircraftType(callsign);
+          const category = detectAircraftType(callsign);
+          const { operator, country } = lookupHexOperator(icao24);
 
           flights.push({
             id: icao24,
             callsign: (callsign || '').trim(),
-            hexCode: icao24,
+            hexCode: icao24.toUpperCase(),
             registration: '',
-            aircraftType: (AIRCRAFT_TYPE_MAP[aircraftType] || 'MILITARY_AIRCRAFT_TYPE_UNKNOWN') as MilitaryAircraftType,
+            aircraftType: (CATEGORY_TO_ENUM[category] || 'MILITARY_AIRCRAFT_TYPE_UNKNOWN') as MilitaryAircraftType,
             aircraftModel: '',
-            operator: 'MILITARY_OPERATOR_OTHER',
-            operatorCountry: '',
+            operator,
+            operatorCountry: country,
             location: { latitude: lat, longitude: lon },
             altitude: altitude ?? 0,
             heading: heading ?? 0,
@@ -184,7 +403,7 @@ export async function listMilitaryFlights(
             squawk: '',
             origin: '',
             destination: '',
-            lastSeenAt: Date.now(),
+            lastSeenAt: Math.floor(Date.now() / 1000),
             firstSeenAt: 0,
             confidence: 'MILITARY_CONFIDENCE_LOW',
             isInteresting: false,
@@ -201,7 +420,10 @@ export async function listMilitaryFlights(
       markNoCacheResponse(ctx.request);
       return { flights: [], clusters: [], pagination: undefined };
     }
-    return { ...fullResult, flights: filterFlightsToBounds(fullResult.flights, requestBounds) };
+    return {
+      ...fullResult,
+      flights: requestBounds ? filterFlightsToBounds(fullResult.flights, requestBounds) : fullResult.flights,
+    };
   } catch {
     markNoCacheResponse(ctx.request);
     return { flights: [], clusters: [], pagination: undefined };

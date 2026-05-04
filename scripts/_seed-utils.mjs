@@ -24,9 +24,12 @@ export function loadEnvFile(metaUrl) {
   const candidates = [
     join(__dirname, '..', '.env.local'),
     join(__dirname, '..', '..', '.env.local'),
+    join(__dirname, '..', '.env'),
+    join(__dirname, '..', '..', '.env'),
   ];
   if (process.env.HOME) {
     candidates.push(join(process.env.HOME, 'Documents/GitHub/worldmonitor', '.env.local'));
+    candidates.push(join(process.env.HOME, 'Documents/GitHub/worldmonitor', '.env'));
   }
   for (const envPath of candidates) {
     if (!existsSync(envPath)) continue;
