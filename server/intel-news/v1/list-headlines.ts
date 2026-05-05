@@ -54,6 +54,15 @@ export interface IntelNewsItem {
    * matches the v2 live-news convention.
    */
   sources?: IntelNewsAlternateSource[];
+  /**
+   * 1-3 paragraph AI summary written by Gemini Flash (Claude Haiku
+   * fallback) from the article body. Generated once per article by
+   * the enrichment cron (`api/intel-news/v1/enrich.ts`) and persisted
+   * in the accumulator so re-refreshes don't re-summarize. Optional —
+   * absence means the item hasn't been enriched yet (will be on the
+   * next enrichment pass).
+   */
+  summary?: string;
 }
 
 export interface IntelNewsTopicBucket {

@@ -51,9 +51,11 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import AdmZip from 'adm-zip';
 
 export const config = {
-  // 60 s gives one batch (~10s) plus 24h backfill (~30-50s) headroom.
-  // Pro plan supports up to 300 s if we ever need more.
-  maxDuration: 60,
+  // 300 s = Pro-plan ceiling. Cron normally uses ~1 s for a single batch;
+  // the headroom matters for `?backfill=96` (24 h bootstrap, ~85 s) and
+  // any future widening of the per-run scope. Vercel bills wall-clock,
+  // so the higher cap costs nothing for normal cron firings.
+  maxDuration: 300,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,7 +196,10 @@ const INTEL_TOPICS: IntelTopic[] = [
 
 const LASTUPDATE_URL = 'http://data.gdeltproject.org/gdeltv2/lastupdate.txt';
 const GKG_FETCH_TIMEOUT_MS = 30_000;
-const BUDGET_MS = 50_000;
+// Soft ceiling — leaves ~10 s of headroom under the 300 s `maxDuration` for
+// the final Redis writes and JSON response. Bumping `maxDuration` without
+// bumping this would silently cap backfill runs.
+const BUDGET_MS = 290_000;
 
 const ACCUMULATOR_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const ACCUMULATOR_TTL_S = 7 * 24 * 60 * 60;
@@ -221,6 +226,8 @@ interface IntelNewsItem {
   topic: string;
   tone: number | null;
   sources?: Array<{ source: string; title: string; link: string; publishedAt: number }>;
+  /** AI-generated summary, populated by enrich.ts cron after refresh. */
+  summary?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -462,20 +469,50 @@ function bucketByTopic(rows: ParsedRow[]): Map<string, IntelNewsItem[]> {
 // the read endpoint and iOS client are unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function mergeIntoAccumulator(topicId: string, freshItems: IntelNewsItem[]): Promise<number> {
+interface MergeResult {
+  /** Total items in the accumulator after merge (post-retention, post-cap). */
+  accumulatorSize: number;
+  /** Count of links that didn't exist in the accumulator before this merge. */
+  added: number;
+}
+
+async function mergeIntoAccumulator(topicId: string, freshItems: IntelNewsItem[]): Promise<MergeResult> {
   const key = `intel-news:topic:v6:${topicId}:accumulator`;
   const cutoff = Date.now() - ACCUMULATOR_RETENTION_MS;
 
   const existing = await redisGet<IntelNewsItem[]>(key);
-  const byLink = new Map<string, IntelNewsItem>();
-
+  const existingByLink = new Map<string, IntelNewsItem>();
   if (Array.isArray(existing)) {
     for (const item of existing) {
-      if (item && typeof item.link === 'string' && item.link) byLink.set(item.link, item);
+      if (item && typeof item.link === 'string' && item.link) existingByLink.set(item.link, item);
     }
   }
-  for (const item of freshItems) {
-    if (item && typeof item.link === 'string' && item.link) byLink.set(item.link, item);
+
+  // Count "really new" — links not seen before in the accumulator. This is
+  // the metric that matters for enrichment cost: anything already in
+  // existingByLink is either already summarized or will be picked up by
+  // enrich on its own (which scans for items missing `summary`).
+  let added = 0;
+
+  // Important: when an item's link already exists, KEEP the existing entry
+  // (which may already have a `summary` from a previous enrichment run)
+  // rather than overwriting with the fresh GKG entry which has no summary.
+  // We do still update tone/sources from fresh data — those can change
+  // as more outlets report the same wire — but preserve `summary`.
+  const byLink = new Map<string, IntelNewsItem>(existingByLink);
+  for (const fresh of freshItems) {
+    if (!fresh || typeof fresh.link !== 'string' || !fresh.link) continue;
+    const prior = existingByLink.get(fresh.link);
+    if (prior) {
+      // Merge fresh metadata onto prior; preserve summary.
+      byLink.set(fresh.link, {
+        ...fresh,
+        summary: prior.summary,
+      });
+    } else {
+      byLink.set(fresh.link, fresh);
+      added++;
+    }
   }
 
   const merged = [...byLink.values()]
@@ -484,7 +521,7 @@ async function mergeIntoAccumulator(topicId: string, freshItems: IntelNewsItem[]
     .slice(0, ACCUMULATOR_MAX_ITEMS);
 
   await redisSet(key, merged, ACCUMULATOR_TTL_S);
-  return merged.length;
+  return { accumulatorSize: merged.length, added };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -494,7 +531,13 @@ async function mergeIntoAccumulator(topicId: string, freshItems: IntelNewsItem[]
 interface BatchResult {
   rows: number;
   withTitles: number;
-  perTopic: Record<string, { matched: number; afterDedup: number; accumulatorSize: number }>;
+  perTopic: Record<string, {
+    matched: number;
+    afterDedup: number;
+    /** Items whose link was not in the accumulator before this merge. */
+    newlyAdded: number;
+    accumulatorSize: number;
+  }>;
 }
 
 async function processBatch(gkgUrl: string): Promise<BatchResult | null> {
@@ -536,14 +579,19 @@ async function processBatch(gkgUrl: string): Promise<BatchResult | null> {
     const items = buckets.get(topic.id) ?? [];
     const matched = matchedBefore.get(topic.id) ?? 0;
     if (items.length === 0) {
-      perTopic[topic.id] = { matched, afterDedup: 0, accumulatorSize: 0 };
+      perTopic[topic.id] = { matched, afterDedup: 0, newlyAdded: 0, accumulatorSize: 0 };
       continue;
     }
-    const accumulatorSize = await mergeIntoAccumulator(topic.id, items);
-    perTopic[topic.id] = { matched, afterDedup: items.length, accumulatorSize };
+    const merge = await mergeIntoAccumulator(topic.id, items);
+    perTopic[topic.id] = {
+      matched,
+      afterDedup: items.length,
+      newlyAdded: merge.added,
+      accumulatorSize: merge.accumulatorSize,
+    };
     console.log(
       `[intel-news:refresh] ${topic.id}: ${matched} matched → ${items.length} after dedup → ` +
-      `${accumulatorSize} in accumulator`,
+      `+${merge.added} new → ${merge.accumulatorSize} in accumulator`,
     );
   }
 
@@ -557,7 +605,16 @@ async function processBatch(gkgUrl: string): Promise<BatchResult | null> {
 interface RefreshResult {
   batches: number;
   durationMs: number;
-  totals: Record<string, { matched: number; afterDedup: number; accumulatorSize: number }>;
+  totals: Record<string, {
+    matched: number;
+    afterDedup: number;
+    newlyAdded: number;
+    accumulatorSize: number;
+  }>;
+  /** Sum of `newlyAdded` across all topics — drives whether to chain into enrich. */
+  totalNewlyAdded: number;
+  /** Result of the chained enrich call (null if backfill or chain skipped). */
+  enrich?: unknown;
 }
 
 /** Walk back N batches (15 min apart) from a yyyymmddhhmmss timestamp. */
@@ -612,10 +669,11 @@ async function refreshIntelNews(backfill: number): Promise<RefreshResult> {
       if (!result) continue;
       batchesDone++;
       for (const [tid, stats] of Object.entries(result.perTopic)) {
-        const prev = totals[tid] ?? { matched: 0, afterDedup: 0, accumulatorSize: 0 };
+        const prev = totals[tid] ?? { matched: 0, afterDedup: 0, newlyAdded: 0, accumulatorSize: 0 };
         totals[tid] = {
           matched: prev.matched + stats.matched,
           afterDedup: prev.afterDedup + stats.afterDedup,
+          newlyAdded: prev.newlyAdded + stats.newlyAdded,
           // Accumulator size is post-merge — we want the LATEST seen, not summed.
           accumulatorSize: stats.accumulatorSize,
         };
@@ -625,9 +683,66 @@ async function refreshIntelNews(backfill: number): Promise<RefreshResult> {
     }
   }
 
+  const totalNewlyAdded = Object.values(totals).reduce((s, t) => s + t.newlyAdded, 0);
   const durationMs = Date.now() - start;
-  console.log(`[intel-news:refresh] done in ${durationMs}ms · ${batchesDone}/${urls.length} batches`);
-  return { batches: batchesDone, durationMs, totals };
+  console.log(
+    `[intel-news:refresh] GKG ingestion done in ${durationMs}ms · ` +
+    `${batchesDone}/${urls.length} batches · ${totalNewlyAdded} newly-added items`,
+  );
+  return { batches: batchesDone, durationMs, totals, totalNewlyAdded };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enrichment chain — fire HTTP to enrich.ts and await its response so
+// the cron's "done" log reflects the full pipeline. Skipped on backfill
+// runs because the combined runtime would blow the 300 s function ceiling.
+// On steady-state cron (~1 s GKG + ~280 s enrich budget) we fit cleanly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function resolveOwnBaseUrl(): string | null {
+  // Prefer the canonical production URL (custom domain after Vercel's
+  // public domain mapping). Fall back to the deployment-specific URL.
+  const prodUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  if (prodUrl) return `https://${prodUrl}`;
+  const deployUrl = process.env.VERCEL_URL;
+  if (deployUrl) return `https://${deployUrl}`;
+  return null;
+}
+
+async function chainIntoEnrich(): Promise<unknown> {
+  const baseUrl = resolveOwnBaseUrl();
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (!baseUrl) {
+    console.warn('[intel-news:refresh] enrich chain skipped — VERCEL_URL / VERCEL_PROJECT_PRODUCTION_URL unset');
+    return { skipped: 'no-base-url' };
+  }
+  if (!cronSecret) {
+    console.warn('[intel-news:refresh] enrich chain skipped — CRON_SECRET unset');
+    return { skipped: 'no-cron-secret' };
+  }
+
+  const url = `${baseUrl}/api/intel-news/v1/enrich`;
+  console.log(`[intel-news:refresh] chaining into enrich at ${url}`);
+  const t0 = Date.now();
+  try {
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${cronSecret}` },
+      signal: AbortSignal.timeout(285_000),
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      console.warn(`[intel-news:refresh] enrich HTTP ${resp.status}: ${body.slice(0, 200)}`);
+      return { error: `http-${resp.status}` };
+    }
+    const data = await resp.json().catch(() => null);
+    console.log(`[intel-news:refresh] enrich completed in ${Date.now() - t0}ms`);
+    return data ?? { error: 'unparseable' };
+  } catch (err) {
+    console.warn(`[intel-news:refresh] enrich call threw: ${(err as Error).message}`);
+    return { error: (err as Error).message };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -671,6 +786,19 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   try {
     const result = await refreshIntelNews(backfill);
+
+    // Chain into enrich on steady-state cron firings only. On backfill the
+    // GKG processing alone can take 80+ seconds; combined with enrich's
+    // ~280 s budget that exceeds the 300 s function ceiling. Backfill
+    // callers are expected to run enrich separately afterwards.
+    if (backfill <= 1 && result.totalNewlyAdded > 0) {
+      result.enrich = await chainIntoEnrich();
+    } else if (backfill > 1) {
+      console.log('[intel-news:refresh] skipping enrich chain (backfill mode — run /enrich separately)');
+    } else {
+      console.log('[intel-news:refresh] skipping enrich chain — 0 newly-added items');
+    }
+
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify(result));
