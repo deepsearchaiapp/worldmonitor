@@ -41,6 +41,14 @@ export interface SportEventItem {
   locationName: string | null;
   league: string;               // e.g. "NFL"
   state: 'pre' | 'in' | 'post'; // ESPN state
+  /**
+   * Editorial recap / preview prose, when ESPN's scoreboard provides one
+   * via `competitions[0].headlines[0].description`. Null for sports/states
+   * that don't carry a recap (most live games, some leagues with sparse
+   * editorial coverage). When null the iOS client falls back to its
+   * templated `sportsSummary(for:)` helper.
+   */
+  summary: string | null;
   /** Sort priority used by handler: 0 = live, 1 = upcoming, 2 = finished. */
   sortPriority: number;
 }
@@ -50,6 +58,12 @@ interface EspnTeam {
   score?: string;
   team?: { displayName?: string; abbreviation?: string; shortDisplayName?: string };
   winner?: boolean;
+}
+
+interface EspnHeadline {
+  type?: string;          // e.g. "Recap", "Preview"
+  description?: string;   // prose summary
+  shortLinkText?: string;
 }
 
 interface EspnCompetition {
@@ -63,6 +77,10 @@ interface EspnCompetition {
     displayClock?: string;
     period?: number;
   };
+  /** ESPN editorial recap / preview entries. Some leagues never populate
+   *  this; finals usually have a "Recap"; pre-games sometimes have a
+   *  "Preview". We extract the first non-empty `description`. */
+  headlines?: EspnHeadline[];
 }
 
 interface EspnEvent {
@@ -146,6 +164,27 @@ function priorityFor(state: 'pre' | 'in' | 'post' | undefined): number {
 }
 
 /**
+ * Pull a usable prose summary out of ESPN's headlines array.
+ *
+ * ESPN often prepends an em-dash or hyphen + space to syndicated wire
+ * content ("— Jalen Brunson scored 27..."). Strip those so the iOS
+ * detail view renders cleanly. Returns null when no headline has a
+ * usable description (most pre-games, some live games, sparse leagues).
+ */
+function extractEspnSummary(competition: EspnCompetition | undefined): string | null {
+  const headlines = competition?.headlines ?? [];
+  for (const h of headlines) {
+    const raw = (h.description ?? '').trim();
+    if (raw.length === 0) continue;
+    // Strip leading typographic dashes / hyphens that ESPN sometimes
+    // emits as a wire-service marker.
+    const cleaned = raw.replace(/^[—–\-]+\s*/, '').trim();
+    if (cleaned.length >= 30) return cleaned;
+  }
+  return null;
+}
+
+/**
  * Normalize a single ESPN scoreboard payload for one league.
  * Returns the items that pass the time-window filter.
  */
@@ -195,6 +234,7 @@ export function normalizeScoreboard(
       locationName: venue?.fullName ?? null,
       league: league.shortName,
       state: (state ?? 'pre') as 'pre' | 'in' | 'post',
+      summary: extractEspnSummary(competition),
       sortPriority: priorityFor(state),
     });
   }
