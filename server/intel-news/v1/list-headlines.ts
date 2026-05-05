@@ -17,7 +17,7 @@
  * client can decode them with the existing `NewsItem` model.
  */
 
-import { cachedFetchJson } from '../../_shared/redis';
+import { cachedFetchJson, getCachedJson, setCachedJson } from '../../_shared/redis';
 import { keepAlive } from '../../_shared/keep-alive';
 import { INTEL_TOPICS, type IntelTopic } from './_topics';
 import { appendToArchive, type ConflictArchiveItem } from '../../conflict-archive/v1/_store';
@@ -40,21 +40,23 @@ function perTopicTtlSeconds(): number {
 // so the next miss-probe usually succeeds.
 const PER_TOPIC_NEG_TTL_S = 15 * 60;
 
-// Stagger fan-out delay. When multiple topic caches miss simultaneously
-// (e.g. post-deploy or after a cache-key version bump), this per-topic
-// delay turns N-in-the-same-instant into N-spread-over-~10-seconds,
-// which GDELT's per-IP rate limiter handles without 429ing.
+// Stagger fan-out delay. When multiple topic caches miss simultaneously,
+// this per-topic delay turns N-in-the-same-instant into N-spread-over-~2.5s.
 //
-// Bumped 250 → 1000 ms after a real 429 incident: 10 topics × 250 ms
-// (2.5s burst) was enough for GDELT to throttle our egress IP. 1000 ms
-// gives ~10s for the full fan-out, well within their fair-use envelope.
-//
-// Cold-start latency penalty: ~10 s for the slowest topic. Hot-cache
-// requests pay zero — the delay only applies inside the fetcher, which
-// only runs on cache miss. After the first cold start, per-topic TTL
-// jitter (0–60s) drifts expirations apart so most refreshes affect
-// only 1–2 topics at a time.
-const STAGGER_PER_TOPIC_MS = 1000;
+// Reverted to 250 ms after my earlier bump to 1000 ms broke things:
+// 10 topics × 1000 ms = 10 s of stagger PLUS up to FETCH_TIMEOUT_MS for
+// the slowest topic = 20+ s total, blowing past Vercel's edge function
+// budget. With 250 ms total stagger budget is 2.5 s, leaving plenty of
+// timeout headroom even if GDELT is slow.
+const STAGGER_PER_TOPIC_MS = 250;
+
+// When the live cache misses, we also try a long-lived "stale" cache
+// before falling back to fetching from GDELT. That way a slow / 429'd
+// GDELT doesn't leave the chip empty for users — we serve yesterday's
+// data while a background refresh lands. 7 days is generous; the live
+// cache (15 min) refreshes constantly under normal conditions.
+const STALE_TTL_S = 7 * 24 * 60 * 60;
+const STALE_KEY_SUFFIX = ':stale';
 
 const TOP_LEVEL_TTL_S = 30;             // 30 s — same urgency tier as live-news
 const FETCH_TIMEOUT_MS = 10_000;
@@ -338,7 +340,11 @@ export async function listIntelNews(): Promise<ListIntelNewsResponse> {
   // safely on the iOS side (sources is optional) but bumping the key
   // forces an immediate rebuild after deploy so users see the dedup
   // benefit without waiting for the 30 min TTL to expire.
-  const topLevelKey = 'intel-news:digest:v2';
+  // v3 — bumped to clear out the NEG_SENTINEL entries left over from
+  // the GDELT-slow incident. The new digest path also reads stale-cache
+  // fallbacks per-topic, so users no longer see empty chips when GDELT
+  // is throttled or slow.
+  const topLevelKey = 'intel-news:digest:v3';
 
   // Top-level cache aggregates per-topic results. Per-topic caches let us
   // partially refresh — if 5 topics are fresh and 1 is stale, only 1 GDELT
@@ -347,28 +353,48 @@ export async function listIntelNews(): Promise<ListIntelNewsResponse> {
     topLevelKey,
     TOP_LEVEL_TTL_S,
     async () => {
-      // Fetch each topic with its own cachedFetchJson so per-topic ~15 min
-      // cache survives even when the top-level 30 s key expires.
+      // Fetch each topic with cachedFetchJson (live cache, ~15 min TTL).
       //
-      // The fetcher embeds a per-topic stagger delay (`index * 250 ms`).
-      // It only runs on cache miss, so:
-      //   • Hot-cache request: 0 ms penalty (cachedFetchJson returns cached).
-      //   • Cold-cache request: 9 GDELT calls spread over ~2 s rather than
-      //     all-in-the-same-instant. Spreads load on GDELT's rate-limiter,
-      //     drops 429 risk significantly.
+      // Two safety nets layered around the fetch:
+      //   1. Stagger delay (250 ms × index) — spreads cold-start fan-out
+      //      to ~2.5 s so GDELT's rate-limiter doesn't 429 the burst.
+      //   2. Stale cache fallback — when fresh fetch returns null (slow
+      //      GDELT, timeout, 429, parse error), we read from the long-
+      //      lived stale key and serve THAT rather than letting the chip
+      //      go empty. On every successful fetch we mirror the result
+      //      into the stale key so it stays warm.
       const promises = INTEL_TOPICS.map(async (topic, index) => {
-        const perTopicKey = `intel-news:topic:v2:${topic.id}`;
-        return cachedFetchJson<IntelNewsTopicBucket>(
+        const perTopicKey = `intel-news:topic:v3:${topic.id}`;
+        const stalePerTopicKey = `${perTopicKey}${STALE_KEY_SUFFIX}`;
+
+        const result = await cachedFetchJson<IntelNewsTopicBucket>(
           perTopicKey,
           perTopicTtlSeconds(),
           async () => {
             if (index > 0) {
               await new Promise((r) => setTimeout(r, index * STAGGER_PER_TOPIC_MS));
             }
-            return fetchTopicArticles(topic);
+            const fresh = await fetchTopicArticles(topic);
+            // On success, mirror to the stale cache so future failures
+            // can fall back to this snapshot.
+            if (fresh) {
+              setCachedJson(stalePerTopicKey, fresh, STALE_TTL_S).catch(() => {});
+            }
+            return fresh;
           },
           PER_TOPIC_NEG_TTL_S,
         );
+
+        if (result) return result;
+
+        // Live cache miss returned null. Try the stale cache before giving
+        // up — much better to show users yesterday's stories than nothing.
+        const stale = await getCachedJson(stalePerTopicKey) as IntelNewsTopicBucket | null;
+        if (stale && Array.isArray(stale.items) && stale.items.length > 0) {
+          console.log(`[intel-news] ${topic.id}: serving stale (${stale.items.length} items)`);
+          return { ...stale, stale: true };
+        }
+        return null;
       });
 
       const results = await Promise.all(promises);
