@@ -79,14 +79,15 @@ export const US_NEWS_SOURCES: readonly NewsSource[] = [
  * Per-feed item cap before global dedup. Higher than before because the
  * source list shrank — each source contributes a larger slice.
  */
-export const ITEMS_PER_FEED = 15;
+export const ITEMS_PER_FEED = 25;
 
 /**
- * Hard cap on the assembled digest. Reached only when a flood of fresh
- * stories arrives in the time window. Otherwise the time filter does the
- * trimming.
+ * Hard cap on the assembled digest. Bumped to 500 (Task 4c) so the iOS
+ * feed can show a deeper roster of stories now that filter chips slice
+ * the feed by region + topic. The time filter still trims items older
+ * than `MAX_AGE_MS`, so this cap only activates during news floods.
  */
-export const MAX_ITEMS = 180;
+export const MAX_ITEMS = 500;
 
 /**
  * Maximum age of items considered fresh enough to appear, used purely as

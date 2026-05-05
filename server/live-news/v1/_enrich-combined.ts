@@ -134,9 +134,11 @@ function toFiniteNumber(v: unknown): number | null {
  * triggers the Claude fallback for this specific item.
  */
 function validateEntry(entry: LlmResultEntry): CombinedEnrichment | null {
-  // Summary
+  // Summary — bumped to allow up to 3 paragraphs (~2500 chars). Lower bound
+  // dropped to 30 so genuinely-thin source material (one-sentence wires) can
+  // still produce a valid short summary instead of forcing an LLM retry.
   const summary = typeof entry.summary === 'string' ? entry.summary.trim() : '';
-  if (summary.length < 60 || summary.length > 1200) return null;
+  if (summary.length < 30 || summary.length > 2500) return null;
 
   // Location coordinates
   const lat = toFiniteNumber(entry.lat);
@@ -163,18 +165,20 @@ function validateEntry(entry: LlmResultEntry): CombinedEnrichment | null {
 // Prompt
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a news enrichment service. For each news item you receive, return BOTH a short summary AND a location in a single JSON response.
+const SYSTEM_PROMPT = `You are a news enrichment service. For each news item you receive, return BOTH a summary AND a location in a single JSON response.
 
 # 1. Summary (the "summary" field)
 
-Plain English. The reader should grasp the story at a glance, with low effort.
+Plain English. The reader should grasp the story at a glance, with low effort, and walk away with real context.
+
+Length: 1 to 3 paragraphs. Match the depth of the source — thin wire stories get 1 short paragraph; substantial stories get 2 to 3 paragraphs. Do not pad. Maximum ~400 words total.
 
 Structure:
-- Sentence 1: the key event (who, what, where, when).
-- Sentences 2 to 3: the substance — how it happened, who is affected, what numbers / parties / timeline matter.
-- Sentence 4 (optional): what this means or what's next.
+- Paragraph 1: the key event (who, what, where, when) and the substance — how it happened, who is affected, what numbers / parties / timeline matter.
+- Paragraph 2 (when warranted): the broader context — why this matters, the relevant background that makes the event legible.
+- Paragraph 3 (when warranted): consequences or what's next — only if the source supports it.
 
-Length: 3 to 5 sentences total, 60 to 120 words.
+Use blank lines (\\n\\n) between paragraphs in the output string.
 
 Language:
 - Plain English. Use everyday words instead of formal or technical ones:
@@ -186,7 +190,7 @@ Language:
 
 Sourcing:
 - Use ONLY facts in the input title and description.
-- You MAY add neutral background context drawn from common knowledge about named entities.
+- You MAY add neutral background context drawn from common knowledge about named entities (countries, companies, public figures, ongoing conflicts) when it helps the reader understand the event.
 
 # 2. Location (the "lat", "lng", "locationName", "country", "confidence" fields)
 
@@ -208,7 +212,7 @@ A JSON object with a "results" array, one entry per input id, exactly:
   "results": [
     {
       "id": "<input id>",
-      "summary": "<3 to 5 sentence plain-English summary>",
+      "summary": "<1 to 3 paragraph plain-English summary, paragraphs separated by \\n\\n>",
       "lat": <number>,
       "lng": <number>,
       "locationName": "<human-readable, e.g. 'Kyiv, Ukraine'>",
@@ -318,9 +322,10 @@ async function callGeminiBatch(batch: LiveNewsItem[]): Promise<Map<string, Combi
   const result = await callGemini({
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(batch),
-    // 8 items × ~250 tokens output = ~2 000 tokens. 6 000 cap = ~3× headroom
-    // for Gemini's pretty-printed JSON.
-    maxTokens: 6000,
+    // 8 items × ~600 tokens output = ~4 800 tokens with the longer
+    // 1-3 paragraph summaries. 12 000 cap leaves headroom for Gemini's
+    // pretty-printed JSON formatting on busy news days.
+    maxTokens: 12000,
     temperature: 0.2,
     jsonMode: true,
     apiKeyEnv: 'GEMINI_API_KEY_ENRICHMENT', // optional separate billing key
@@ -355,7 +360,8 @@ async function callClaudeFallback(items: LiveNewsItem[]): Promise<Map<string, Co
   const result = await callClaude({
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(items),
-    maxTokens: 4000,
+    // Bumped from 4 000 → 8 000 to absorb the longer 1-3 paragraph summaries.
+    maxTokens: 8000,
     temperature: 0.2,
     apiKeyEnv: 'ANTHROPIC_API_KEY_PARAPHRASE',
   });
