@@ -95,6 +95,31 @@ const REGION_COORDS: Record<string, { lat: number; lon: number }> = {
   'Baltic Sea': { lat: 58.0, lon: 20.0 },
   'Black Sea': { lat: 43.5, lon: 34.0 },
   'Bay of Bengal': { lat: 14.0, lon: 87.0 },
+  // Inland sea between Philippine archipelagos — surfaces in USNI reports
+  // when 7th Fleet vessels operate around the Philippines / Mindanao.
+  'Sulu Sea': { lat: 8.0, lon: 120.0 },
+  // Southern Atlantic — anything south of the equator on the Atlantic side.
+  // USNI uses it for AFRICOM / SOUTHCOM crossover deployments.
+  'South Atlantic': { lat: -25.0, lon: -20.0 },
+  // Adjacent regions we'll likely see from the same dataset — pre-seed
+  // them now so we don't trip another `Unknown region` warning the next
+  // time a vessel happens to be in one of these waters.
+  'Norwegian Sea': { lat: 70.0, lon: 5.0 },
+  'North Sea': { lat: 56.0, lon: 3.0 },
+  'Adriatic Sea': { lat: 43.0, lon: 15.0 },
+  'Aegean Sea': { lat: 38.0, lon: 25.0 },
+  'Tasman Sea': { lat: -38.0, lon: 162.0 },
+  'Coral Sea': { lat: -15.0, lon: 155.0 },
+  'Andaman Sea': { lat: 11.0, lon: 95.0 },
+  'Java Sea': { lat: -5.0, lon: 110.0 },
+  'Celebes Sea': { lat: 3.5, lon: 122.0 },
+  'Yellow Sea': { lat: 35.0, lon: 124.0 },
+  'Gulf of Mexico': { lat: 25.0, lon: -90.0 },
+  'Gulf of Alaska': { lat: 58.0, lon: -146.0 },
+  'Gulf of Guinea': { lat: 2.0, lon: 3.0 },
+  'Bering Sea': { lat: 58.0, lon: -178.0 },
+  'Barents Sea': { lat: 75.0, lon: 40.0 },
+  'Arctic Ocean': { lat: 85.0, lon: 0.0 },
   Yokosuka: { lat: 35.29, lon: 139.67 },
   Japan: { lat: 35.29, lon: 139.67 },
   Sasebo: { lat: 33.16, lon: 129.72 },

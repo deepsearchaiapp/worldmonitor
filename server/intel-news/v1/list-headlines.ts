@@ -42,6 +42,14 @@ interface GdeltResponse {
   articles?: GdeltArticle[];
 }
 
+/** One outlet's coverage of the same syndicated story. */
+export interface IntelNewsAlternateSource {
+  source: string;
+  title: string;
+  link: string;
+  publishedAt: number;
+}
+
 /** Item shape — matches iOS NewsItem decoder. */
 export interface IntelNewsItem {
   source: string;             // domain (e.g. "reuters.com")
@@ -53,6 +61,13 @@ export interface IntelNewsItem {
   topic: string;
   /** Tone score from GDELT, when present (typically -10..+10). */
   tone: number | null;
+  /**
+   * All outlets reporting the same headline, populated by within-topic
+   * title dedup. Always includes the canonical (sources[0] === rep)
+   * when present. Empty when the item has no detected duplicates —
+   * matches the v2 live-news convention.
+   */
+  sources?: IntelNewsAlternateSource[];
 }
 
 export interface IntelNewsTopicBucket {
@@ -93,11 +108,38 @@ function toNumber(v: unknown): number | null {
   return null;
 }
 
+/**
+ * Normalize a headline for dedup grouping.
+ *
+ * GDELT republishes wire stories (AP, Reuters, AFP, etc.) across many
+ * outlets verbatim, so the same headline shows up under one topic many
+ * times. Group by:
+ *   - Lower-case
+ *   - Strip non-alphanumeric Unicode (commas, dashes, smart quotes, etc.)
+ *   - Collapse whitespace
+ *
+ * This catches wire-syndicated duplicates without false-grouping similar
+ * but distinct stories — different events with different headlines stay
+ * separate. We deliberately don't do fuzzy matching; LLM-driven
+ * semantic dedup (like live-news v2's classifier) is overkill for the
+ * intel digest where the duplicate signal is exact-string.
+ */
+function normalizeTitle(t: string): string {
+  return t
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 async function fetchTopicArticles(topic: IntelTopic): Promise<IntelNewsTopicBucket | null> {
   const url = new URL(GDELT_BASE);
   url.searchParams.set('query', topic.query);
   url.searchParams.set('mode', 'artlist');
-  url.searchParams.set('maxrecords', '20');
+  // Bumped 20 → 50 (Task 4c+). Within GDELT's 250 hard cap and gives
+  // each topic chip enough depth that scrolling feels meaningful.
+  // After title-dedup the visible item count is typically ~30–40.
+  url.searchParams.set('maxrecords', '50');
   url.searchParams.set('format', 'json');
   url.searchParams.set('sort', 'date');
   url.searchParams.set('timespan', '24h');
@@ -131,13 +173,15 @@ async function fetchTopicArticles(topic: IntelTopic): Promise<IntelNewsTopicBuck
   const articles = Array.isArray(data?.articles) ? data.articles : [];
   if (articles.length === 0) return null;
 
-  const items: IntelNewsItem[] = [];
+  // First pass: build raw item list straight from the GDELT response.
+  // Dedup happens in the second pass.
+  const rawItems: IntelNewsItem[] = [];
   for (const art of articles) {
     const link = String(art.url || art.url_mobile || '').trim();
     const title = String(art.title || '').trim();
     if (!link || !title) continue;
 
-    items.push({
+    rawItems.push({
       source: String(art.domain || 'GDELT').trim(),
       title,
       link,
@@ -148,10 +192,48 @@ async function fetchTopicArticles(topic: IntelTopic): Promise<IntelNewsTopicBuck
     });
   }
 
-  if (items.length === 0) return null;
+  if (rawItems.length === 0) return null;
 
-  // Sort newest first — defensive in case GDELT returns out-of-order.
+  // Second pass: group by normalized title. Wire stories (AP, Reuters)
+  // get republished verbatim across dozens of domains under the same
+  // topic — collapse them into one canonical item with `sources[]`
+  // listing every outlet so the iOS detail view can render a stacked
+  // "Read on X" CTA per outlet.
+  const groups = new Map<string, IntelNewsItem[]>();
+  for (const item of rawItems) {
+    const key = normalizeTitle(item.title);
+    if (!key) continue;
+    const bucket = groups.get(key) ?? [];
+    bucket.push(item);
+    groups.set(key, bucket);
+  }
+
+  const items: IntelNewsItem[] = [];
+  let dupedAway = 0;
+  for (const group of groups.values()) {
+    // Within each group: keep the freshest as canonical, list every
+    // outlet under sources[] (canonical first, others by recency).
+    group.sort((a, b) => b.publishedAt - a.publishedAt);
+    const canonical = group[0]!;
+    if (group.length > 1) {
+      canonical.sources = group.map((g) => ({
+        source: g.source,
+        title: g.title,
+        link: g.link,
+        publishedAt: g.publishedAt,
+      }));
+      dupedAway += group.length - 1;
+    }
+    items.push(canonical);
+  }
+
+  // Sort newest first — defensive in case GDELT returns out-of-order
+  // and to keep the iOS feed in chronological order.
   items.sort((a, b) => b.publishedAt - a.publishedAt);
+
+  if (dupedAway > 0) {
+    console.log(`[intel-news] ${topic.id}: ${rawItems.length} raw → ${items.length} unique (-${dupedAway} duplicate outlets)`);
+  }
 
   return {
     id: topic.id,
@@ -166,7 +248,11 @@ async function fetchTopicArticles(topic: IntelTopic): Promise<IntelNewsTopicBuck
  * failure rather than failing the request, so the iOS feed never goes blank.
  */
 export async function listIntelNews(): Promise<ListIntelNewsResponse> {
-  const topLevelKey = 'intel-news:digest:v1';
+  // v2 — adds title-dedup with sources[]. Old v1 caches still decode
+  // safely on the iOS side (sources is optional) but bumping the key
+  // forces an immediate rebuild after deploy so users see the dedup
+  // benefit without waiting for the 30 min TTL to expire.
+  const topLevelKey = 'intel-news:digest:v2';
 
   // Top-level cache aggregates per-topic results. Per-topic caches let us
   // partially refresh — if 5 topics are fresh and 1 is stale, only 1 GDELT
@@ -178,7 +264,7 @@ export async function listIntelNews(): Promise<ListIntelNewsResponse> {
       // Fetch each topic with its own cachedFetchJson so per-topic 30 min
       // cache survives even when the top-level 30 s key expires.
       const promises = INTEL_TOPICS.map(async (topic) => {
-        const perTopicKey = `intel-news:topic:v1:${topic.id}`;
+        const perTopicKey = `intel-news:topic:v2:${topic.id}`;
         return cachedFetchJson<IntelNewsTopicBucket>(
           perTopicKey,
           PER_TOPIC_TTL_S,
