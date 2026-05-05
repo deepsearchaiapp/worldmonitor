@@ -40,15 +40,24 @@ function perTopicTtlSeconds(): number {
 // so the next miss-probe usually succeeds.
 const PER_TOPIC_NEG_TTL_S = 15 * 60;
 
-// Stagger fan-out delay. When multiple topic caches miss simultaneously,
-// this per-topic delay turns N-in-the-same-instant into N-spread-over-~2.5s.
+// Stagger fan-out delay between topic GDELT calls.
 //
-// Reverted to 250 ms after my earlier bump to 1000 ms broke things:
-// 10 topics × 1000 ms = 10 s of stagger PLUS up to FETCH_TIMEOUT_MS for
-// the slowest topic = 20+ s total, blowing past Vercel's edge function
-// budget. With 250 ms total stagger budget is 2.5 s, leaving plenty of
-// timeout headroom even if GDELT is slow.
-const STAGGER_PER_TOPIC_MS = 250;
+// GDELT enforces "1 request per 5 seconds per IP" per their fair-use
+// policy (their 429 body says so verbatim). 250 ms / 1000 ms staggers
+// blasted through this and got us rate-limited. 5500 ms is safely
+// above the 5-second floor.
+//
+// Trade-off: 10 topics × 5500 ms = 55 s of cumulative stagger, which
+// EXCEEDS Vercel edge-function timeouts (10 s on Hobby, 25 s on Pro).
+// In practice this means a single user request can only fully fetch
+// ~4 topics on Pro before being killed. The fixed `cachedFetchJson`
+// 15-min TTL means topics that DID fetch successfully stay cached, so
+// successive user requests progressively warm the remaining topics.
+//
+// Long-term we should move the fan-out to a Vercel cron job (60 s
+// max-duration on Pro) so all 10 topics refresh on a server-driven
+// schedule independent of user request timing. See proposal below.
+const STAGGER_PER_TOPIC_MS = 5500;
 
 // Per-topic ACCUMULATOR — rolling 7-day window of items merged across
 // fetches. Each successful GDELT response gets unioned into the
@@ -423,7 +432,7 @@ async function mergeIntoAccumulator(
   topicId: string,
   freshItems: IntelNewsItem[],
 ): Promise<IntelNewsItem[]> {
-  const key = `intel-news:topic:v5:${topicId}${ACCUMULATOR_KEY_SUFFIX}`;
+  const key = `intel-news:topic:v6:${topicId}${ACCUMULATOR_KEY_SUFFIX}`;
   const cutoff = Date.now() - ACCUMULATOR_RETENTION_MS;
 
   const existing = (await getCachedJson(key)) as IntelNewsItem[] | null;
@@ -458,7 +467,7 @@ async function mergeIntoAccumulator(
 
 /** Read the accumulator without merging. Used as the failure fallback. */
 async function readAccumulator(topicId: string): Promise<IntelNewsItem[]> {
-  const key = `intel-news:topic:v5:${topicId}${ACCUMULATOR_KEY_SUFFIX}`;
+  const key = `intel-news:topic:v6:${topicId}${ACCUMULATOR_KEY_SUFFIX}`;
   const cached = (await getCachedJson(key)) as IntelNewsItem[] | null;
   if (!Array.isArray(cached)) return [];
   // Filter on read too — protects against accumulator entries that
@@ -476,10 +485,10 @@ export async function listIntelNews(): Promise<ListIntelNewsResponse> {
   // safely on the iOS side (sources is optional) but bumping the key
   // forces an immediate rebuild after deploy so users see the dedup
   // benefit without waiting for the 30 min TTL to expire.
-  // v5 — bumped alongside the per-topic accumulator redesign. Clears
-  // out v4 stale-snapshot keys (different schema) and the v4 negative
-  // cache entries from the slow-GDELT incident.
-  const topLevelKey = 'intel-news:digest:v5';
+  // v6 — clears v5 NEG_SENTINEL entries left over from the GDELT
+  // rate-limit incident (their 1-req-per-5-sec policy). Stagger now
+  // bumped to 5500 ms so cold-start fan-outs respect that policy.
+  const topLevelKey = 'intel-news:digest:v6';
 
   // Top-level cache aggregates per-topic results. Per-topic caches let us
   // partially refresh — if 5 topics are fresh and 1 is stale, only 1 GDELT
@@ -501,7 +510,7 @@ export async function listIntelNews(): Promise<ListIntelNewsResponse> {
       //      stays populated with up to 7 days of recent stories instead
       //      of going empty.
       const promises = INTEL_TOPICS.map(async (topic, index) => {
-        const perTopicKey = `intel-news:topic:v5:${topic.id}`;
+        const perTopicKey = `intel-news:topic:v6:${topic.id}`;
 
         const result = await cachedFetchJson<IntelNewsTopicBucket>(
           perTopicKey,
