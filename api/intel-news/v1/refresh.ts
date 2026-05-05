@@ -1,151 +1,190 @@
 /**
- * HTTP entry — `GET /api/intel-news/v1/refresh`
+ * `GET /api/intel-news/v1/refresh` — cron-only endpoint.
  *
- * Cron-only endpoint. Sequentially refreshes all 10 GDELT topic
- * accumulators with 5.5-second pacing between calls (per GDELT's
- * fair-use rate limit).
+ * # Pivot rationale (May 2026)
  *
- * Triggered by Vercel cron (configured in `vercel.json`'s `crons` block,
- * default schedule `*​/15 * * * *`). Manual invocation requires the
- * `CRON_SECRET` env var as a Bearer token — Vercel auto-attaches this
- * header to scheduled cron requests when the secret is set.
+ * GDELT's DOC API became globally throttled — even a single one-keyword
+ * query returns HTTP 429 ("Please limit requests to one every 5 seconds")
+ * on the *first* request from any IP. Verified with curl from both
+ * Vercel egress and a residential IP: same behavior. The DOC path is
+ * unusable for our cadence.
  *
- * # Why Node.js runtime (not edge)
+ * Replacement: GDELT publishes its full Global Knowledge Graph (GKG)
+ * as 15-minute TSV dumps at http://data.gdeltproject.org/gdeltv2/.
+ * These are static-CDN files with no rate limit. Each batch is
+ * ~7 MB gzipped (~40 MB uncompressed) and contains every article
+ * GDELT ingested in that window (typically 10-30k articles).
  *
- * Vercel Edge functions cap initial response at ~25 s on Pro plan.
- * Node.js runtime supports `maxDuration: 300` on Pro, so 55 s of
- * sequential GDELT fan-out fits comfortably.
+ * # Pipeline
  *
- * # Why fully inlined (no imports from server/)
+ *   1. Fetch lastupdate.txt → URL of latest gkg.csv.zip
+ *   2. Download + adm-zip extract
+ *   3. Split lines, split fields by TAB (27 columns per GKG 2.1 spec)
+ *   4. Extract <PAGE_TITLE> from each row's V2EXTRASXML field (col 26)
+ *   5. Match title against each topic's pre-compiled regex; bucket
+ *   6. Within-topic title-normalized dedup → collapses syndicated wires
+ *   7. Merge into per-topic Redis accumulator (7-day rolling, link-deduped)
  *
- * The project uses `"type": "module"` in package.json, which means
- * Node.js ESM resolution requires explicit `.js` extensions on every
- * relative import. Importing `server/intel-news/v1/refresh` would
- * pull in a transitive chain of ~10 files that all need extension
- * fixes. Inlining keeps this cron self-contained and isolated from
- * the rest of the codebase. The duplication is intentional — the
- * read-side (`list-headlines.ts`) still imports the helpers normally
- * since it runs on edge runtime where the bundler handles extensions.
+ * Schema-identical to the previous DOC-API ingestion (`IntelNewsItem`),
+ * so the read endpoint (`list-headlines.ts`) and iOS client need no changes.
+ *
+ * # Trade-offs vs old DOC API
+ *
+ *   + Zero rate-limit pressure (static CDN files, not API)
+ *   + One download per cron run instead of 10 paced calls (~10s vs ~55s)
+ *   + Get richer metadata (themes/locations/orgs available in GKG for
+ *     future classifier improvements)
+ *   - Title-only matching — DOC API was full-text. Articles whose
+ *     headline doesn't mention the topic word will be missed. In
+ *     practice, headlines carry most topical signal.
+ *
+ * # Optional backfill
+ *
+ *   GET /api/intel-news/v1/refresh?backfill=N
+ *
+ * Walks N batches back from the latest (15 min apart). Use
+ * `?backfill=96` once after deploy to bootstrap a 24-hour window
+ * into the accumulators. Same auth as the regular cron.
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
+import AdmZip from 'adm-zip';
 
 export const config = {
-  // 60 s gives the sequential 10-topic fan-out (≈55 s) plus 5 s housekeeping
-  // budget. Pro plan supports up to 300 s if we ever need more.
+  // 60 s gives one batch (~10s) plus 24h backfill (~30-50s) headroom.
+  // Pro plan supports up to 300 s if we ever need more.
   maxDuration: 60,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Topics (kept in sync with server/intel-news/v1/_topics.ts — same source-of-truth)
+// Topics — kept in sync with server/intel-news/v1/_topics.ts. Term lists are
+// the same boolean queries we used to send to the DOC API, compiled into
+// case-insensitive word-boundary regexes for headline matching.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface IntelTopic {
   id: string;
   label: string;
-  query: string;
+  titlePattern: RegExp;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildPattern(terms: string[]): RegExp {
+  return new RegExp(`\\b(?:${terms.map(escapeRegex).join('|')})\\b`, 'i');
 }
 
 const INTEL_TOPICS: IntelTopic[] = [
   {
     id: 'conflict',
     label: 'CONFLICT',
-    query:
-      '("armed conflict" OR airstrike OR "air strike" OR "drone strike" OR ' +
-      '"missile strike" OR "missile attack" OR "rocket attack" OR shelling OR ' +
-      'artillery OR "ground assault" OR firefight OR "armed clash" OR ' +
-      'ceasefire OR "civilian casualties" OR "war crime" OR insurgent OR ' +
-      'militant OR Hezbollah OR Hamas OR Houthi OR offensive OR "military strike") ' +
-      'sourcelang:eng',
+    titlePattern: buildPattern([
+      'armed conflict', 'airstrike', 'air strike', 'drone strike',
+      'missile strike', 'missile attack', 'rocket attack', 'shelling',
+      'artillery', 'ground assault', 'firefight', 'armed clash',
+      'ceasefire', 'civilian casualties', 'war crime', 'insurgent',
+      'militant', 'Hezbollah', 'Hamas', 'Houthi', 'offensive', 'military strike',
+    ]),
   },
   {
     id: 'cyber',
     label: 'CYBER',
-    query:
-      '(cyberattack OR "cyber attack" OR cybersecurity OR ransomware OR hacking OR hacker OR ' +
-      '"data breach" OR "security breach" OR "data leak" OR phishing OR malware OR ' +
-      '"zero-day" OR DDoS OR APT OR "supply chain attack" OR "denial of service" OR ' +
-      '"hacked" OR "exploit") sourcelang:eng',
+    titlePattern: buildPattern([
+      'cyberattack', 'cyber attack', 'cybersecurity', 'ransomware', 'hacking',
+      'hacker', 'data breach', 'security breach', 'data leak', 'phishing',
+      'malware', 'zero-day', 'DDoS', 'APT', 'supply chain attack',
+      'denial of service', 'hacked', 'exploit',
+    ]),
   },
   {
     id: 'military',
     label: 'MILITARY',
-    query:
-      '("armed forces" OR Pentagon OR "missile strike" OR "drone strike" OR airstrike OR ' +
-      '"air strike" OR "troop deployment" OR "military exercise" OR "naval exercise" OR ' +
-      '"military operation" OR "military aid" OR ceasefire OR "fighter jet" OR ' +
-      '"ground forces" OR "missile launch" OR "war crime" OR "military base" OR ' +
-      '"defense ministry" OR "joint exercise") sourcelang:eng',
+    titlePattern: buildPattern([
+      'armed forces', 'Pentagon', 'missile strike', 'drone strike', 'airstrike',
+      'air strike', 'troop deployment', 'military exercise', 'naval exercise',
+      'military operation', 'military aid', 'ceasefire', 'fighter jet',
+      'ground forces', 'missile launch', 'war crime', 'military base',
+      'defense ministry', 'joint exercise',
+    ]),
   },
   {
     id: 'nuclear',
     label: 'NUCLEAR',
-    query:
-      '("nuclear weapon" OR "nuclear program" OR "nuclear test" OR "nuclear deal" OR ' +
-      '"nuclear power" OR "nuclear plant" OR "nuclear reactor" OR "nuclear missile" OR ' +
-      '"nuclear arsenal" OR "nuclear threat" OR "nuclear talks" OR uranium OR ' +
-      '"uranium enrichment" OR plutonium OR IAEA OR "atomic bomb" OR "atomic energy" OR ' +
-      '"non-proliferation" OR "nuclear inspection") sourcelang:eng',
+    titlePattern: buildPattern([
+      'nuclear weapon', 'nuclear program', 'nuclear test', 'nuclear deal',
+      'nuclear power', 'nuclear plant', 'nuclear reactor', 'nuclear missile',
+      'nuclear arsenal', 'nuclear threat', 'nuclear talks', 'uranium',
+      'uranium enrichment', 'plutonium', 'IAEA', 'atomic bomb', 'atomic energy',
+      'non-proliferation', 'nuclear inspection',
+    ]),
   },
   {
     id: 'sanctions',
     label: 'SANCTIONS',
-    query:
-      '(sanctions OR sanctioned OR embargo OR OFAC OR "export controls" OR tariff OR ' +
-      'tariffs OR "trade war" OR "frozen assets" OR blacklisted OR "asset freeze" OR ' +
-      '"trade restriction" OR "economic pressure" OR "secondary sanctions" OR ' +
-      '"sanctions package" OR "sanctions list" OR "designated entity") sourcelang:eng',
+    titlePattern: buildPattern([
+      'sanctions', 'sanctioned', 'embargo', 'OFAC', 'export controls',
+      'tariff', 'tariffs', 'trade war', 'frozen assets', 'blacklisted',
+      'asset freeze', 'trade restriction', 'economic pressure',
+      'secondary sanctions', 'sanctions package', 'sanctions list',
+      'designated entity',
+    ]),
   },
   {
     id: 'intelligence',
     label: 'INTELLIGENCE',
-    query:
-      '(espionage OR spy OR CIA OR MI6 OR Mossad OR FSB OR FBI OR ' +
-      '"intelligence agency" OR "intelligence officer" OR "intelligence service" OR ' +
-      'covert OR surveillance OR wiretap OR "classified document" OR informant OR ' +
-      '"intelligence leak" OR counterintelligence OR "double agent" OR ' +
-      '"national security" OR defector) sourcelang:eng',
+    titlePattern: buildPattern([
+      'espionage', 'spy', 'CIA', 'MI6', 'Mossad', 'FSB', 'FBI',
+      'intelligence agency', 'intelligence officer', 'intelligence service',
+      'covert', 'surveillance', 'wiretap', 'classified document', 'informant',
+      'intelligence leak', 'counterintelligence', 'double agent',
+      'national security', 'defector',
+    ]),
   },
   {
     id: 'maritime',
     label: 'MARITIME',
-    query:
-      '(warship OR "naval blockade" OR "naval base" OR "naval drill" OR "naval ship" OR ' +
-      'piracy OR "Strait of Hormuz" OR "South China Sea" OR "Suez Canal" OR ' +
-      '"shipping lane" OR "oil tanker" OR freighter OR submarine OR "coast guard" OR ' +
-      '"Bab al-Mandeb" OR "Red Sea attack" OR "naval patrol" OR ' +
-      '"freedom of navigation" OR "maritime security") sourcelang:eng',
+    titlePattern: buildPattern([
+      'warship', 'naval blockade', 'naval base', 'naval drill', 'naval ship',
+      'piracy', 'Strait of Hormuz', 'South China Sea', 'Suez Canal',
+      'shipping lane', 'oil tanker', 'freighter', 'submarine', 'coast guard',
+      'Bab al-Mandeb', 'Red Sea attack', 'naval patrol',
+      'freedom of navigation', 'maritime security',
+    ]),
   },
   {
     id: 'business',
     label: 'BUSINESS',
-    query:
-      '(earnings OR IPO OR "stock market" OR "interest rate" OR "Federal Reserve" OR ' +
-      '"central bank" OR merger OR acquisition OR layoffs OR "quarterly results" OR ' +
-      '"Wall Street" OR Nasdaq OR "Dow Jones" OR inflation OR recession OR GDP OR ' +
-      '"earnings report" OR "stock price" OR "market crash" OR "rate cut" OR ' +
-      '"rate hike" OR "trade deal" OR "corporate profits") sourcelang:eng',
+    titlePattern: buildPattern([
+      'earnings', 'IPO', 'stock market', 'interest rate', 'Federal Reserve',
+      'central bank', 'merger', 'acquisition', 'layoffs', 'quarterly results',
+      'Wall Street', 'Nasdaq', 'Dow Jones', 'inflation', 'recession', 'GDP',
+      'earnings report', 'stock price', 'market crash', 'rate cut', 'rate hike',
+      'trade deal', 'corporate profits',
+    ]),
   },
   {
     id: 'scitech',
     label: 'SCI & TECH',
-    query:
-      '("artificial intelligence" OR "machine learning" OR semiconductor OR microchip OR ' +
-      '"quantum computing" OR biotech OR vaccine OR "clinical trial" OR ' +
-      '"space launch" OR rocket OR satellite OR "renewable energy" OR ' +
-      '"nuclear fusion" OR "electric vehicle" OR robotics OR startup OR ' +
-      '"venture capital" OR "AI model" OR "drug approval" OR "FDA approval" OR ' +
-      '"genome editing" OR "scientific breakthrough") sourcelang:eng',
+    titlePattern: buildPattern([
+      'artificial intelligence', 'machine learning', 'semiconductor', 'microchip',
+      'quantum computing', 'biotech', 'vaccine', 'clinical trial', 'space launch',
+      'rocket', 'satellite', 'renewable energy', 'nuclear fusion',
+      'electric vehicle', 'robotics', 'startup', 'venture capital', 'AI model',
+      'drug approval', 'FDA approval', 'genome editing', 'scientific breakthrough',
+    ]),
   },
   {
     id: 'entertainment',
     label: 'ENTERTAINMENT',
-    query:
-      '("box office" OR streaming OR Hollywood OR Netflix OR "film festival" OR ' +
-      '"music album" OR concert OR Spotify OR "video game" OR Oscars OR Grammys OR ' +
-      '"TV series" OR "film premiere" OR celebrity OR "movie release" OR ' +
-      '"song release" OR "music video" OR "Emmy Awards" OR "Cannes Film" OR ' +
-      '"album release" OR "world tour" OR "film studio") sourcelang:eng',
+    titlePattern: buildPattern([
+      'box office', 'streaming', 'Hollywood', 'Netflix', 'film festival',
+      'music album', 'concert', 'Spotify', 'video game', 'Oscars', 'Grammys',
+      'TV series', 'film premiere', 'celebrity', 'movie release', 'song release',
+      'music video', 'Emmy Awards', 'Cannes Film', 'album release', 'world tour',
+      'film studio',
+    ]),
   },
 ];
 
@@ -153,18 +192,24 @@ const INTEL_TOPICS: IntelTopic[] = [
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const GDELT_BASE = 'https://api.gdeltproject.org/api/v2/doc/doc';
-const FETCH_TIMEOUT_MS = 20_000;
-const PACE_MS = 5_500;
-const BUDGET_MS = 55_000;
+const LASTUPDATE_URL = 'http://data.gdeltproject.org/gdeltv2/lastupdate.txt';
+const GKG_FETCH_TIMEOUT_MS = 30_000;
+const BUDGET_MS = 50_000;
 
 const ACCUMULATOR_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const ACCUMULATOR_TTL_S = 7 * 24 * 60 * 60;
 const ACCUMULATOR_MAX_ITEMS = 500;
 
+// GKG 2.1 column indices (per GDELT codebook). Only the ones we use:
+const COL_DATE = 1;          // V2.1DATE          yyyymmddhhmmss
+const COL_DOMAIN = 3;        // V2SOURCECOMMONNAME
+const COL_URL = 4;           // V2DOCUMENTIDENTIFIER
+const COL_TONE = 15;         // V1.5TONE          comma-separated
+const COL_EXTRAS = 26;       // V2EXTRASXML       contains <PAGE_TITLE>
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Types — match server/intel-news/v1/list-headlines.ts wire shape so the
-//        accumulator reads/writes are interoperable with the read endpoint.
+// Wire shape — must match server/intel-news/v1/list-headlines.ts so accumulator
+// reads/writes are interoperable with the read endpoint.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface IntelNewsItem {
@@ -178,21 +223,8 @@ interface IntelNewsItem {
   sources?: Array<{ source: string; title: string; link: string; publishedAt: number }>;
 }
 
-interface GdeltArticle {
-  url?: string;
-  url_mobile?: string;
-  title?: string;
-  seendate?: string;
-  domain?: string;
-  tone?: string | number;
-}
-
-interface GdeltResponse {
-  articles?: GdeltArticle[];
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Upstash Redis REST helpers — inline to avoid the import-extension chain
+// Upstash Redis REST helpers — inlined to keep the cron self-contained.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getRedisCreds(): { url: string; token: string } | null {
@@ -240,150 +272,194 @@ async function redisSet(key: string, value: unknown, ttlSeconds: number): Promis
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GDELT fetch + parse
+// GKG fetch + parse
 // ─────────────────────────────────────────────────────────────────────────────
 
-function parseGdeltDate(s: string | undefined): number {
+/** Read the 320-byte index file and return the URL of the latest gkg.csv.zip. */
+async function fetchLatestGkgUrl(): Promise<string | null> {
+  try {
+    const resp = await fetch(LASTUPDATE_URL, {
+      signal: AbortSignal.timeout(GKG_FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      console.warn(`[intel-news:refresh] lastupdate.txt HTTP ${resp.status}`);
+      return null;
+    }
+    const txt = await resp.text();
+    // Format: each line is "<size> <md5> <url>" — three lines for export,
+    // mentions, gkg respectively.
+    for (const line of txt.split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      const url = parts[2];
+      if (url && url.endsWith('.gkg.csv.zip')) return url;
+    }
+    return null;
+  } catch (err) {
+    console.warn(`[intel-news:refresh] lastupdate.txt fetch threw: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/** Download the .zip and return its inner CSV as utf-8 text, or null on failure. */
+async function downloadGkgCsv(url: string): Promise<string | null> {
+  try {
+    const resp = await fetch(url, {
+      signal: AbortSignal.timeout(GKG_FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      console.warn(`[intel-news:refresh] GKG fetch HTTP ${resp.status}: ${url}`);
+      return null;
+    }
+    const ab = await resp.arrayBuffer();
+    const zip = new AdmZip(Buffer.from(ab));
+    const entries = zip.getEntries();
+    if (entries.length === 0) {
+      console.warn(`[intel-news:refresh] GKG zip empty: ${url}`);
+      return null;
+    }
+    // GDELT batches always contain a single .csv inside.
+    const first = entries[0];
+    if (!first) return null;
+    return first.getData().toString('utf8');
+  } catch (err) {
+    console.warn(`[intel-news:refresh] GKG download/unzip threw for ${url}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+function parseGkgDate(s: string): number {
   if (!s || s.length < 14) return 0;
   const yr = s.slice(0, 4);
   const mo = s.slice(4, 6);
   const dy = s.slice(6, 8);
-  const hh = s.slice(9, 11);
-  const mm = s.slice(11, 13);
-  const ss = s.slice(13, 15);
+  const hh = s.slice(8, 10);
+  const mm = s.slice(10, 12);
+  const ss = s.slice(12, 14);
   const t = Date.parse(`${yr}-${mo}-${dy}T${hh}:${mm}:${ss}Z`);
   return Number.isFinite(t) ? t : 0;
 }
 
-function toNumber(v: unknown): number | null {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (typeof v === 'string') {
-    const n = parseFloat(v);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = parseInt(n, 10);
+      return Number.isFinite(code) ? String.fromCharCode(code) : '';
+    });
+}
+
+/** Pull <PAGE_TITLE>...</PAGE_TITLE> out of a row's V2EXTRASXML blob. */
+function extractTitle(extrasXml: string): string | null {
+  if (!extrasXml) return null;
+  const m = /<PAGE_TITLE>([^<]+)<\/PAGE_TITLE>/.exec(extrasXml);
+  if (!m || !m[1]) return null;
+  const decoded = decodeHtmlEntities(m[1]).trim();
+  if (decoded.length < 5) return null;
+  return decoded;
 }
 
 function normalizeTitle(t: string): string {
   return t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
 }
 
-async function fetchTopicArticles(topic: IntelTopic): Promise<IntelNewsItem[] | null> {
-  const url = new URL(GDELT_BASE);
-  url.searchParams.set('query', topic.query);
-  url.searchParams.set('mode', 'artlist');
-  url.searchParams.set('maxrecords', '30');
-  url.searchParams.set('format', 'json');
-  url.searchParams.set('sort', 'date');
-  url.searchParams.set('timespan', '24h');
+interface ParsedRow {
+  date: number;
+  domain: string;
+  url: string;
+  tone: number | null;
+  title: string;
+}
 
-  const startMs = Date.now();
-  console.log(
-    `[intel-news:refresh] ${topic.id} GDELT GET maxrecords=30 timespan=24h ` +
-    `timeout=${FETCH_TIMEOUT_MS}ms queryLen=${topic.query.length}`,
-  );
+function parseGkgRow(line: string): ParsedRow | null {
+  if (!line) return null;
+  const fields = line.split('\t');
+  if (fields.length < 27) return null;
 
-  let resp: Response;
-  try {
-    resp = await fetch(url.toString(), {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'Mozilla/5.0 (compatible; WorldMonitor/1.0)',
-      },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-  } catch (err) {
-    const elapsedMs = Date.now() - startMs;
-    const e = err as Error;
-    const isTimeout = e?.name === 'TimeoutError' || /abort|timeout/i.test(e?.message ?? '');
-    const reason = isTimeout
-      ? `TIMEOUT after ${elapsedMs}ms (limit=${FETCH_TIMEOUT_MS}ms)`
-      : `NETWORK ERROR after ${elapsedMs}ms — ${e?.name ?? 'Error'}: ${e?.message ?? 'unknown'}`;
-    console.warn(`[intel-news:refresh] ${topic.id} FAIL: ${reason}`);
-    return null;
-  }
+  const url = (fields[COL_URL] ?? '').trim();
+  const domain = (fields[COL_DOMAIN] ?? '').trim();
+  if (!url || !domain) return null;
 
-  const elapsedMs = Date.now() - startMs;
+  const title = extractTitle(fields[COL_EXTRAS] ?? '');
+  if (!title) return null;
 
-  if (!resp.ok) {
-    let bodyPreview = '';
-    try { bodyPreview = (await resp.text()).slice(0, 200).replace(/\s+/g, ' ').trim(); } catch { /* ignore */ }
-    const kind =
-      resp.status === 429 ? 'RATE LIMITED (429)'
-      : resp.status === 503 ? 'SERVICE UNAVAILABLE (503)'
-      : resp.status >= 500 ? `UPSTREAM ERROR (${resp.status})`
-      : `CLIENT ERROR (${resp.status})`;
-    console.warn(`[intel-news:refresh] ${topic.id} FAIL: ${kind} after ${elapsedMs}ms · body="${bodyPreview || '<empty>'}"`);
-    return null;
-  }
+  const date = parseGkgDate(fields[COL_DATE] ?? '');
+  const toneFirst = (fields[COL_TONE] ?? '').split(',')[0] ?? '';
+  const toneNum = parseFloat(toneFirst);
+  const tone = Number.isFinite(toneNum) ? toneNum : null;
 
-  let data: GdeltResponse;
-  let bodySize = 0;
-  try {
-    const bodyText = await resp.text();
-    bodySize = bodyText.length;
-    data = JSON.parse(bodyText) as GdeltResponse;
-  } catch (err) {
-    console.warn(`[intel-news:refresh] ${topic.id} FAIL: PARSE ERROR after ${elapsedMs}ms · bodySize=${bodySize} · ${(err as Error).message}`);
-    return null;
-  }
-
-  const articles = Array.isArray(data?.articles) ? data.articles : [];
-  if (articles.length === 0) {
-    console.warn(`[intel-news:refresh] ${topic.id} EMPTY: 0 articles after ${elapsedMs}ms · bodySize=${bodySize}B`);
-    return null;
-  }
-
-  // Build raw items, then dedup by normalized title (collapses syndicated wires).
-  const rawItems: IntelNewsItem[] = [];
-  for (const art of articles) {
-    const link = String(art.url || art.url_mobile || '').trim();
-    const title = String(art.title || '').trim();
-    if (!link || !title) continue;
-    rawItems.push({
-      source: String(art.domain || 'GDELT').trim(),
-      title,
-      link,
-      publishedAt: parseGdeltDate(art.seendate),
-      isAlert: false,
-      topic: topic.id,
-      tone: toNumber(art.tone),
-    });
-  }
-
-  if (rawItems.length === 0) return null;
-
-  const groups = new Map<string, IntelNewsItem[]>();
-  for (const item of rawItems) {
-    const k = normalizeTitle(item.title);
-    if (!k) continue;
-    const bucket = groups.get(k) ?? [];
-    bucket.push(item);
-    groups.set(k, bucket);
-  }
-
-  const items: IntelNewsItem[] = [];
-  for (const group of groups.values()) {
-    group.sort((a, b) => b.publishedAt - a.publishedAt);
-    const canonical = group[0]!;
-    if (group.length > 1) {
-      canonical.sources = group.map((g) => ({
-        source: g.source, title: g.title, link: g.link, publishedAt: g.publishedAt,
-      }));
-    }
-    items.push(canonical);
-  }
-  items.sort((a, b) => b.publishedAt - a.publishedAt);
-
-  console.log(
-    `[intel-news:refresh] ${topic.id} OK: ${items.length} items in ${elapsedMs}ms · ` +
-    `bodySize=${(bodySize / 1024).toFixed(1)}KB`,
-  );
-  return items;
+  return { date, domain, url, tone, title };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Accumulator merge
+// Topic bucketing + within-topic dedup
+// ─────────────────────────────────────────────────────────────────────────────
+
+function bucketByTopic(rows: ParsedRow[]): Map<string, IntelNewsItem[]> {
+  // First pass: assign each row to every matching topic (a row can land
+  // in more than one — e.g. a "drone strike on nuclear plant" headline
+  // hits both military and nuclear, which is the right behavior).
+  const raw = new Map<string, IntelNewsItem[]>();
+  for (const t of INTEL_TOPICS) raw.set(t.id, []);
+
+  for (const row of rows) {
+    for (const topic of INTEL_TOPICS) {
+      if (topic.titlePattern.test(row.title)) {
+        const bucket = raw.get(topic.id);
+        if (!bucket) continue;
+        bucket.push({
+          source: row.domain,
+          title: row.title,
+          link: row.url,
+          publishedAt: row.date,
+          isAlert: false,
+          topic: topic.id,
+          tone: row.tone,
+        });
+      }
+    }
+  }
+
+  // Second pass: per-topic title-normalized dedup. Same syndicated wire
+  // story collapsed to one canonical with sources[] populated.
+  const deduped = new Map<string, IntelNewsItem[]>();
+  for (const [topicId, items] of raw) {
+    const groups = new Map<string, IntelNewsItem[]>();
+    for (const item of items) {
+      const k = normalizeTitle(item.title);
+      if (!k) continue;
+      const group = groups.get(k) ?? [];
+      group.push(item);
+      groups.set(k, group);
+    }
+    const result: IntelNewsItem[] = [];
+    for (const group of groups.values()) {
+      group.sort((a, b) => b.publishedAt - a.publishedAt);
+      const canonical = group[0];
+      if (!canonical) continue;
+      if (group.length > 1) {
+        canonical.sources = group.map((g) => ({
+          source: g.source,
+          title: g.title,
+          link: g.link,
+          publishedAt: g.publishedAt,
+        }));
+      }
+      result.push(canonical);
+    }
+    result.sort((a, b) => b.publishedAt - a.publishedAt);
+    deduped.set(topicId, result);
+  }
+  return deduped;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Accumulator merge — same Redis key as the previous DOC-API ingestion, so
+// the read endpoint and iOS client are unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function mergeIntoAccumulator(topicId: string, freshItems: IntelNewsItem[]): Promise<number> {
@@ -412,85 +488,146 @@ async function mergeIntoAccumulator(topicId: string, freshItems: IntelNewsItem[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main refresh loop
+// Process a single batch URL end-to-end
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface BatchResult {
+  rows: number;
+  withTitles: number;
+  perTopic: Record<string, { matched: number; afterDedup: number; accumulatorSize: number }>;
+}
+
+async function processBatch(gkgUrl: string): Promise<BatchResult | null> {
+  const tDownload = Date.now();
+  const csv = await downloadGkgCsv(gkgUrl);
+  if (!csv) return null;
+  console.log(
+    `[intel-news:refresh] ${gkgUrl.split('/').pop()} downloaded+unzipped in ` +
+    `${Date.now() - tDownload}ms · ${(csv.length / 1024 / 1024).toFixed(1)}MB`,
+  );
+
+  const tParse = Date.now();
+  const lines = csv.split('\n');
+  const parsedRows: ParsedRow[] = [];
+  for (const line of lines) {
+    const row = parseGkgRow(line);
+    if (row) parsedRows.push(row);
+  }
+  console.log(
+    `[intel-news:refresh] parsed ${lines.length} lines, ` +
+    `${parsedRows.length} with titles in ${Date.now() - tParse}ms`,
+  );
+
+  const tBucket = Date.now();
+  const buckets = bucketByTopic(parsedRows);
+  const matchedBefore = new Map<string, number>();
+  // We've already deduped inside bucketByTopic, but we want to log raw
+  // match counts too — recompute from rows.
+  for (const t of INTEL_TOPICS) {
+    let n = 0;
+    for (const r of parsedRows) if (t.titlePattern.test(r.title)) n++;
+    matchedBefore.set(t.id, n);
+  }
+  console.log(`[intel-news:refresh] bucketed in ${Date.now() - tBucket}ms`);
+
+  // Merge each non-empty bucket into Redis.
+  const perTopic: BatchResult['perTopic'] = {};
+  for (const topic of INTEL_TOPICS) {
+    const items = buckets.get(topic.id) ?? [];
+    const matched = matchedBefore.get(topic.id) ?? 0;
+    if (items.length === 0) {
+      perTopic[topic.id] = { matched, afterDedup: 0, accumulatorSize: 0 };
+      continue;
+    }
+    const accumulatorSize = await mergeIntoAccumulator(topic.id, items);
+    perTopic[topic.id] = { matched, afterDedup: items.length, accumulatorSize };
+    console.log(
+      `[intel-news:refresh] ${topic.id}: ${matched} matched → ${items.length} after dedup → ` +
+      `${accumulatorSize} in accumulator`,
+    );
+  }
+
+  return { rows: lines.length, withTitles: parsedRows.length, perTopic };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Top-level refresh — single batch by default, multi-batch backfill on demand
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface RefreshResult {
-  succeeded: number;
-  failed: number;
-  skipped: number;
+  batches: number;
   durationMs: number;
-  perTopic: Array<{
-    id: string;
-    outcome: 'success' | 'failed' | 'skipped';
-    items?: number;
-    accumulatorSize?: number;
-    elapsedMs?: number;
-  }>;
+  totals: Record<string, { matched: number; afterDedup: number; accumulatorSize: number }>;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+/** Walk back N batches (15 min apart) from a yyyymmddhhmmss timestamp. */
+function generateBackfillUrls(latestUrl: string, count: number): string[] {
+  const m = /\/(\d{14})\.gkg\.csv\.zip$/.exec(latestUrl);
+  if (!m || !m[1]) return [latestUrl];
+
+  const ts = m[1];
+  const yy = parseInt(ts.slice(0, 4), 10);
+  const mo = parseInt(ts.slice(4, 6), 10);
+  const dy = parseInt(ts.slice(6, 8), 10);
+  const hh = parseInt(ts.slice(8, 10), 10);
+  const mm = parseInt(ts.slice(10, 12), 10);
+  const baseTime = Date.UTC(yy, mo - 1, dy, hh, mm);
+
+  const urls: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = baseTime - i * 15 * 60 * 1000;
+    const d = new Date(t);
+    const stamp =
+      `${d.getUTCFullYear()}` +
+      `${String(d.getUTCMonth() + 1).padStart(2, '0')}` +
+      `${String(d.getUTCDate()).padStart(2, '0')}` +
+      `${String(d.getUTCHours()).padStart(2, '0')}` +
+      `${String(d.getUTCMinutes()).padStart(2, '0')}00`;
+    urls.push(`http://data.gdeltproject.org/gdeltv2/${stamp}.gkg.csv.zip`);
+  }
+  return urls;
 }
 
-async function refreshAllTopics(): Promise<RefreshResult> {
-  const runStartMs = Date.now();
-  const result: RefreshResult = { succeeded: 0, failed: 0, skipped: 0, durationMs: 0, perTopic: [] };
-  let lastRequestStartMs = 0;
+async function refreshIntelNews(backfill: number): Promise<RefreshResult> {
+  const start = Date.now();
+  const latestUrl = await fetchLatestGkgUrl();
+  if (!latestUrl) throw new Error('failed to read lastupdate.txt');
 
-  for (const topic of INTEL_TOPICS) {
-    const elapsedSinceStart = Date.now() - runStartMs;
+  const urls = backfill <= 1 ? [latestUrl] : generateBackfillUrls(latestUrl, backfill);
+  console.log(`[intel-news:refresh] processing ${urls.length} batch(es) (backfill=${backfill})`);
 
-    // Budget gate — skip if not enough time for a worst-case 10s GDELT call.
-    if (elapsedSinceStart > BUDGET_MS - 10_000) {
-      console.log(`[intel-news:refresh] budget exhausted at ${elapsedSinceStart}ms, skipping ${topic.id}`);
-      result.skipped++;
-      result.perTopic.push({ id: topic.id, outcome: 'skipped' });
-      continue;
+  const totals: RefreshResult['totals'] = {};
+  let batchesDone = 0;
+
+  for (const url of urls) {
+    if (Date.now() - start > BUDGET_MS) {
+      console.log(
+        `[intel-news:refresh] budget exhausted at ${Date.now() - start}ms, ` +
+        `stopping after ${batchesDone}/${urls.length}`,
+      );
+      break;
     }
-
-    // Pacing gate — strict 5.5s between consecutive GDELT calls.
-    if (lastRequestStartMs > 0) {
-      const sinceLast = Date.now() - lastRequestStartMs;
-      if (sinceLast < PACE_MS) await sleep(PACE_MS - sinceLast);
-    }
-
-    lastRequestStartMs = Date.now();
-    const fetchStart = Date.now();
-
     try {
-      const fresh = await fetchTopicArticles(topic);
-      const fetchMs = Date.now() - fetchStart;
-
-      if (fresh) {
-        const accumulatorSize = await mergeIntoAccumulator(topic.id, fresh);
-        result.succeeded++;
-        result.perTopic.push({
-          id: topic.id,
-          outcome: 'success',
-          items: fresh.length,
-          accumulatorSize,
-          elapsedMs: fetchMs,
-        });
-        console.log(`[intel-news:refresh] ${topic.id}: ${fresh.length} fresh → ${accumulatorSize} in accumulator ✓`);
-      } else {
-        result.failed++;
-        result.perTopic.push({ id: topic.id, outcome: 'failed', elapsedMs: fetchMs });
+      const result = await processBatch(url);
+      if (!result) continue;
+      batchesDone++;
+      for (const [tid, stats] of Object.entries(result.perTopic)) {
+        const prev = totals[tid] ?? { matched: 0, afterDedup: 0, accumulatorSize: 0 };
+        totals[tid] = {
+          matched: prev.matched + stats.matched,
+          afterDedup: prev.afterDedup + stats.afterDedup,
+          // Accumulator size is post-merge — we want the LATEST seen, not summed.
+          accumulatorSize: stats.accumulatorSize,
+        };
       }
     } catch (err) {
-      const fetchMs = Date.now() - fetchStart;
-      result.failed++;
-      result.perTopic.push({ id: topic.id, outcome: 'failed', elapsedMs: fetchMs });
-      console.warn(`[intel-news:refresh] ${topic.id}: threw after ${fetchMs}ms — ${(err as Error).message}`);
+      console.warn(`[intel-news:refresh] batch ${url} threw: ${(err as Error).message}`);
     }
   }
 
-  result.durationMs = Date.now() - runStartMs;
-  console.log(
-    `[intel-news:refresh] done in ${result.durationMs}ms · ` +
-    `${result.succeeded} ok, ${result.failed} failed, ${result.skipped} skipped`,
-  );
-  return result;
+  const durationMs = Date.now() - start;
+  console.log(`[intel-news:refresh] done in ${durationMs}ms · ${batchesDone}/${urls.length} batches`);
+  return { batches: batchesDone, durationMs, totals };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -525,8 +662,15 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
+  // Parse ?backfill=N — clamps to [1, 96] (24 h max).
+  const urlObj = new URL(req.url ?? '/', 'http://localhost');
+  const backfillRaw = urlObj.searchParams.get('backfill');
+  const backfill = backfillRaw
+    ? Math.max(1, Math.min(96, parseInt(backfillRaw, 10) || 1))
+    : 1;
+
   try {
-    const result = await refreshAllTopics();
+    const result = await refreshIntelNews(backfill);
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify(result));
