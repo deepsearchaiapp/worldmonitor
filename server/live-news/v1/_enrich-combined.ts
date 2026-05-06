@@ -20,24 +20,52 @@
  * about that news, never work on it again."
  */
 
+import { createHash } from 'crypto';
 import { callGemini, callClaude } from '../../_shared/llm';
-import { getCachedJsonBatch, setCachedJson } from '../../_shared/redis';
+import { getCachedJson, getCachedJsonBatch, setCachedJson } from '../../_shared/redis';
 import type { LiveNewsItem } from './_normalize';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Cache prefix kept at v1 deliberately — bumping it would invalidate every
-// cached enrichment in production and force a re-enrichment storm that
-// degrades the old iOS app for ~1-2 min after deploy. The new `isConflict`
-// field is additive: old cache entries decode it as `false` (see attach
-// step below), new fresh enrichments include it. Items naturally migrate
-// to having the flag as they're re-enriched on their normal TTL cycle.
+// Cache prefix kept at v1 — instead of bumping the version (which would
+// invalidate every cached enrichment and cause a re-enrichment storm), we
+// detect "stale short-summary" entries via length check at read time and
+// re-enrich them gradually as items come back through the pipeline. New
+// `region` field is similarly additive: old entries decode it as `null`
+// and we re-derive from country when populating.
 const CACHE_PREFIX = 'live-news:enrichment:v1:';
 const ENRICHMENT_TTL_S = 30 * 24 * 60 * 60; // 30 days
 const ENRICH_BATCH_SIZE = 8;
 const MAX_ENRICH_PER_REQUEST = 40;
+
+// Minimum summary length to consider a cache entry valid. Items below this
+// were enriched under the older "1-3 paragraph" prompt — they get treated
+// as cache-misses and re-enriched against the new "AT LEAST 3 paragraph"
+// prompt. Existing valid entries (already 3 paragraphs) pass through.
+const SUMMARY_MIN_LEN = 600;
+const SUMMARY_MAX_LEN = 4_000;
+
+// Shared enrichment cache — keyed by sha256(link). Same key format as
+// intel-news's enrich.ts, so a URL enriched by either pipeline benefits
+// the other (RSS feeds and GDELT often surface the same article).
+// Version v2 matches intel-news; bumping is coordinated across pipelines.
+const SHARED_CACHE_KEY = (link: string): string =>
+  `enrichment-cache:v2:${createHash('sha256').update(link).digest('hex')}`;
+const SHARED_CACHE_TTL_S = 30 * 24 * 60 * 60;
+
+/** Shape of values stored in the shared cross-pipeline cache. Same as the
+ *  intel-news EnrichmentPayload — both pipelines must read/write this
+ *  shape for cross-pipeline reuse to work. */
+interface SharedEnrichmentPayload {
+  summary: string;
+  region: string;
+  country?: string;
+  locationName?: string;
+  lat?: number;
+  lng?: number;
+}
 
 /** Sentinel — both LLMs failed; never re-attempt within 30 days. */
 const UNENRICHABLE_MARKER = '__WM_LIVE_NEWS_UNENRICHABLE__';
@@ -62,6 +90,76 @@ interface CombinedEnrichment {
    *      same enrichment call, so no separate location step is needed).
    */
   isConflict: boolean;
+  /**
+   * 8-region taxonomy code (`"us"`, `"middle_east"`, etc.) derived from
+   * `country` via `regionForCountry()`. iOS prefers this over the country-
+   * code fallback for chip-filtering. Optional for backwards compat with
+   * cache entries written before this field was added.
+   */
+  region?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Country → 8-region mapping. Mirrors the iOS FeedRegion taxonomy so the
+// region rawValue we ship matches what iOS expects in `FeedRegion(rawValue:)`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LATIN_AMERICA_SET = new Set<string>([
+  // Mexico + Central America
+  'MX', 'GT', 'BZ', 'SV', 'HN', 'NI', 'CR', 'PA',
+  // Caribbean
+  'CU', 'DO', 'HT', 'JM', 'PR', 'TT', 'BS', 'BB',
+  // South America
+  'BR', 'AR', 'CL', 'PE', 'CO', 'VE', 'EC', 'BO', 'PY', 'UY', 'GY', 'SR',
+]);
+
+const MIDDLE_EAST_SET = new Set<string>([
+  'TR', 'IL', 'PS', 'JO', 'LB', 'SY', 'IQ', 'IR',
+  'SA', 'AE', 'QA', 'BH', 'KW', 'OM', 'YE', 'EG',
+]);
+
+const EUROPE_SET = new Set<string>([
+  'GB', 'IE', 'FR', 'DE', 'IT', 'ES', 'PT', 'NL', 'BE', 'LU',
+  'AT', 'CH', 'DK', 'SE', 'NO', 'FI', 'IS', 'EE', 'LV', 'LT',
+  'PL', 'CZ', 'SK', 'HU', 'RO', 'BG', 'GR', 'CY', 'MT', 'HR',
+  'SI', 'RS', 'BA', 'AL', 'MK', 'ME', 'MD', 'UA', 'BY', 'RU',
+  'GE', 'AM', 'AZ',
+]);
+
+const ASIA_SET = new Set<string>([
+  'CN', 'JP', 'KR', 'KP', 'TW', 'HK', 'MO',
+  'IN', 'PK', 'BD', 'LK', 'NP', 'BT', 'MV',
+  'MM', 'TH', 'VN', 'LA', 'KH', 'MY', 'SG', 'ID', 'PH', 'BN', 'TL',
+  'MN', 'KZ', 'UZ', 'KG', 'TJ', 'TM', 'AF',
+]);
+
+const AFRICA_SET = new Set<string>([
+  'DZ', 'TN', 'LY', 'MA', 'EH', 'SD', 'SS',
+  'NG', 'GH', 'CI', 'SN', 'ML', 'BF', 'NE', 'TD', 'CM',
+  'ET', 'ER', 'DJ', 'SO', 'KE', 'UG', 'TZ', 'RW', 'BI',
+  'CG', 'CD', 'AO', 'ZM', 'ZW', 'MW', 'MZ', 'BW', 'NA',
+  'ZA', 'LS', 'SZ', 'MG', 'MU',
+]);
+
+const OCEANIA_SET = new Set<string>([
+  'AU', 'NZ', 'PG', 'FJ', 'SB', 'VU', 'NC', 'PF', 'WS', 'TO', 'KI', 'FM', 'MH', 'PW', 'NR', 'TV',
+]);
+
+/** Maps an ISO 3166-1 alpha-2 country code to the 8-region taxonomy
+ *  rawValue iOS expects. Returns `null` for codes that don't map (e.g.
+ *  "ZZ" global, "EU" generic, Antarctica) — iOS treats nil region the
+ *  same as "no region tag" and the item only surfaces under ALL. */
+function regionForCountry(country: string): string | null {
+  const code = country.trim().toUpperCase();
+  if (code === 'US') return 'us';
+  if (code === 'CA') return 'canada';
+  if (LATIN_AMERICA_SET.has(code)) return 'latin_america';
+  if (MIDDLE_EAST_SET.has(code))   return 'middle_east';
+  if (EUROPE_SET.has(code))        return 'europe';
+  if (AFRICA_SET.has(code))        return 'africa';
+  if (ASIA_SET.has(code))          return 'asia';
+  if (OCEANIA_SET.has(code))       return 'oceania';
+  return null;
 }
 
 interface LlmResultEntry {
@@ -150,11 +248,12 @@ function toFiniteNumber(v: unknown): number | null {
  * triggers the Claude fallback for this specific item.
  */
 function validateEntry(entry: LlmResultEntry): CombinedEnrichment | null {
-  // Summary — bumped to allow up to 3 paragraphs (~2500 chars). Lower bound
-  // dropped to 30 so genuinely-thin source material (one-sentence wires) can
-  // still produce a valid short summary instead of forcing an LLM retry.
+  // Summary — must be 3 paragraphs minimum per the new prompt. Bumped from
+  // 30/2500 → 600/4000 to enforce. Items below the floor either had a thin
+  // source the LLM couldn't expand, or a bad LLM response — either way
+  // they bounce to Claude fallback for retry.
   const summary = typeof entry.summary === 'string' ? entry.summary.trim() : '';
-  if (summary.length < 30 || summary.length > 2500) return null;
+  if (summary.length < SUMMARY_MIN_LEN || summary.length > SUMMARY_MAX_LEN) return null;
 
   // Location coordinates
   const lat = toFiniteNumber(entry.lat);
@@ -186,7 +285,11 @@ function validateEntry(entry: LlmResultEntry): CombinedEnrichment | null {
     return false; // missing or null → default to non-conflict
   })();
 
-  return { summary, latitude: lat, longitude: lng, locationName, country, confidence, isConflict };
+  // Region — derived server-side from the validated country code. iOS
+  // prefers this rawValue over the country-code fallback when filtering.
+  const region = regionForCountry(country) ?? undefined;
+
+  return { summary, latitude: lat, longitude: lng, locationName, country, confidence, isConflict, region };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,12 +302,12 @@ const SYSTEM_PROMPT = `You are a news enrichment service. For each news item you
 
 Plain English. The reader should grasp the story at a glance, with low effort, and walk away with real context.
 
-Length: 1 to 3 paragraphs. Match the depth of the source — thin wire stories get 1 short paragraph; substantial stories get 2 to 3 paragraphs. Do not pad. Maximum ~400 words total.
+Length: AT LEAST 3 paragraphs. 200-400 words total. Each paragraph 2-4 sentences. Do not produce a single-paragraph summary even if the source is thin — use neutral background context (drawn from common knowledge about the named entities) to round out the story to 3 paragraphs.
 
 Structure:
 - Paragraph 1: the key event (who, what, where, when) and the substance — how it happened, who is affected, what numbers / parties / timeline matter.
-- Paragraph 2 (when warranted): the broader context — why this matters, the relevant background that makes the event legible.
-- Paragraph 3 (when warranted): consequences or what's next — only if the source supports it.
+- Paragraph 2: the broader context — why this matters, the relevant background that makes the event legible. Always include this paragraph.
+- Paragraph 3: consequences, reactions, or what's next. Always include this paragraph.
 
 Use blank lines (\\n\\n) between paragraphs in the output string.
 
@@ -322,48 +425,102 @@ interface CachedEnrichment extends CombinedEnrichment {} // alias for clarity
 /**
  * Reads cache for every item; mutates each item with cached enrichment
  * fields if available. Returns the items still missing enrichment.
+ *
+ * Cache lookup order (short-circuits on first hit):
+ *   1. **Shared cross-pipeline cache** (`enrichment-cache:v2:<sha256(link)>`)
+ *      — populated by intel-news enrichment. If hit, we can skip the LLM
+ *      call entirely and reuse the work the other pipeline already paid for.
+ *      The shared cache lacks `isConflict` and `confidence`, so we conservatively
+ *      default isConflict to false (the live-news pipeline classifies
+ *      conflict, intel-news doesn't, so a shared-cache hit can't tell us
+ *      definitively — items the user wants in CONFLICT will get re-enriched
+ *      next pass via the live-news cache miss path).
+ *   2. **Live-news titleHash cache** (`live-news:enrichment:v1:<titleHash>`)
+ *      — populated by live-news's own enrichment runs. Has the full shape
+ *      including isConflict.
+ *
+ * Items below `SUMMARY_MIN_LEN` are treated as cache-miss to force re-enrich
+ * under the new "AT LEAST 3 paragraphs" prompt — gradual migration without
+ * a cache-version bump that would invalidate everything at once.
  */
 export async function attachCachedEnrichment(items: LiveNewsItem[]): Promise<LiveNewsItem[]> {
   if (items.length === 0) return [];
 
-  const keys = items.map((it) => `${CACHE_PREFIX}${it.titleHash}`);
-  const cache = await getCachedJsonBatch(keys);
+  // Issue both cache reads in parallel.
+  const ownKeys = items.map((it) => `${CACHE_PREFIX}${it.titleHash}`);
+  const sharedKeys = items.map((it) => SHARED_CACHE_KEY(it.link));
+
+  const [ownCache, sharedHits] = await Promise.all([
+    getCachedJsonBatch(ownKeys),
+    Promise.all(sharedKeys.map((k) => getCachedJson(k) as Promise<SharedEnrichmentPayload | null>)),
+  ]);
 
   const missing: LiveNewsItem[] = [];
-  let attached = 0;
+  let attachedShared = 0;
+  let attachedOwn = 0;
+  let staleRefresh = 0;
   let negativeHits = 0;
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!;
-    const cached = cache.get(keys[i]!);
+
+    // 1. Try shared cross-pipeline cache.
+    const sharedHit = sharedHits[i];
+    if (sharedHit && typeof sharedHit.summary === 'string' &&
+        sharedHit.summary.length >= SUMMARY_MIN_LEN && sharedHit.region) {
+      item.summary = sharedHit.summary;
+      if (typeof sharedHit.lat === 'number' && typeof sharedHit.lng === 'number') {
+        item.location = { latitude: sharedHit.lat, longitude: sharedHit.lng };
+      }
+      if (sharedHit.locationName) item.locationName = sharedHit.locationName;
+      if (sharedHit.country) item.country = sharedHit.country;
+      item.region = sharedHit.region;
+      // Shared cache doesn't carry isConflict — leave existing value or
+      // default to false. Items that should be in CONFLICT chip will get
+      // their isConflict bit set when live-news re-enriches them naturally.
+      if (typeof item.isConflict !== 'boolean') item.isConflict = false;
+      attachedShared++;
+      continue;
+    }
+
+    // 2. Fall through to live-news titleHash cache.
+    const cached = ownCache.get(ownKeys[i]!);
     if (cached === undefined) {
       missing.push(item);
       continue;
     }
     if (cached === UNENRICHABLE_MARKER) {
-      // Both LLMs declined this item before — never retry.
       negativeHits++;
       continue;
     }
     const e = cached as CachedEnrichment;
     if (e && typeof e.summary === 'string' && typeof e.latitude === 'number') {
+      // Stale-summary check — old prompt produced 1-2 paragraph summaries
+      // (length < 600); treat those as cache-miss so they re-enrich into
+      // the new format.
+      if (e.summary.length < SUMMARY_MIN_LEN) {
+        missing.push(item);
+        staleRefresh++;
+        continue;
+      }
       item.summary = e.summary;
       item.location = { latitude: e.latitude, longitude: e.longitude };
       item.locationName = e.locationName;
       item.country = e.country;
       item.confidence = e.confidence;
-      // isConflict is new in cache v2 — defaults to false if missing,
-      // not null, because cached entries that pre-date the field came
-      // from a prompt that didn't classify (so no info, treat as non-conflict).
       item.isConflict = typeof e.isConflict === 'boolean' ? e.isConflict : false;
-      attached++;
+      // Region — prefer cached region (newly added field), fall back to
+      // deriving from country for legacy cache entries.
+      item.region = e.region ?? regionForCountry(e.country) ?? undefined;
+      attachedOwn++;
     }
   }
 
   console.log(
     `[live-news:enrich] attachCachedEnrichment: ${items.length} items, ` +
-    `${attached} attached, ${negativeHits} negative, ${missing.length} missing. ` +
-    `cache.size=${cache.size}`,
+    `${attachedShared} from shared cache, ${attachedOwn} from own cache, ` +
+    `${staleRefresh} stale (forced re-enrich), ` +
+    `${negativeHits} negative, ${missing.length} missing.`,
   );
 
   return missing;
@@ -463,19 +620,39 @@ async function enrichBatch(batch: LiveNewsItem[]): Promise<void> {
     claudeResults = await callClaudeFallback(failedItems);
   }
 
-  // Write results to Redis
+  // Write results to Redis. Each successful enrichment writes to TWO
+  // caches:
+  //   • own (live-news:enrichment:v1:<titleHash>) — full live-news shape
+  //     with isConflict + confidence; consumed by attachCachedEnrichment
+  //     on the next live-news pass.
+  //   • shared (enrichment-cache:v2:<sha256(link)>) — minimal payload
+  //     consumed by intel-news's enrich.ts when GDELT picks up the same
+  //     URL. Cross-pipeline cache hit eliminates the duplicate LLM call.
   let written = 0;
   let unenrichable = 0;
 
   await Promise.all(batch.map(async (item) => {
     const result = geminiResults.get(item.titleHash) ?? claudeResults.get(item.titleHash);
-    const key = `${CACHE_PREFIX}${item.titleHash}`;
+    const ownKey = `${CACHE_PREFIX}${item.titleHash}`;
     if (result) {
-      await setCachedJson(key, result, ENRICHMENT_TTL_S);
+      const sharedPayload: SharedEnrichmentPayload = {
+        summary: result.summary,
+        region: result.region ?? regionForCountry(result.country) ?? 'us',
+        country: result.country,
+        locationName: result.locationName,
+        lat: result.latitude,
+        lng: result.longitude,
+      };
+      await Promise.all([
+        setCachedJson(ownKey, result, ENRICHMENT_TTL_S),
+        setCachedJson(SHARED_CACHE_KEY(item.link), sharedPayload, SHARED_CACHE_TTL_S),
+      ]);
       written++;
     } else {
-      // Both providers failed — permanent skip
-      await setCachedJson(key, UNENRICHABLE_MARKER, ENRICHMENT_TTL_S);
+      // Both providers failed — permanent skip on the OWN cache only.
+      // Don't poison the shared cache with this; intel-news might still
+      // succeed with a different prompt structure for the same article.
+      await setCachedJson(ownKey, UNENRICHABLE_MARKER, ENRICHMENT_TTL_S);
       unenrichable++;
     }
   }));

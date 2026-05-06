@@ -33,6 +33,13 @@ export interface LiveNewsItem {
   confidence: number | null;
   /** Optional ISO country code from the LLM. Useful for client-side filtering. */
   country: string | null;
+  /**
+   * 8-region taxonomy code (`"us"`, `"middle_east"`, etc.) derived from
+   * `country` during enrichment. Optional — items still in the legacy
+   * country-only enrichment path won't have it; iOS falls back to the
+   * country-code → region mapping in that case.
+   */
+  region?: string;
   /** Neutral 2–3 sentence summary written by the paraphrase LLM. Null when
    *  enrichment hasn't run yet, or when the LLM declined to summarize
    *  (sparse RSS description, paywalled story, etc.). iOS falls back to
