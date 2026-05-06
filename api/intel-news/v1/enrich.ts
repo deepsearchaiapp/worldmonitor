@@ -323,20 +323,46 @@ async function runEnrichment(): Promise<EnrichResult> {
 
   // Build a flat queue of items to enrich. Tuple (topicId, index in array)
   // so we can mutate the original array when the LLM returns.
+  //
+  // Queue ordering is ROUND-ROBIN across topics, not topic-by-topic. With
+  // a single 280 s budget per run and a backlog of ~2 800 items at first
+  // sync, a topic-sequential queue would spend the entire run inside the
+  // first topic (e.g. all 389 conflict items consume the whole budget,
+  // leaving 9 topics with 0 progress). Users would see chips fill in one
+  // at a time over many runs. Round-robin guarantees every topic makes
+  // proportional progress on every run.
   interface QueueEntry { topicId: string; idx: number; }
   const queue: QueueEntry[] = [];
   const perTopic: Record<string, PerTopicStats> = {};
+
+  // Per-topic lists of indices that need enrichment, in original order.
+  const perTopicQueues: Array<{ topicId: string; indices: number[] }> = [];
   for (const tid of TOPIC_IDS) {
     perTopic[tid] = { toEnrich: 0, succeeded: 0, failed: 0, bodyFetched: 0 };
     const items = topicData[tid] ?? [];
+    const indices: number[] = [];
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (!item) continue;
-      if (!item.summary) {
-        queue.push({ topicId: tid, idx: i });
-        perTopic[tid].toEnrich++;
+      if (!item.summary) indices.push(i);
+    }
+    perTopic[tid].toEnrich = indices.length;
+    if (indices.length > 0) perTopicQueues.push({ topicId: tid, indices });
+  }
+
+  // Interleave: take one from each non-empty topic in turn until all are
+  // drained. Order within a topic is preserved (newest items first since
+  // accumulators are sorted by publishedAt desc), so the most recent
+  // unsummarized item from each topic is always processed first.
+  let cursor2 = 0;
+  while (perTopicQueues.some((q) => cursor2 < q.indices.length)) {
+    for (const q of perTopicQueues) {
+      if (cursor2 < q.indices.length) {
+        const idx = q.indices[cursor2];
+        if (idx !== undefined) queue.push({ topicId: q.topicId, idx });
       }
     }
+    cursor2++;
   }
 
   const queued = queue.length;
