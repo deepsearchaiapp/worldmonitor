@@ -726,14 +726,44 @@ async function chainIntoEnrich(): Promise<unknown> {
   console.log(`[intel-news:refresh] chaining into enrich at ${url}`);
   const t0 = Date.now();
   try {
+    // Two layers of auth on this internal call:
+    //
+    //   1. `Authorization: Bearer <CRON_SECRET>` — our own handler-level
+    //      check inside enrich.ts to ensure only refresh / our own crons
+    //      can trigger enrichment.
+    //
+    //   2. `x-vercel-protection-bypass: <VERCEL_AUTOMATION_BYPASS_SECRET>`
+    //      — Vercel's platform-level Deployment Protection bypass token.
+    //      When Deployment Protection is on (Pro plan default), Vercel
+    //      blocks any HTTP request that doesn't carry either an active
+    //      Vercel auth session or this bypass token. Function-to-function
+    //      HTTP calls have neither by default, so without this header
+    //      Vercel returns its own generic 403 ({"error":"Forbidden"})
+    //      before the request ever reaches our handler — that's the
+    //      symptom we hit before adding this layer.
+    //
+    // The bypass secret is provisioned in Vercel: Project Settings →
+    // Deployment Protection → "Protection Bypass for Automation" → Add.
+    // Vercel auto-injects it as VERCEL_AUTOMATION_BYPASS_SECRET in env.
+    const bypassToken = process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? '';
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${cronSecret}`,
+    };
+    if (bypassToken) {
+      headers['x-vercel-protection-bypass'] = bypassToken;
+    }
+
     const resp = await fetch(url, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${cronSecret}` },
+      headers,
       signal: AbortSignal.timeout(285_000),
     });
     if (!resp.ok) {
       const body = await resp.text().catch(() => '');
-      console.warn(`[intel-news:refresh] enrich HTTP ${resp.status}: ${body.slice(0, 200)}`);
+      const hint = (resp.status === 401 || resp.status === 403) && !bypassToken
+        ? ' · (hint: VERCEL_AUTOMATION_BYPASS_SECRET unset — see Vercel deployment protection settings)'
+        : '';
+      console.warn(`[intel-news:refresh] enrich HTTP ${resp.status}: ${body.slice(0, 200)}${hint}`);
       return { error: `http-${resp.status}` };
     }
     const data = await resp.json().catch(() => null);
