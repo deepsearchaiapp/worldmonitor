@@ -53,7 +53,17 @@ const ACCUMULATOR_TTL_S = 7 * 24 * 60 * 60;
 
 const ARTICLE_FETCH_TIMEOUT_MS = 5_000;
 const LLM_TIMEOUT_MS = 20_000;
-const CONCURRENCY = 5;
+// Concurrency picked to roughly maximize throughput without overloading
+// downstream rate limits:
+//   • Gemini Flash Lite paid tier: thousands of requests/min — at 20
+//     concurrent × ~3-4 s avg = ~5-7 RPS = ~350 RPM, still well below limit
+//   • Article fetches: spread across many distinct domains, so per-domain
+//     rate limits don't apply at this scale
+//   • Vercel function memory: 20 in-flight × ~10 KB = ~200 KB — negligible
+//     against the 1.7 GB ceiling
+// At 20 we can drain ~1 400 items per run; the initial 2 800-item backlog
+// clears in ~2 runs (~30 min) instead of ~10 runs (~2.5 h) at the original 5.
+const CONCURRENCY = 20;
 
 // Soft ceiling — leaves ~20 s for the final Redis writes and JSON response
 // under the 300 s `maxDuration`. Past this point new tasks are skipped
