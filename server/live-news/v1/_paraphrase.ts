@@ -218,6 +218,7 @@ async function paraphraseBatch(batch: LiveNewsItem[]): Promise<void> {
     // Gemini's costs are low enough that splitting billing matters less).
     apiKeyEnv: 'GEMINI_API_KEY_PARAPHRASE',
     jsonMode: true,
+    caller: 'live-news:paraphrase', // TEMP (Helicone)
   });
 
   if (!result) {

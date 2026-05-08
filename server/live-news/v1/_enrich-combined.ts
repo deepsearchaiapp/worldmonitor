@@ -559,6 +559,7 @@ async function callGeminiBatch(batch: LiveNewsItem[]): Promise<Map<string, Combi
     temperature: 0.2,
     jsonMode: true,
     apiKeyEnv: 'GEMINI_API_KEY_ENRICHMENT', // optional separate billing key
+    caller: 'live-news:enrich-combined', // TEMP (Helicone)
   });
 
   if (!result) return new Map();
@@ -594,6 +595,7 @@ async function callClaudeFallback(items: LiveNewsItem[]): Promise<Map<string, Co
     maxTokens: 8000,
     temperature: 0.2,
     apiKeyEnv: 'ANTHROPIC_API_KEY_PARAPHRASE',
+    caller: 'live-news:enrich-combined-fallback', // TEMP (Helicone)
   });
 
   if (!result) {

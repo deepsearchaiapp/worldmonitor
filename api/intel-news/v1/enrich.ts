@@ -258,17 +258,37 @@ async function fetchArticleBody(url: string): Promise<string | null> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LLM calls — Gemini Flash primary with JSON mode, Claude Haiku fallback.
+//
+// TEMP (Helicone): hardcoded proxy routing for the half-day cost-debug
+// session. This file uses its own fetch (rather than _shared/llm.ts) because
+// it runs in the Node.js runtime and has different module constraints. To
+// revert: delete the HELICONE_* constants and the URL/header swaps below;
+// rotate the key in helicone.ai/developer.
 // ─────────────────────────────────────────────────────────────────────────────
+
+const HELICONE_API_KEY = 'sk-helicone-ztvsi6a-azoevlq-rob3yty-5aj2cca';
+const HELICONE_ENABLED = HELICONE_API_KEY.length > 0;
+const HELICONE_CALLER = 'intel-news:enrich-cron';
 
 async function callGeminiJSON(system: string, prompt: string): Promise<string | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   const model = 'gemini-2.5-flash-lite';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
+  const apiBase = HELICONE_ENABLED
+    ? 'https://gateway.helicone.ai/v1beta'
+    : 'https://generativelanguage.googleapis.com/v1beta';
+  const url = `${apiBase}/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
   try {
     const resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(HELICONE_ENABLED ? {
+          'Helicone-Auth': `Bearer ${HELICONE_API_KEY}`,
+          'Helicone-Target-URL': 'https://generativelanguage.googleapis.com',
+          'Helicone-Property-Caller': HELICONE_CALLER,
+        } : {}),
+      },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         system_instruction: { parts: [{ text: system }] },
@@ -297,13 +317,20 @@ async function callGeminiJSON(system: string, prompt: string): Promise<string | 
 async function callClaudeJSON(system: string, prompt: string): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
+  const url = HELICONE_ENABLED
+    ? 'https://anthropic.helicone.ai/v1/messages'
+    : 'https://api.anthropic.com/v1/messages';
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    const resp = await fetch(url, {
       method: 'POST',
       headers: {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
+        ...(HELICONE_ENABLED ? {
+          'Helicone-Auth': `Bearer ${HELICONE_API_KEY}`,
+          'Helicone-Property-Caller': HELICONE_CALLER,
+        } : {}),
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5',

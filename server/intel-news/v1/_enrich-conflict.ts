@@ -188,6 +188,7 @@ async function callGeminiBatch(inputs: PromptInput[]): Promise<Map<string, Confl
     temperature: 0.2,
     jsonMode: true,
     apiKeyEnv: 'GEMINI_API_KEY_ENRICHMENT',
+    caller: 'intel-news:enrich-conflict', // TEMP (Helicone)
   });
   if (!result) return new Map();
 
@@ -219,6 +220,7 @@ async function callClaudeFallback(inputs: PromptInput[]): Promise<Map<string, Co
     maxTokens: 4000,
     temperature: 0.2,
     apiKeyEnv: 'ANTHROPIC_API_KEY_PARAPHRASE',
+    caller: 'intel-news:enrich-conflict-fallback', // TEMP (Helicone)
   });
   if (!result) return new Map();
 

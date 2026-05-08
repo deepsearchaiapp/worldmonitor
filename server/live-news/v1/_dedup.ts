@@ -468,6 +468,7 @@ export async function classifyUnknownsAsync(
     // Falls back to GEMINI_API_KEY when the dedicated key is unset.
     apiKeyEnv: 'GEMINI_API_KEY_PARAPHRASE',
     jsonMode: true,
+    caller: 'live-news:dedup', // TEMP (Helicone)
   });
 
   if (!result) {

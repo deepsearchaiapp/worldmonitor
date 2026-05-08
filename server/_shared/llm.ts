@@ -1,5 +1,32 @@
 import { CHROME_UA } from './constants';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TEMP: Helicone observability — debug-only, remove before merge.
+//
+// Hardcoded key for a half-day cost-debug session. Routes Anthropic / Gemini /
+// Groq / OpenRouter calls through Helicone's legacy proxy subdomains so we
+// can see prompts, responses, token counts, and per-caller cost in their UI.
+//
+// Revert plan when done:
+//   1. Delete this whole block + the helicone-specific URL/header logic below.
+//   2. Drop the `caller?: string` field from the option types.
+//   3. Drop the `caller:` argument at every call site.
+//   4. Rotate this key in helicone.ai/developer (it WILL be in git history).
+// ─────────────────────────────────────────────────────────────────────────────
+const HELICONE_API_KEY = 'sk-helicone-ztvsi6a-azoevlq-rob3yty-5aj2cca';
+const HELICONE_ENABLED = HELICONE_API_KEY.length > 0;
+
+/** Returns Helicone-Auth + optional Helicone-Property-Caller headers, or {}
+ *  if Helicone is disabled. Spread into the existing `headers:` object. */
+function heliconeHeaders(caller?: string): Record<string, string> {
+  if (!HELICONE_ENABLED) return {};
+  const h: Record<string, string> = {
+    'Helicone-Auth': `Bearer ${HELICONE_API_KEY}`,
+  };
+  if (caller) h['Helicone-Property-Caller'] = caller;
+  return h;
+}
+
 export interface ProviderCredentials {
   apiUrl: string;
   model: string;
@@ -129,6 +156,14 @@ export interface ClaudeCallOptions {
    * so a missing config doesn't silently kill the feature.
    */
   apiKeyEnv?: string;
+  /**
+   * TEMP (Helicone debug): tag identifying which feature/cron is making this
+   * call. Surfaced in the Helicone dashboard as the `Caller` property so we
+   * can group spend by call site. Examples: `live-news:enrich-combined`,
+   * `intel-news:enrich-conflict`. Optional — calls without it just show as
+   * "(none)" in the dashboard. Remove with the rest of the Helicone block.
+   */
+  caller?: string;
 }
 
 export interface ClaudeCallResult {
@@ -172,13 +207,21 @@ export async function callClaude(opts: ClaudeCallOptions): Promise<ClaudeCallRes
     timeoutMs = 25_000,
   } = opts;
 
+  // TEMP (Helicone): swap to the Anthropic proxy subdomain when enabled.
+  // Helicone forwards the request unchanged to api.anthropic.com after
+  // logging it. Reverts to the direct URL when HELICONE_ENABLED is false.
+  const requestUrl = HELICONE_ENABLED
+    ? 'https://anthropic.helicone.ai/v1/messages'
+    : ANTHROPIC_API_URL;
+
   try {
-    const resp = await fetch(ANTHROPIC_API_URL, {
+    const resp = await fetch(requestUrl, {
       method: 'POST',
       headers: {
         'x-api-key': apiKey,
         'anthropic-version': ANTHROPIC_VERSION,
         'content-type': 'application/json',
+        ...heliconeHeaders(opts.caller),
       },
       body: JSON.stringify({
         model,
@@ -276,6 +319,9 @@ export interface GeminiCallOptions {
    * "wrapped in code fences" failure mode common with free-form prompts.
    */
   jsonMode?: boolean;
+  /** TEMP (Helicone debug): tag identifying which feature/cron is making
+   *  this call. See identical field on ClaudeCallOptions for details. */
+  caller?: string;
 }
 
 export interface GeminiCallResult {
@@ -310,7 +356,14 @@ export async function callGemini(opts: GeminiCallOptions): Promise<GeminiCallRes
     jsonMode = false,
   } = opts;
 
-  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
+  // TEMP (Helicone): Gemini's proxy lives at gateway.helicone.ai/v1beta and
+  // requires an extra `Helicone-Target-URL` header so the gateway knows which
+  // upstream to forward to. The user's Gemini key still goes in the `?key=`
+  // query param exactly as before.
+  const apiBase = HELICONE_ENABLED
+    ? 'https://gateway.helicone.ai/v1beta'
+    : GEMINI_API_BASE;
+  const url = `${apiBase}/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
 
   const generationConfig: Record<string, unknown> = {
     temperature,
@@ -333,7 +386,13 @@ export async function callGemini(opts: GeminiCallOptions): Promise<GeminiCallRes
   try {
     const resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...heliconeHeaders(opts.caller),
+        ...(HELICONE_ENABLED
+          ? { 'Helicone-Target-URL': 'https://generativelanguage.googleapis.com' }
+          : {}),
+      },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -382,6 +441,9 @@ export interface LlmCallOptions {
   provider?: string;
   stripThinkingTags?: boolean;
   validate?: (content: string) => boolean;
+  /** TEMP (Helicone debug): tag identifying which feature is making this
+   *  call. See identical field on ClaudeCallOptions for details. */
+  caller?: string;
 }
 
 export interface LlmCallResult {
@@ -411,10 +473,26 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult | nul
       continue;
     }
 
+    // TEMP (Helicone): swap to the per-provider proxy subdomain when enabled.
+    // Ollama is local-only so it stays on the original URL even with Helicone
+    // on (the gateway can't reach localhost).
+    let requestUrl = creds.apiUrl;
+    let extraHeaders: Record<string, string> = {};
+    if (HELICONE_ENABLED) {
+      if (providerName === 'groq') {
+        requestUrl = 'https://groq.helicone.ai/openai/v1/chat/completions';
+        extraHeaders = heliconeHeaders(opts.caller);
+      } else if (providerName === 'openrouter') {
+        requestUrl = 'https://openrouter.helicone.ai/api/v1/chat/completions';
+        extraHeaders = heliconeHeaders(opts.caller);
+      }
+      // ollama: skip — local
+    }
+
     try {
-      const resp = await fetch(creds.apiUrl, {
+      const resp = await fetch(requestUrl, {
         method: 'POST',
-        headers: { ...creds.headers, 'User-Agent': CHROME_UA },
+        headers: { ...creds.headers, 'User-Agent': CHROME_UA, ...extraHeaders },
         body: JSON.stringify({
           ...creds.extraBody,
           model: creds.model,
