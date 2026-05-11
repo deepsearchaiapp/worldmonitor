@@ -36,6 +36,130 @@ function prefixKey(key: string): string {
   return `${cachedPrefix}${key}`;
 }
 
+// ── Value compression ─────────────────────────────────────────────────────
+//
+// Big JSON payloads (live-news digests, conflict-archive blobs, bootstrap
+// keys) dominate Upstash bandwidth. Each Redis GET pulls the full value
+// over the wire, so a 1 MB digest costs 1 MB of bandwidth per read — and
+// we read these every 30 s under polling load.
+//
+// We gzip-encode large values before writing and detect-and-decompress on
+// read. Typical JSON compresses ~4–6×; after base64 encoding (Upstash REST
+// stores strings, so binary needs base64) the net wire reduction is ~3–4×.
+//
+// Storage shape (envelope) — a JSON object with a sentinel key:
+//   { "__wmgz": 1, "d": "<base64-gzip>" }
+//
+// Why an envelope rather than a string prefix: lets us cleanly distinguish
+// from a user value that happens to start with the prefix string, and
+// makes the format self-describing if we ever add other compression
+// algorithms.
+//
+// Reads are ALWAYS compression-aware. Writes are gated by the
+// WM_REDIS_COMPRESSION env var so we can stage the rollout: deploy first
+// (no behavior change), flip the flag once code is everywhere, observe.
+// Rollback = unset the flag; existing compressed values keep working
+// because the reader handles both formats indefinitely.
+
+const COMPRESSION_THRESHOLD_BYTES = 1024;
+const COMPRESSION_ENVELOPE_KEY = '__wmgz';
+
+function isCompressionEnabled(): boolean {
+  return process.env.WM_REDIS_COMPRESSION === '1';
+}
+
+function isCompressedEnvelope(v: unknown): v is { __wmgz: number; d: string } {
+  return (
+    typeof v === 'object' && v !== null
+    && COMPRESSION_ENVELOPE_KEY in v
+    && typeof (v as { d?: unknown }).d === 'string'
+  );
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(
+      null,
+      Array.from(bytes.subarray(i, i + CHUNK)),
+    );
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+async function gzipString(input: string): Promise<Uint8Array> {
+  const stream = new Response(input).body!.pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function gunzipToString(input: Uint8Array): Promise<string> {
+  const stream = new Response(new Blob([input as BlobPart])).body!.pipeThrough(new DecompressionStream('gzip'));
+  return await new Response(stream).text();
+}
+
+/**
+ * Encode a value for storage. Returns the JSON-encoded body to send to Upstash.
+ * Compresses iff WM_REDIS_COMPRESSION=1 AND the serialized value exceeds the
+ * threshold — small values gain nothing from gzip after base64 overhead.
+ */
+async function encodeForStorage(value: unknown): Promise<string> {
+  const json = JSON.stringify(value);
+  if (!isCompressionEnabled() || json.length < COMPRESSION_THRESHOLD_BYTES) {
+    return json;
+  }
+  try {
+    const gz = await gzipString(json);
+    const b64 = bytesToBase64(gz);
+    return JSON.stringify({ [COMPRESSION_ENVELOPE_KEY]: 1, d: b64 });
+  } catch (err) {
+    // Compression failed — fall back to raw JSON. Don't drop the write.
+    console.warn('[redis] gzip encode failed, storing raw:', errMsg(err));
+    return json;
+  }
+}
+
+/**
+ * Decode a value read from Upstash. Handles three shapes:
+ *   1. Already-parsed object/array (Upstash dual-shape) — passed through,
+ *      unless it's a compressed envelope.
+ *   2. JSON string of an envelope — decompressed.
+ *   3. Plain JSON string — parsed as today.
+ *
+ * Returns null on failure (matches existing behavior — caller treats null
+ * as a cache miss and refetches).
+ */
+async function decodeFromStorage(raw: string | object): Promise<unknown | null> {
+  let parsed: unknown;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  } else {
+    parsed = raw;
+  }
+  if (isCompressedEnvelope(parsed)) {
+    try {
+      const bytes = base64ToBytes(parsed.d);
+      const inner = await gunzipToString(bytes);
+      return JSON.parse(inner);
+    } catch (err) {
+      console.warn('[redis] gzip decode failed:', errMsg(err));
+      return null;
+    }
+  }
+  return parsed;
+}
+
 export async function getCachedJson(key: string, raw = false): Promise<unknown | null> {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -51,23 +175,14 @@ export async function getCachedJson(key: string, raw = false): Promise<unknown |
       console.warn(`[redis] getCachedJson HTTP ${resp.status} for "${finalKey}":`, body.slice(0, 200));
       return null;
     }
-    // Same dual-shape handling as `getCachedJsonBatch`: Upstash sometimes
-    // returns the value as a string (needs JSON.parse), sometimes as an
-    // already-parsed object (when the value was stored via body-based
-    // POST and Upstash inferred its content type). Unconditional
-    // JSON.parse used to throw on the parsed-object path, silently
-    // returning null and producing infinite cache misses.
+    // Dual-shape handling: Upstash sometimes returns the value as a string
+    // (needs JSON.parse), sometimes as an already-parsed object (when the
+    // value was stored via body-based POST and Upstash inferred its content
+    // type). `decodeFromStorage` handles both, plus the compressed-envelope
+    // case introduced for bandwidth reduction.
     const data = (await resp.json()) as { result?: string | object | null };
     if (data.result === undefined || data.result === null) return null;
-    try {
-      return typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
-    } catch (err) {
-      const sample = typeof data.result === 'string'
-        ? data.result.slice(0, 120)
-        : JSON.stringify(data.result).slice(0, 120);
-      console.warn(`[redis] getCachedJson JSON.parse failed for "${finalKey}":`, sample, errMsg(err));
-      return null;
-    }
+    return await decodeFromStorage(data.result);
   } catch (err) {
     console.warn('[redis] getCachedJson failed:', errMsg(err));
     return null;
@@ -93,18 +208,19 @@ export async function setCachedJson(key: string, value: unknown, ttlSeconds: num
   // so the next time something like this fails, it's obvious in Vercel logs.
   const finalKey = prefixKey(key);
   try {
+    const body = await encodeForStorage(value);
     const resp = await fetch(`${url}/set/${encodeURIComponent(finalKey)}?EX=${ttlSeconds}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(value),
+      body,
       signal: AbortSignal.timeout(REDIS_SET_TIMEOUT_MS),
     });
     if (!resp.ok) {
-      const body = await resp.text().catch(() => '');
-      console.warn(`[redis] setCachedJson HTTP ${resp.status} for "${finalKey}" (value ~${JSON.stringify(value).length} chars):`, body.slice(0, 200));
+      const respBody = await resp.text().catch(() => '');
+      console.warn(`[redis] setCachedJson HTTP ${resp.status} for "${finalKey}" (body ~${body.length} chars):`, respBody.slice(0, 200));
     }
   } catch (err) {
     console.warn('[redis] setCachedJson failed:', errMsg(err));
@@ -167,28 +283,35 @@ export async function getCachedJsonBatch(keys: string[]): Promise<Map<string, un
     }
 
     const data = (await resp.json()) as Array<{ result?: string | object | null }>;
+
+    // Decode each result in parallel. `decodeFromStorage` handles both the
+    // dual-shape Upstash response and the compressed-envelope format, and
+    // returns null on parse/decompress failure.
+    const decoded = await Promise.all(
+      data.map((entry) => {
+        const raw = entry?.result;
+        if (raw === undefined || raw === null) return Promise.resolve(null);
+        return decodeFromStorage(raw);
+      }),
+    );
+
     let parsedOk = 0;
     let parsedFail = 0;
     for (let i = 0; i < keys.length; i++) {
       const raw = data[i]?.result;
       if (raw === undefined || raw === null) continue;
-      // Upstash REST may return the value either as a string (raw stored
-      // form, requiring JSON.parse) or as an already-parsed object/array
-      // (depending on whether the value was stored via raw POST body or
-      // via path-based encoding). Handle both for robustness.
-      try {
-        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        if (parsed !== NEG_SENTINEL) {
-          result.set(keys[i]!, parsed);
-          parsedOk++;
-        }
-      } catch (err) {
+      const parsed = decoded[i];
+      if (parsed === null) {
         parsedFail++;
         if (parsedFail <= 2) {
-          // Log only the first couple of malformed entries to avoid spam.
           const sample = typeof raw === 'string' ? raw.slice(0, 120) : JSON.stringify(raw).slice(0, 120);
-          console.warn(`[redis] getCachedJsonBatch JSON.parse failed for "${keys[i]}":`, sample);
+          console.warn(`[redis] getCachedJsonBatch decode failed for "${keys[i]}":`, sample);
         }
+        continue;
+      }
+      if (parsed !== NEG_SENTINEL) {
+        result.set(keys[i]!, parsed);
+        parsedOk++;
       }
     }
     if (parsedFail > 0) {
