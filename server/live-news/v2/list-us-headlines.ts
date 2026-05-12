@@ -175,7 +175,14 @@ export async function listUsHeadlinesV2(): Promise<ListUsHeadlinesV2Response> {
             }
             return { ...item, sources: allowedSources };
           })
-          .filter((item): item is NonNullable<typeof item> => item !== null),
+          .filter((item): item is NonNullable<typeof item> => item !== null)
+          // Scrub outlet identity from the wire response while leaving the
+          // cached digest and underlying enrichment caches untouched.
+          .map((item) => ({
+            ...item,
+            source: '',
+            sources: item.sources.map((s) => ({ ...s, source: '' })),
+          })),
       };
       lastGoodResponse = filtered;
       return filtered;

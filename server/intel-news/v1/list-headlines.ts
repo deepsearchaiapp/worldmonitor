@@ -175,5 +175,19 @@ export async function listIntelNews(): Promise<ListIntelNewsResponse> {
     30, // negative cache 30 s if every topic fails
   );
 
-  return cached ?? { topics: [], generatedAt: new Date().toISOString() };
+  if (!cached) return { topics: [], generatedAt: new Date().toISOString() };
+
+  // Scrub outlet identity from the wire response. Cache and per-topic
+  // accumulators keep the real `source` for internal use (dedup, archive).
+  return {
+    ...cached,
+    topics: cached.topics.map((bucket) => ({
+      ...bucket,
+      items: bucket.items.map((item) => ({
+        ...item,
+        source: '',
+        ...(item.sources ? { sources: item.sources.map((s) => ({ ...s, source: '' })) } : {}),
+      })),
+    })),
+  };
 }

@@ -80,5 +80,16 @@ export async function listConflictArchive(): Promise<ListConflictArchiveResponse
     },
   );
 
-  return cached ?? { items: [], generatedAt: new Date().toISOString() };
+  if (!cached) return { items: [], generatedAt: new Date().toISOString() };
+
+  // Scrub outlet identity from the wire response. Archive store and digest
+  // cache retain the real `source` for internal use.
+  return {
+    ...cached,
+    items: cached.items.map((item) => ({
+      ...item,
+      source: '',
+      sources: item.sources ? item.sources.map((s) => ({ ...s, source: '' })) : item.sources,
+    })),
+  };
 }
