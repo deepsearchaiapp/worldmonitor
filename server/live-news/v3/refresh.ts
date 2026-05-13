@@ -151,9 +151,12 @@ function mergeItems(existing: LiveNewsV3Item[], fresh: LiveNewsV3Item[]): LiveNe
       confidence: prev.confidence ?? next.confidence,
       country: prev.country ?? next.country,
       region: prev.region ?? next.region,
-      // Summary preference: keep an enriched one if it exists, otherwise
-      // take whatever the fresh fetch came with (often the API's own).
-      summary: prev.summary ?? next.summary,
+      // Summary always tracks the upstream licensed API — never preserve
+      // a prior value (which could be an old LLM-generated rewrite from
+      // before the license terms changed). If the API later stops shipping
+      // a summary for an article, we accept the regression rather than
+      // serve a non-licensed paraphrase.
+      summary: next.summary,
       isConflict: prev.isConflict ?? next.isConflict,
     });
   }

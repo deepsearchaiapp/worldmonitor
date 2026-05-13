@@ -118,7 +118,11 @@ function mergeArchive(
     byId.set(next.id, {
       ...next,
       // Preserve everything the enrichment cron has written.
-      summary: prev.summary ?? next.summary,
+      // EXCEPT `summary` — license terms only let us re-publish the
+      // upstream API's own summary, so we always take the latest
+      // fetched value and never preserve a prior (potentially LLM-
+      // generated) one.
+      summary: next.summary,
       location: prev.location ?? next.location,
       locationName: prev.locationName ?? next.locationName,
       country: prev.country ?? next.country,

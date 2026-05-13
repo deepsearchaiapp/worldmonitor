@@ -540,6 +540,115 @@ async function enrichOne(item: EnrichmentInput): Promise<EnrichmentPayload | nul
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Location-only enrichment — for worldnews-sourced items where our license
+// terms forbid generating a summary on top of the API's own. We never ask
+// the LLM for one in the first place, which also saves ~80% of the output
+// tokens per call.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface LocationOnlyPayload {
+  region: string;
+  /** True for armed-conflict / kinetic-event stories — drives the iOS
+   *  CONFLICT chip and the conflict-archive copy. Explicit field (not
+   *  inferred from "country exists") since this prompt always emits
+   *  country when it can geolocate, regardless of conflict status. */
+  isConflict: boolean;
+  country?: string;
+  locationName?: string;
+  lat?: number;
+  lng?: number;
+}
+
+const LOCATION_ONLY_CACHE_KEY = (link: string): string =>
+  `enrichment-loc:v1:${createHash('sha256').update(link).digest('hex')}`;
+const LOCATION_ONLY_CACHE_TTL_S = 30 * 24 * 60 * 60;
+
+const LOCATION_ONLY_SYSTEM_PROMPT = `You classify a news article. Return ONE JSON object with these fields:
+
+  - region: ONE of these exact strings — choose the world region the story is most associated with:
+      "us"             — United States
+      "canada"         — Canada
+      "latin_america"  — Mexico, Central + South America, Caribbean
+      "europe"         — UK, EU, Russia, Ukraine, Balkans, Caucasus
+      "middle_east"    — Turkey, Israel, Arab states, Iran
+      "africa"         — All African nations
+      "asia"           — East/South/Southeast Asia, Central Asia
+      "oceania"        — Australia, NZ, Pacific islands
+    If genuinely global / unattributable, pick the region of the most prominent named entity. Always set this field.
+
+  - isConflict: boolean. True ONLY if the story is about armed conflict, military operations, terrorist attacks, civil unrest, or any kinetic event with a clear geographic incident location. False for everything else (business, sports, politics, entertainment, weather, etc).
+
+  - country: ISO 3166-1 alpha-2 code of the primary country in the story. ONLY include when isConflict=true. OMIT for non-conflict stories.
+
+  - locationName: short human-readable place name shown as the row header in the feed UI — typically a city ("Tel Aviv", "Kharkiv"), a region/oblast ("Donetsk Oblast", "Sinai"), or a country if no narrower place is named ("Sudan"). Title Case. ONLY include when isConflict=true. OMIT otherwise.
+
+  - lat, lng: estimated coordinates (decimal degrees) of the incident. ONLY include when isConflict=true. When the article names a specific city, use that city's coordinates. Otherwise, use the capital city of "country". OMIT for non-conflict stories.
+
+DO NOT write a summary. DO NOT include any field besides those above. Return JSON ONLY. No prose, no markdown, no code fences.`;
+
+function parseLocationOnlyJSON(raw: string | null): LocationOnlyPayload | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch {
+    const stripped = raw.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+    try { parsed = JSON.parse(stripped); } catch { return null; }
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const obj = parsed as Record<string, unknown>;
+
+  const region = typeof obj.region === 'string' ? obj.region.trim().toLowerCase() : '';
+  if (!VALID_REGIONS.has(region)) return null;
+
+  const isConflict = obj.isConflict === true;
+  const result: LocationOnlyPayload = { region, isConflict };
+
+  if (typeof obj.country === 'string') {
+    const c = obj.country.trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(c)) result.country = c;
+  }
+
+  if (typeof obj.locationName === 'string') {
+    const ln = obj.locationName.trim();
+    if (ln.length > 0 && ln.length <= 100) result.locationName = ln;
+  }
+
+  const lat = typeof obj.lat === 'number' ? obj.lat : Number.NaN;
+  const lng = typeof obj.lng === 'number' ? obj.lng : Number.NaN;
+  if (Number.isFinite(lat) && Number.isFinite(lng)
+      && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+    result.lat = lat;
+    result.lng = lng;
+  }
+
+  return result;
+}
+
+async function enrichOneLocationOnly(item: EnrichmentInput): Promise<LocationOnlyPayload | null> {
+  // Separate cache namespace from the summary-bearing cache so the two
+  // payload shapes never cross over. A 30-day TTL matches the summary
+  // cache — location facts are about as stable as summaries.
+  const cacheKey = LOCATION_ONLY_CACHE_KEY(item.link);
+  const cached = await redisGet<LocationOnlyPayload>(cacheKey);
+  if (cached && cached.region && VALID_REGIONS.has(cached.region)) {
+    return cached;
+  }
+
+  const body = await fetchArticleBody(item.link);
+  const prompt = buildPrompt(item, body);
+
+  let raw = await callGeminiJSON(LOCATION_ONLY_SYSTEM_PROMPT, prompt);
+  let payload = parseLocationOnlyJSON(raw);
+  if (!payload) {
+    raw = await callClaudeJSON(LOCATION_ONLY_SYSTEM_PROMPT, prompt);
+    payload = parseLocationOnlyJSON(raw);
+    if (!payload) return null;
+  }
+
+  await redisSet(cacheKey, payload, LOCATION_ONLY_CACHE_TTL_S);
+  return payload;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main enrichment loop — processes per-topic accumulators AND the
 // conflict-archive (gdelt key) in a single concurrency pool.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -586,6 +695,15 @@ interface Bucket {
   writebackKey: string;
   ttl: number;
   kind: BucketKind;
+  /**
+   * When true, the LLM-generated `summary` is discarded on writeback and
+   * the item keeps whatever summary it shipped with (from the licensed
+   * upstream API). Set for worldnews-sourced buckets — we have a content
+   * license that lets us re-publish the API's own summary but NOT one
+   * we rewrote ourselves. Legacy RSS/GDELT buckets keep generating LLM
+   * summaries because those pipelines pre-date the license terms.
+   */
+  skipSummary: boolean;
 }
 
 async function runEnrichment(): Promise<EnrichResult> {
@@ -601,6 +719,7 @@ async function runEnrichment(): Promise<EnrichResult> {
         writebackKey: accumulatorKey(tid),
         ttl: ACCUMULATOR_TTL_S,
         kind: 'intel',
+        skipSummary: false,
       };
     }),
     (async (): Promise<Bucket> => {
@@ -611,13 +730,13 @@ async function runEnrichment(): Promise<EnrichResult> {
         writebackKey: CONFLICT_ARCHIVE_GDELT_KEY,
         ttl: CONFLICT_ARCHIVE_TTL_S,
         kind: 'conflict',
+        skipSummary: false,
       };
     })(),
     (async (): Promise<Bucket> => {
-      // World News conflict archive (v2) — populated by the new 5-min
-      // refresh cron. Same enrichment treatment as the GDELT bucket;
-      // a separate bucket keeps round-robin scheduling fair across
-      // pipelines (a flood from one source can't starve the other).
+      // World News conflict archive (v2) — license requires we keep the
+      // API's own summary and not substitute an LLM rewrite. Region +
+      // location are still LLM-enriched.
       const items = await redisGet<ConflictArchiveItem[]>(CONFLICT_ARCHIVE_WN_KEY);
       return {
         id: `${CONFLICT_BUCKET_ID}-wn`,
@@ -625,14 +744,13 @@ async function runEnrichment(): Promise<EnrichResult> {
         writebackKey: CONFLICT_ARCHIVE_WN_KEY,
         ttl: CONFLICT_ARCHIVE_TTL_S,
         kind: 'conflict',
+        skipSummary: true,
       };
     })(),
     (async (): Promise<Bucket> => {
-      // Live-news v3 (worldnews-fed). Same write-back shape as the
-      // conflict buckets — `location` is `{latitude, longitude} | null`,
-      // not separate lat/lng — but we don't gate enrichment on
-      // `locationName` because not every general-news headline names a
-      // precise place. Region + summary are the must-haves here.
+      // Live-news v3 — same license constraint as the wn conflict bucket.
+      // We keep the API's `summary` field; LLM only fills region / country
+      // / locationName / lat / lng (allowed under our terms).
       const items = await redisGet<ConflictArchiveItem[]>(LIVE_NEWS_WN_KEY);
       return {
         id: 'live-news-wn',
@@ -640,6 +758,7 @@ async function runEnrichment(): Promise<EnrichResult> {
         writebackKey: LIVE_NEWS_WN_KEY,
         ttl: LIVE_NEWS_TTL_S,
         kind: 'live-news',
+        skipSummary: true,
       };
     })(),
   ]);
@@ -680,7 +799,14 @@ async function runEnrichment(): Promise<EnrichResult> {
       const conflictMissingLocation = bucket.kind === 'conflict'
         && !(item as ConflictArchiveItem).locationName;
 
-      if (!summary || !region || summaryTooShort || conflictMissingLocation) {
+      // For licensed-API buckets we never re-generate `summary`, so its
+      // state shouldn't gate enrichment — only region (and locationName
+      // for conflicts) decide whether the LLM still needs to run.
+      const needsEnrichment = bucket.skipSummary
+        ? (!region || conflictMissingLocation)
+        : (!summary || !region || summaryTooShort || conflictMissingLocation);
+
+      if (needsEnrichment) {
         indices.push(i);
       }
     }
@@ -727,48 +853,71 @@ async function runEnrichment(): Promise<EnrichResult> {
       if (!item) continue;
 
       try {
-        const payload = await enrichOne({
+        const input: EnrichmentInput = {
           title: item.title,
           source: item.source,
           link: item.link,
-        });
-        if (payload) {
-          // Apply enrichment fields — different shape per bucket type.
-          if (bucket.kind === 'intel') {
-            const ni = item as IntelNewsItem;
-            ni.summary = payload.summary;
-            ni.region = payload.region;
-            if (payload.country) ni.country = payload.country;
-            if (payload.lat != null) ni.lat = payload.lat;
-            if (payload.lng != null) ni.lng = payload.lng;
-          } else {
-            // conflict + live-news share the same writeback shape (location
-            // is `{latitude, longitude} | null`, locationName drives the
-            // iOS row label when present).
+        };
+
+        // Dispatch on bucket.skipSummary so worldnews-fed items never get
+        // sent through the summary-generating prompt. The two payload
+        // shapes are intentionally disjoint on the `summary` field —
+        // TypeScript guides each writeback branch to the right one.
+        if (bucket.skipSummary) {
+          const payload = await enrichOneLocationOnly(input);
+          if (payload) {
+            // conflict + live-news writeback shape. We never touch `summary`
+            // on these — the upstream licensed API's value stays.
             const ci = item as ConflictArchiveItem;
-            ci.summary = payload.summary;
             ci.region = payload.region;
             if (payload.country) ci.country = payload.country;
             if (payload.locationName) ci.locationName = payload.locationName;
             if (payload.lat != null && payload.lng != null) {
               ci.location = { latitude: payload.lat, longitude: payload.lng };
             }
-            // Live-news items also carry an `isConflict` flag (iOS reads
-            // it for the CONFLICT chip). The LLM's prompt only emits
-            // `country` for kinetic/armed-conflict stories, so its
-            // presence is the implicit signal — saves a separate prompt
-            // field and re-enriching the cache.
+            // The explicit isConflict flag drives the iOS CONFLICT chip
+            // and our copy-to-archive step in the post-runner block.
             if (bucket.kind === 'live-news') {
-              (item as { isConflict?: boolean | null }).isConflict = !!payload.country;
+              (item as { isConflict?: boolean | null }).isConflict = payload.isConflict;
             }
+            succeeded++;
+            const stats = perTopic[bucket.id];
+            if (stats) stats.succeeded++;
+          } else {
+            failed++;
+            const stats = perTopic[bucket.id];
+            if (stats) stats.failed++;
           }
-          succeeded++;
-          const stats = perTopic[bucket.id];
-          if (stats) stats.succeeded++;
         } else {
-          failed++;
-          const stats = perTopic[bucket.id];
-          if (stats) stats.failed++;
+          const payload = await enrichOne(input);
+          if (payload) {
+            if (bucket.kind === 'intel') {
+              const ni = item as IntelNewsItem;
+              ni.summary = payload.summary;
+              ni.region = payload.region;
+              if (payload.country) ni.country = payload.country;
+              if (payload.lat != null) ni.lat = payload.lat;
+              if (payload.lng != null) ni.lng = payload.lng;
+            } else {
+              // Legacy conflict (GDELT) bucket — still LLM-generated summary
+              // because that pipeline pre-dates the license terms.
+              const ci = item as ConflictArchiveItem;
+              ci.summary = payload.summary;
+              ci.region = payload.region;
+              if (payload.country) ci.country = payload.country;
+              if (payload.locationName) ci.locationName = payload.locationName;
+              if (payload.lat != null && payload.lng != null) {
+                ci.location = { latitude: payload.lat, longitude: payload.lng };
+              }
+            }
+            succeeded++;
+            const stats = perTopic[bucket.id];
+            if (stats) stats.succeeded++;
+          } else {
+            failed++;
+            const stats = perTopic[bucket.id];
+            if (stats) stats.failed++;
+          }
         }
       } catch (err) {
         failed++;
