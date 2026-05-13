@@ -42,14 +42,27 @@
  *   accumulator starts trimming items.
  */
 
-import { topNews, deriveSource, parsePublishDate, type WorldNewsArticle } from '../../_shared/worldnews-client';
+import { topNews, searchNews, deriveSource, parsePublishDate, type WorldNewsArticle } from '../../_shared/worldnews-client';
 import { getCachedJson, setCachedJson } from '../../_shared/redis';
 import { sha256Hex } from '../../_shared/hash';
 
 const DIGEST_KEY = 'live-news:wn:v1:digest';
 const DIGEST_TTL_S = 7 * 24 * 60 * 60;  // 7 days
 const ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000;
-const MAX_ITEMS = 200;
+const MAX_ITEMS = 500;
+
+/**
+ * How far back the broad search-news pull reaches. Each call returns the
+ * newest 100 articles in this window, so we pick a window big enough that
+ * a 5-min cron tick comfortably overlaps the previous one (no gaps), but
+ * small enough that we don't waste a fetch on stories we've already
+ * accumulated.
+ */
+const BROAD_SEARCH_WINDOW_HOURS = 3;
+const BROAD_SEARCH_NUMBER = 100;            // max page size — 100 × 0.01 = 1 pt over the base
+/** Anglophone source-countries — same audience scope as legacy v2's US RSS feeds,
+ *  widened slightly so iOS users see Reuters UK + Guardian AU coverage too. */
+const BROAD_SEARCH_COUNTRIES = 'us,gb,au,ca';
 
 /**
  * Internal wire shape for one outlet on a story. Mirrors the v2 shape
@@ -204,15 +217,73 @@ function mergeItems(existing: LiveNewsV3Item[], fresh: LiveNewsV3Item[]): LiveNe
 }
 
 /**
- * Cron entry point. Idempotent — safe to invoke at any cadence; running
- * faster than the 5-min schedule just wastes a few worldnewsapi points.
+ * Map one upstream search-news article into a wire item. Single-source —
+ * no sibling outlets, so `sources[]` is just `[self]`. The top-news pass
+ * later upgrades the entry with multi-source data when the same article
+ * appears in a cluster.
+ */
+async function articleToItem(a: WorldNewsArticle): Promise<LiveNewsV3Item | null> {
+  const self = mapToSource(a);
+  if (!self) return null;
+  const titleHash = await sha256Hex(normalizeTitleForHash(self.title));
+  return {
+    id: a.id,
+    source: self.source,
+    title: self.title,
+    link: self.link,
+    publishedAt: self.publishedAt,
+    isAlert: false,
+    titleHash,
+    location: null,
+    locationName: null,
+    confidence: null,
+    country: null,
+    summary: a.summary?.trim() || null,
+    rawDescription: null,
+    isConflict: null,
+    sources: [self],
+  };
+}
+
+/**
+ * Cron entry point. Two parallel API calls fan out into one merged
+ * accumulator:
+ *
+ *   • `top-news`     — clustered top stories (multi-source canonical).
+ *                      Low volume (~10 clusters) but high signal.
+ *   • `search-news`  — broad pull across en-language anglophone outlets
+ *                      over the last few hours. ~100 single-source items
+ *                      per call. This is the volume layer.
+ *
+ * Items merge by article id. A top-news entry that shares an id with a
+ * search-news entry wins (carries the richer `sources[]`). Otherwise
+ * each unique id contributes one row.
+ *
+ * Idempotent — safe to invoke at any cadence; running faster than the
+ * 5-min schedule just spends extra worldnewsapi points.
  */
 export async function refreshLiveNewsV3(): Promise<RefreshResult> {
   const startedAt = Date.now();
 
-  const upstream = await topNews({ sourceCountry: 'us', language: 'en' });
-  if (!upstream) {
-    // The client already logged the failure reason. Accumulator stays as-is.
+  const earliestPublishDate = formatWorldNewsDate(Date.now() - BROAD_SEARCH_WINDOW_HOURS * 60 * 60 * 1000);
+
+  // Fire both upstream calls in parallel. Each is independently null-tolerant —
+  // if one fails (rate-limit, quota, transient 5xx) we still merge what the
+  // other returned.
+  const [topNewsResp, searchResp] = await Promise.all([
+    topNews({ sourceCountry: 'us', language: 'en' }),
+    searchNews({
+      language: 'en',
+      sourceCountries: BROAD_SEARCH_COUNTRIES,
+      earliestPublishDate,
+      sort: 'publish-time',
+      sortDirection: 'DESC',
+      number: BROAD_SEARCH_NUMBER,
+    }),
+  ]);
+
+  if (!topNewsResp && !searchResp) {
+    // Both failed — the client already logged. Accumulator stays as-is.
     return {
       status: 'skipped',
       fetched: 0,
@@ -223,13 +294,32 @@ export async function refreshLiveNewsV3(): Promise<RefreshResult> {
     };
   }
 
-  const fresh: LiveNewsV3Item[] = [];
   let dropped = 0;
-  for (const cluster of upstream.top_news ?? []) {
-    const item = await clusterToItem(cluster);
-    if (item) fresh.push(item);
-    else dropped++;
+  const freshById = new Map<number, LiveNewsV3Item>();
+
+  // Pass 1 — search-news (volume). Each article becomes a single-source
+  // entry. We insert these first so the top-news pass can upgrade them
+  // in place with the richer cluster sources[].
+  if (searchResp) {
+    for (const a of searchResp.news ?? []) {
+      const item = await articleToItem(a);
+      if (item) freshById.set(item.id, item);
+      else dropped++;
+    }
   }
+
+  // Pass 2 — top-news (clusters). Overwrites any existing entry with the
+  // same id; the cluster's sources[] is strictly richer than the search
+  // pass's [self].
+  if (topNewsResp) {
+    for (const cluster of topNewsResp.top_news ?? []) {
+      const item = await clusterToItem(cluster);
+      if (item) freshById.set(item.id, item);
+      else dropped++;
+    }
+  }
+
+  const fresh = Array.from(freshById.values());
 
   const existing = ((await getCachedJson(DIGEST_KEY)) as LiveNewsV3Item[] | null) ?? [];
   const merged = mergeItems(existing, fresh);
@@ -238,8 +328,10 @@ export async function refreshLiveNewsV3(): Promise<RefreshResult> {
 
   const elapsedMs = Date.now() - startedAt;
   console.log(
-    `[live-news:v3:refresh] fetched=${fresh.length} merged=${merged.length} ` +
-    `existed=${existing.length} dropped=${dropped} in ${elapsedMs}ms`,
+    `[live-news:v3:refresh] top-news=${topNewsResp ? (topNewsResp.top_news?.length ?? 0) : 'fail'} ` +
+    `search=${searchResp ? (searchResp.news?.length ?? 0) : 'fail'} ` +
+    `freshUnique=${fresh.length} existed=${existing.length} after=${merged.length} ` +
+    `dropped=${dropped} in ${elapsedMs}ms`,
   );
 
   return {
@@ -250,4 +342,12 @@ export async function refreshLiveNewsV3(): Promise<RefreshResult> {
     dropped,
     generatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Format a JS millisecond timestamp into the World News API's expected
+ * date string: `YYYY-MM-DD HH:MM:SS` in UTC.
+ */
+function formatWorldNewsDate(epochMs: number): string {
+  return new Date(epochMs).toISOString().replace('T', ' ').slice(0, 19);
 }
