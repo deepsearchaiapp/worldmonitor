@@ -52,7 +52,7 @@ const MAX_ITEMS = 500;
  * already-accumulated articles on every call.
  */
 const BROAD_SEARCH_WINDOW_HOURS = 0.75;
-const BROAD_SEARCH_NUMBER = 100;            // max page size — 100 × 0.01 = 1 pt over the base
+const BROAD_SEARCH_NUMBER = 50;             // 50 × 0.01 = 0.5 pt over the base — caps each call at 50 articles
 /** Anglophone source-countries — same audience scope as legacy v2's US RSS feeds,
  *  widened slightly so iOS users see Reuters UK + Guardian AU coverage too. */
 const BROAD_SEARCH_COUNTRIES = 'us,gb,au,ca';
