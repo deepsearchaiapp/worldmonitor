@@ -130,7 +130,6 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'ICRC', url: 'https://www.icrc.org/en/rss' },
     ],
      
-    
     cyber: [
       { name: 'The Record', url: 'https://therecord.media/feed/' },
       { name: 'BleepingComputer', url: 'https://www.bleepingcomputer.com/feed/' },
