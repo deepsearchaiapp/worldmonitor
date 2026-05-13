@@ -1,31 +1,23 @@
 /**
- * Live-news v3 refresh — pulls clustered top stories from World News API
- * (the new paid feed) and writes them into a Redis-backed accumulator.
+ * Live-news v3 refresh — pulls news items from World News API's
+ * search-news endpoint and merges them into a Redis-backed accumulator.
  *
- * Why v3 instead of patching v2:
- *   • v2 pulls 15 RSS feeds and runs LLM dedup to cluster the same story
- *     across outlets. v3 gets the clustering free from the upstream API.
- *   • v2's response goes through a source/link scrub (we shadow outlet
- *     identity for legal reasons on the unlicensed RSS pipe). The v3
- *     upstream is a paid licensed feed — we ship the real source and
- *     the real article URL.
+ * # Why search-news only
  *
- * The two pipelines coexist while we TestFlight the iOS switch. Legacy
- * iOS builds keep reading /v2 with its scrub; TestFlight builds read /v3
- * with real outlet data. Once we cut over App Store, we can retire v2.
+ * The earlier draft of this file also called `top-news` for clustered
+ * multi-source canonicals. That endpoint is reserved for a later
+ * milestone — for now we want raw volume from search-news, and rely
+ * on the enrichment cron to fill summary/region/location.
  *
  * # Pipeline
  *
- *   1. Call top-news?source-country=us&language=en — one call returns
- *      ~10 clusters, each with 1-10 articles about the same story.
- *   2. Map each cluster → one LiveNewsItemWithSources:
- *      • canonical = cluster.news[0]
- *      • sources[] = every article in the cluster
- *   3. Merge into the existing Redis accumulator, idempotent on article
- *      id — so when the enrichment cron later fills in location / lat /
- *      lng / isConflict on an item, a subsequent refresh doesn't clobber
- *      those fields. We update title/sources/publishedAt; we preserve
- *      everything that was enriched.
+ *   1. Call search-news with a broad anglophone filter over the last
+ *      ~3 hours. ~100 single-source articles per tick.
+ *   2. Map each article → LiveNewsV3Item with `sources: [self]`.
+ *   3. Merge into the existing Redis accumulator, idempotent on the
+ *      stable article `id`. The enrichment cron later fills `summary`,
+ *      `region`, `country`, `location`, `locationName`; subsequent
+ *      refreshes preserve those fields.
  *   4. Drop items older than the rolling window (24 h). Cap total size.
  *
  * # Caching
@@ -42,7 +34,7 @@
  *   accumulator starts trimming items.
  */
 
-import { topNews, searchNews, deriveSource, parsePublishDate, type WorldNewsArticle } from '../../_shared/worldnews-client';
+import { searchNews, deriveSource, parsePublishDate, type WorldNewsArticle } from '../../_shared/worldnews-client';
 import { getCachedJson, setCachedJson } from '../../_shared/redis';
 import { sha256Hex } from '../../_shared/hash';
 
@@ -135,49 +127,6 @@ function mapToSource(a: WorldNewsArticle): LiveNewsV3Source | null {
 }
 
 /**
- * Map one cluster (canonical + alternates) into our wire shape. The
- * canonical's enrichment fields stay null — they get filled later by
- * the enrichment cron. The API's `summary` field is preserved as the
- * initial summary; the enrichment LLM will only re-paraphrase items
- * with no summary.
- */
-async function clusterToItem(cluster: { news: WorldNewsArticle[] }): Promise<LiveNewsV3Item | null> {
-  if (!cluster.news || cluster.news.length === 0) return null;
-
-  const sources: LiveNewsV3Source[] = [];
-  for (const a of cluster.news) {
-    const s = mapToSource(a);
-    if (s) sources.push(s);
-  }
-  if (sources.length === 0) return null;
-
-  const canonical = cluster.news[0]!;
-  const lead = sources[0]!;
-  // SHA-256 of normalized title — keeps us compatible with the existing
-  // enrichment-cache key scheme so v3 items can hit cached summaries
-  // from v2 enrichment of identical headlines.
-  const titleHash = await sha256Hex(normalizeTitleForHash(lead.title));
-
-  return {
-    id: canonical.id,
-    source: lead.source,
-    title: lead.title,
-    link: lead.link,
-    publishedAt: lead.publishedAt,
-    isAlert: false,
-    titleHash,
-    location: null,
-    locationName: null,
-    confidence: null,
-    country: null,
-    summary: canonical.summary?.trim() || null,
-    rawDescription: null,
-    isConflict: null,
-    sources,
-  };
-}
-
-/**
  * Merge new items with whatever is already in the accumulator. Identity
  * is the stable worldnewsapi `id` — same id wins. On a hit we preserve
  * every enrichment field the previous run accumulated; we only refresh
@@ -218,9 +167,7 @@ function mergeItems(existing: LiveNewsV3Item[], fresh: LiveNewsV3Item[]): LiveNe
 
 /**
  * Map one upstream search-news article into a wire item. Single-source —
- * no sibling outlets, so `sources[]` is just `[self]`. The top-news pass
- * later upgrades the entry with multi-source data when the same article
- * appears in a cluster.
+ * `sources[]` is `[self]` because search-news doesn't ship cluster info.
  */
 async function articleToItem(a: WorldNewsArticle): Promise<LiveNewsV3Item | null> {
   const self = mapToSource(a);
@@ -246,18 +193,8 @@ async function articleToItem(a: WorldNewsArticle): Promise<LiveNewsV3Item | null
 }
 
 /**
- * Cron entry point. Two parallel API calls fan out into one merged
- * accumulator:
- *
- *   • `top-news`     — clustered top stories (multi-source canonical).
- *                      Low volume (~10 clusters) but high signal.
- *   • `search-news`  — broad pull across en-language anglophone outlets
- *                      over the last few hours. ~100 single-source items
- *                      per call. This is the volume layer.
- *
- * Items merge by article id. A top-news entry that shares an id with a
- * search-news entry wins (carries the richer `sources[]`). Otherwise
- * each unique id contributes one row.
+ * Cron entry point. One search-news call per tick — broad anglophone
+ * pull over the last few hours, ~100 single-source items.
  *
  * Idempotent — safe to invoke at any cadence; running faster than the
  * 5-min schedule just spends extra worldnewsapi points.
@@ -267,23 +204,17 @@ export async function refreshLiveNewsV3(): Promise<RefreshResult> {
 
   const earliestPublishDate = formatWorldNewsDate(Date.now() - BROAD_SEARCH_WINDOW_HOURS * 60 * 60 * 1000);
 
-  // Fire both upstream calls in parallel. Each is independently null-tolerant —
-  // if one fails (rate-limit, quota, transient 5xx) we still merge what the
-  // other returned.
-  const [topNewsResp, searchResp] = await Promise.all([
-    topNews({ sourceCountry: 'us', language: 'en' }),
-    searchNews({
-      language: 'en',
-      sourceCountries: BROAD_SEARCH_COUNTRIES,
-      earliestPublishDate,
-      sort: 'publish-time',
-      sortDirection: 'DESC',
-      number: BROAD_SEARCH_NUMBER,
-    }),
-  ]);
+  const searchResp = await searchNews({
+    language: 'en',
+    sourceCountries: BROAD_SEARCH_COUNTRIES,
+    earliestPublishDate,
+    sort: 'publish-time',
+    sortDirection: 'DESC',
+    number: BROAD_SEARCH_NUMBER,
+  });
 
-  if (!topNewsResp && !searchResp) {
-    // Both failed — the client already logged. Accumulator stays as-is.
+  if (!searchResp) {
+    // Failed — the client already logged. Accumulator stays as-is.
     return {
       status: 'skipped',
       fetched: 0,
@@ -294,32 +225,13 @@ export async function refreshLiveNewsV3(): Promise<RefreshResult> {
     };
   }
 
+  const fresh: LiveNewsV3Item[] = [];
   let dropped = 0;
-  const freshById = new Map<number, LiveNewsV3Item>();
-
-  // Pass 1 — search-news (volume). Each article becomes a single-source
-  // entry. We insert these first so the top-news pass can upgrade them
-  // in place with the richer cluster sources[].
-  if (searchResp) {
-    for (const a of searchResp.news ?? []) {
-      const item = await articleToItem(a);
-      if (item) freshById.set(item.id, item);
-      else dropped++;
-    }
+  for (const a of searchResp.news ?? []) {
+    const item = await articleToItem(a);
+    if (item) fresh.push(item);
+    else dropped++;
   }
-
-  // Pass 2 — top-news (clusters). Overwrites any existing entry with the
-  // same id; the cluster's sources[] is strictly richer than the search
-  // pass's [self].
-  if (topNewsResp) {
-    for (const cluster of topNewsResp.top_news ?? []) {
-      const item = await clusterToItem(cluster);
-      if (item) freshById.set(item.id, item);
-      else dropped++;
-    }
-  }
-
-  const fresh = Array.from(freshById.values());
 
   const existing = ((await getCachedJson(DIGEST_KEY)) as LiveNewsV3Item[] | null) ?? [];
   const merged = mergeItems(existing, fresh);
@@ -328,9 +240,8 @@ export async function refreshLiveNewsV3(): Promise<RefreshResult> {
 
   const elapsedMs = Date.now() - startedAt;
   console.log(
-    `[live-news:v3:refresh] top-news=${topNewsResp ? (topNewsResp.top_news?.length ?? 0) : 'fail'} ` +
-    `search=${searchResp ? (searchResp.news?.length ?? 0) : 'fail'} ` +
-    `freshUnique=${fresh.length} existed=${existing.length} after=${merged.length} ` +
+    `[live-news:v3:refresh] search=${searchResp.news?.length ?? 0} ` +
+    `fresh=${fresh.length} existed=${existing.length} after=${merged.length} ` +
     `dropped=${dropped} in ${elapsedMs}ms`,
   );
 

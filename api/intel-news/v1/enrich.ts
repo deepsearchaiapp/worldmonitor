@@ -65,6 +65,14 @@ const CONFLICT_ARCHIVE_GDELT_KEY = 'conflict:archive:v1:gdelt';
 const CONFLICT_ARCHIVE_WN_KEY = 'conflict:archive:wn:v1';
 const CONFLICT_ARCHIVE_TTL_S = 30 * 24 * 60 * 60;
 
+// Live-news v3 (World News bucket) — populated by the search-news cron
+// at `/api/live-news/v3/refresh-worldnews`. Enrichment fills
+// summary + region + country (and location/locationName when the
+// article happens to be locatable). The shape matches ConflictArchiveItem
+// for writeback purposes — `location` is `{latitude, longitude} | null`.
+const LIVE_NEWS_WN_KEY = 'live-news:wn:v1:digest';
+const LIVE_NEWS_TTL_S = 7 * 24 * 60 * 60;
+
 // Shared enrichment cache — keyed by sha256(link). Both pipelines read /
 // write it, so a URL enriched once in either pipeline is reused by the
 // other instead of re-paying the LLM call.
@@ -508,14 +516,25 @@ interface EnrichResult {
 // archive is a bucket alongside the per-topic ones.
 const CONFLICT_BUCKET_ID = 'conflict' as const;
 
+/**
+ * Item-shape discriminator for write-back logic:
+ *
+ *   • `intel`     — IntelNewsItem. Separate `lat` / `lng` fields. Skipped
+ *                   for missing locationName (not a required field here).
+ *   • `conflict`  — ConflictArchiveItem. `location: {latitude, longitude}`
+ *                   object. Requires `locationName` (drives iOS row label).
+ *   • `live-news` — LiveNewsV3Item. Same writeback shape as conflict
+ *                   (location object), but locationName is best-effort —
+ *                   not every general-news headline has a precise place.
+ */
+type BucketKind = 'intel' | 'conflict' | 'live-news';
+
 interface Bucket {
   id: string;
   items: Array<IntelNewsItem | ConflictArchiveItem>;
   writebackKey: string;
   ttl: number;
-  /** True when items in this bucket are ConflictArchiveItem (need different
-   *  field updates than IntelNewsItem). */
-  isConflict: boolean;
+  kind: BucketKind;
 }
 
 async function runEnrichment(): Promise<EnrichResult> {
@@ -530,7 +549,7 @@ async function runEnrichment(): Promise<EnrichResult> {
         items: Array.isArray(items) ? items : [],
         writebackKey: accumulatorKey(tid),
         ttl: ACCUMULATOR_TTL_S,
-        isConflict: false,
+        kind: 'intel',
       };
     }),
     (async (): Promise<Bucket> => {
@@ -540,7 +559,7 @@ async function runEnrichment(): Promise<EnrichResult> {
         items: Array.isArray(items) ? items : [],
         writebackKey: CONFLICT_ARCHIVE_GDELT_KEY,
         ttl: CONFLICT_ARCHIVE_TTL_S,
-        isConflict: true,
+        kind: 'conflict',
       };
     })(),
     (async (): Promise<Bucket> => {
@@ -554,7 +573,22 @@ async function runEnrichment(): Promise<EnrichResult> {
         items: Array.isArray(items) ? items : [],
         writebackKey: CONFLICT_ARCHIVE_WN_KEY,
         ttl: CONFLICT_ARCHIVE_TTL_S,
-        isConflict: true,
+        kind: 'conflict',
+      };
+    })(),
+    (async (): Promise<Bucket> => {
+      // Live-news v3 (worldnews-fed). Same write-back shape as the
+      // conflict buckets — `location` is `{latitude, longitude} | null`,
+      // not separate lat/lng — but we don't gate enrichment on
+      // `locationName` because not every general-news headline names a
+      // precise place. Region + summary are the must-haves here.
+      const items = await redisGet<ConflictArchiveItem[]>(LIVE_NEWS_WN_KEY);
+      return {
+        id: 'live-news-wn',
+        items: Array.isArray(items) ? items : [],
+        writebackKey: LIVE_NEWS_WN_KEY,
+        ttl: LIVE_NEWS_TTL_S,
+        kind: 'live-news',
       };
     })(),
   ]);
@@ -581,14 +615,18 @@ async function runEnrichment(): Promise<EnrichResult> {
       const item = bucket.items[i];
       if (!item) continue;
 
-      const summary = bucket.isConflict
-        ? (item as ConflictArchiveItem).summary
-        : (item as IntelNewsItem).summary;
-      const region = bucket.isConflict
-        ? (item as ConflictArchiveItem).region
-        : (item as IntelNewsItem).region;
+      // ConflictArchiveItem and LiveNewsV3Item share the same summary/region
+      // field positions; only `intel` (IntelNewsItem) is read differently.
+      const summary = bucket.kind === 'intel'
+        ? (item as IntelNewsItem).summary
+        : (item as ConflictArchiveItem).summary;
+      const region = bucket.kind === 'intel'
+        ? (item as IntelNewsItem).region
+        : (item as ConflictArchiveItem).region;
       const summaryTooShort = !!summary && summary.length < SUMMARY_MIN_LEN;
-      const conflictMissingLocation = bucket.isConflict
+      // Only conflict items require locationName — live-news items don't
+      // always have a precise place attached.
+      const conflictMissingLocation = bucket.kind === 'conflict'
         && !(item as ConflictArchiveItem).locationName;
 
       if (!summary || !region || summaryTooShort || conflictMissingLocation) {
@@ -645,25 +683,25 @@ async function runEnrichment(): Promise<EnrichResult> {
         });
         if (payload) {
           // Apply enrichment fields — different shape per bucket type.
-          if (bucket.isConflict) {
-            const ci = item as ConflictArchiveItem;
-            ci.summary = payload.summary;
-            ci.region = payload.region;
-            if (payload.country) ci.country = payload.country;
-            // locationName drives the row's typeLabel in iOS — without it
-            // the feed falls back to the source domain ("BBC News") which
-            // looks wrong next to RSS-sourced conflicts that show a city.
-            if (payload.locationName) ci.locationName = payload.locationName;
-            if (payload.lat != null && payload.lng != null) {
-              ci.location = { latitude: payload.lat, longitude: payload.lng };
-            }
-          } else {
+          if (bucket.kind === 'intel') {
             const ni = item as IntelNewsItem;
             ni.summary = payload.summary;
             ni.region = payload.region;
             if (payload.country) ni.country = payload.country;
             if (payload.lat != null) ni.lat = payload.lat;
             if (payload.lng != null) ni.lng = payload.lng;
+          } else {
+            // conflict + live-news share the same writeback shape (location
+            // is `{latitude, longitude} | null`, locationName drives the
+            // iOS row label when present).
+            const ci = item as ConflictArchiveItem;
+            ci.summary = payload.summary;
+            ci.region = payload.region;
+            if (payload.country) ci.country = payload.country;
+            if (payload.locationName) ci.locationName = payload.locationName;
+            if (payload.lat != null && payload.lng != null) {
+              ci.location = { latitude: payload.lat, longitude: payload.lng };
+            }
           }
           succeeded++;
           const stats = perTopic[bucket.id];

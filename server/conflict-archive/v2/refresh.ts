@@ -36,15 +36,19 @@ export const ARCHIVE_WN_KEY = 'conflict:archive:wn:v1';
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const RETENTION_S = Math.floor(RETENTION_MS / 1000);
-const MAX_ITEMS = 1000;
-const QUERY_NUMBER = 50;          // 1 + 50 × 0.01 = 1.5 pts per call
+const MAX_ITEMS = 2000;
+const QUERY_NUMBER = 100;         // 1 + 100 × 0.01 = 2.0 pts per call (max page size)
 
-/** Conflict-detecting query — phrases instead of bare words because bare
- *  words ("strike", "attack") drift wildly. The post-fetch step lets the
- *  enrichment LLM confirm isConflict; this query just gets us into the
- *  right zip code with high recall. */
+/** Conflict-detecting query — broad enough to cast a wide net, specific
+ *  enough that the post-fetch LLM enrichment confirms the isConflict
+ *  flag without too much wasted classification cost. Bare-word terms
+ *  ("strike", "attack") are intentionally omitted — they drift into
+ *  labor/financial/sports headlines. */
 const CONFLICT_TEXT_QUERY =
-  '"airstrike" OR "missile strike" OR shelling OR "armed clash" OR "ground assault" OR "drone strike"';
+  '"airstrike" OR "missile strike" OR shelling OR "armed clash" OR ' +
+  '"ground assault" OR "drone strike" OR "armed conflict" OR ' +
+  'bombardment OR "rocket attack" OR "ceasefire" OR "war crime" OR ' +
+  '"military offensive" OR "shells fired" OR insurgents';
 
 /**
  * The v2 item is structurally identical to v1's `ConflictArchiveItem`
