@@ -73,6 +73,14 @@ const CONFLICT_ARCHIVE_TTL_S = 30 * 24 * 60 * 60;
 const LIVE_NEWS_WN_KEY = 'live-news:wn:v1:digest';
 const LIVE_NEWS_TTL_S = 7 * 24 * 60 * 60;
 
+// Live-news v4 + conflict-archive v3 (Webz.io buckets) — same writeback
+// shape as the worldnews buckets above, but their items carry string
+// ids (Webz uuids) instead of numbers and the upstream is licensed
+// under different terms. License-wise we never substitute an LLM
+// summary for the API's own.
+const LIVE_NEWS_WEBZ_KEY = 'live-news:webz:v1:digest';
+const CONFLICT_ARCHIVE_WEBZ_KEY = 'conflict:archive:webz:v1';
+
 // Shared enrichment cache — keyed by sha256(link). Both pipelines read /
 // write it, so a URL enriched once in either pipeline is reused by the
 // other instead of re-paying the LLM call.
@@ -155,7 +163,7 @@ interface ConflictArchiveItem {
   country: string | null;
   region?: string | null;
   sources: Array<{ source: string; title: string; link: string; publishedAt: number }> | null;
-  origin: 'live-news' | 'gdelt' | 'worldnews';
+  origin: 'live-news' | 'gdelt' | 'worldnews' | 'webz';
 }
 
 // LLM-returned structured payload. Stored verbatim in the shared
@@ -761,6 +769,36 @@ async function runEnrichment(): Promise<EnrichResult> {
         skipSummary: true,
       };
     })(),
+    (async (): Promise<Bucket> => {
+      // Live-news v4 (Webz.io) — same shape + same skipSummary contract
+      // as the worldnews live-news bucket. Items have string `id`s
+      // (Webz uuids) instead of numbers, but enrichment touches only
+      // region/country/locationName/location, none of which depend on
+      // id type.
+      const items = await redisGet<ConflictArchiveItem[]>(LIVE_NEWS_WEBZ_KEY);
+      return {
+        id: 'live-news-webz',
+        items: Array.isArray(items) ? items : [],
+        writebackKey: LIVE_NEWS_WEBZ_KEY,
+        ttl: LIVE_NEWS_TTL_S,
+        kind: 'live-news',
+        skipSummary: true,
+      };
+    })(),
+    (async (): Promise<Bucket> => {
+      // Conflict-archive v3 (Webz.io) — populated by the manual seed
+      // cron + organically by the live-news-webz bucket's enrichment
+      // step (post-runner block farther down).
+      const items = await redisGet<ConflictArchiveItem[]>(CONFLICT_ARCHIVE_WEBZ_KEY);
+      return {
+        id: `${CONFLICT_BUCKET_ID}-webz`,
+        items: Array.isArray(items) ? items : [],
+        writebackKey: CONFLICT_ARCHIVE_WEBZ_KEY,
+        ttl: CONFLICT_ARCHIVE_TTL_S,
+        kind: 'conflict',
+        skipSummary: true,
+      };
+    })(),
   ]);
 
   // Build round-robin queue — one item per bucket per cursor tick. Items
@@ -930,26 +968,39 @@ async function runEnrichment(): Promise<EnrichResult> {
 
   await Promise.all(Array.from({ length: CONCURRENCY }, () => runner()));
 
-  // Derive conflict items from the live-news bucket and merge them into
-  // the World News conflict archive. This is how the conflict archive
-  // grows organically — no dedicated conflict-search cron needed, the
-  // LLM's per-item classification (presence of `country`) is the signal.
-  // Read-modify-write the archive once at the end of the run rather
-  // than per-item to keep Redis ops down.
-  const liveNewsBucket = buckets.find((b) => b.kind === 'live-news');
-  if (liveNewsBucket) {
+  // Drain each live-news bucket's isConflict items into its matching
+  // conflict archive. The archive grows organically from live-news —
+  // no dedicated conflict-search cron needed, the LLM's per-item
+  // classification (`isConflict` flag set during the location-only
+  // enrichment) is the signal.
+  //
+  // Each live-news bucket maps to exactly one conflict archive Redis
+  // key so the two upstream sources (worldnews / webz) stay isolated.
+  // Read-modify-write each target once at the end of the run.
+  const LIVE_NEWS_TO_ARCHIVE: Record<string, { key: string; origin: ConflictArchiveItem['origin']; idPrefix: string }> = {
+    'live-news-wn':   { key: CONFLICT_ARCHIVE_WN_KEY,   origin: 'worldnews', idPrefix: 'wn-'   },
+    'live-news-webz': { key: CONFLICT_ARCHIVE_WEBZ_KEY, origin: 'webz',      idPrefix: 'webz-' },
+  };
+
+  for (const bucket of buckets.filter((b) => b.kind === 'live-news')) {
+    const target = LIVE_NEWS_TO_ARCHIVE[bucket.id];
+    if (!target) continue;
+
     const conflictItems: ConflictArchiveItem[] = [];
-    for (const raw of liveNewsBucket.items) {
+    for (const raw of bucket.items) {
       const it = raw as Partial<ConflictArchiveItem> & {
-        id?: number; isConflict?: boolean | null; sources?: unknown;
+        id?: number | string; isConflict?: boolean | null; sources?: unknown;
       };
       if (!it.isConflict) continue;
-      // Promote into the ConflictArchiveItem shape. The live-news `id`
-      // is a number (worldnewsapi article id) — the archive expects
-      // string ids, so we prefix to keep it distinct from existing
-      // titleHash/link-hash ids in the same store.
+      // Live-news ids may be numbers (worldnews) or strings (webz uuids).
+      // We prefix per source so ids stay distinct across pipelines that
+      // ever shared a Redis key (defensive, even though wn/webz live in
+      // separate archives today).
+      const idStr = typeof it.id === 'number' || typeof it.id === 'string'
+        ? `${target.idPrefix}${it.id}`
+        : `${target.idPrefix}unknown-${Date.now()}`;
       conflictItems.push({
-        id: typeof it.id === 'number' ? `wn-${it.id}` : String(it.id),
+        id: idStr,
         source: it.source ?? '',
         title: it.title ?? '',
         link: it.link ?? '',
@@ -960,37 +1011,34 @@ async function runEnrichment(): Promise<EnrichResult> {
         locationName: it.locationName ?? null,
         country: it.country ?? null,
         region: it.region ?? null,
-        // Re-cast sources — same shape on both interfaces.
         sources: Array.isArray(it.sources)
           ? (it.sources as ConflictArchiveItem['sources'])
           : null,
-        origin: 'worldnews',
+        origin: target.origin,
       });
     }
 
-    if (conflictItems.length > 0) {
-      const existing = (await redisGet<ConflictArchiveItem[]>(CONFLICT_ARCHIVE_WN_KEY)) ?? [];
-      const byId = new Map<string, ConflictArchiveItem>();
-      // Existing first, then new — new entries with fresher enrichment
-      // overwrite the cached row.
-      for (const e of existing) {
-        if (e?.id) byId.set(e.id, e);
-      }
-      for (const c of conflictItems) {
-        byId.set(c.id, c);
-      }
-      // 30-day retention window + 1000-item cap mirror v1/_store.ts.
-      const cutoff = Date.now() - CONFLICT_ARCHIVE_TTL_S * 1000;
-      const merged = Array.from(byId.values())
-        .filter((c) => typeof c.publishedAt === 'number' && c.publishedAt >= cutoff)
-        .sort((a, b) => b.publishedAt - a.publishedAt)
-        .slice(0, 1000);
-      await redisSet(CONFLICT_ARCHIVE_WN_KEY, merged, CONFLICT_ARCHIVE_TTL_S);
-      console.log(
-        `[intel-news:enrich] conflict-archive:wn merged ${conflictItems.length} ` +
-        `(existed=${existing.length} after=${merged.length})`,
-      );
+    if (conflictItems.length === 0) continue;
+
+    const existing = (await redisGet<ConflictArchiveItem[]>(target.key)) ?? [];
+    const byId = new Map<string, ConflictArchiveItem>();
+    for (const e of existing) {
+      if (e?.id) byId.set(e.id, e);
     }
+    for (const c of conflictItems) {
+      byId.set(c.id, c);
+    }
+    // 30-day retention + 1000-item cap (matches the legacy v1 store).
+    const cutoff = Date.now() - CONFLICT_ARCHIVE_TTL_S * 1000;
+    const merged = Array.from(byId.values())
+      .filter((c) => typeof c.publishedAt === 'number' && c.publishedAt >= cutoff)
+      .sort((a, b) => b.publishedAt - a.publishedAt)
+      .slice(0, 1000);
+    await redisSet(target.key, merged, CONFLICT_ARCHIVE_TTL_S);
+    console.log(
+      `[intel-news:enrich] ${target.key} merged ${conflictItems.length} ` +
+      `(existed=${existing.length} after=${merged.length})`,
+    );
   }
 
   // Write back buckets that gained any progress.
