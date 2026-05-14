@@ -664,6 +664,77 @@ async function enrichOneLocationOnly(item: EnrichmentInput): Promise<LocationOnl
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Title-only summary — for licensed buckets where we don't have a license to
+// republish the article body (e.g. worldnewsapi). We send ONLY the headline
+// to the LLM and ask for a 1-2 sentence neutral summary. The article body
+// is never fetched in this path so it can't accidentally leak into the
+// summary text. Coordinates / region / etc. come from the separate
+// location-only call which is allowed to use the body (factual inference,
+// not content reuse).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface TitleSummaryPayload {
+  summary: string;
+}
+
+const TITLE_SUMMARY_CACHE_KEY = (link: string): string =>
+  `enrichment-title-summary:v1:${createHash('sha256').update(link).digest('hex')}`;
+const TITLE_SUMMARY_CACHE_TTL_S = 30 * 24 * 60 * 60;
+
+const TITLE_SUMMARY_MIN_LEN = 40;
+const TITLE_SUMMARY_MAX_LEN = 500;
+
+const TITLE_SUMMARY_SYSTEM_PROMPT = `You receive a news headline and the publishing outlet. Return ONE JSON object:
+
+  - summary: a single neutral, factual sentence (or at most two short sentences) describing the story implied by the headline. Use ONLY information present in the headline itself. DO NOT speculate, invent details, or fabricate names, numbers, places, or quotes that aren't already in the headline. If the headline is too sparse to expand, return a slightly rephrased version of the headline written in plain newswire prose. No bullet points, no markdown, no headers, no editorializing, no opinions.
+
+Return JSON ONLY. No prose, no markdown, no code fences.`;
+
+function buildTitleOnlyPrompt(item: { title: string; source: string }): string {
+  return `Headline: ${item.title}\nSource: ${item.source}\n`;
+}
+
+function parseTitleSummaryJSON(raw: string | null): TitleSummaryPayload | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch {
+    const stripped = raw.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+    try { parsed = JSON.parse(stripped); } catch { return null; }
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const obj = parsed as Record<string, unknown>;
+  const summary = typeof obj.summary === 'string' ? obj.summary.trim() : '';
+  if (summary.length < TITLE_SUMMARY_MIN_LEN) return null;
+  if (summary.length > TITLE_SUMMARY_MAX_LEN) return { summary: summary.slice(0, TITLE_SUMMARY_MAX_LEN) };
+  if (/^(I cannot|I can't|I'm sorry|I apologize|As an AI)/i.test(summary)) return null;
+  return { summary };
+}
+
+async function enrichOneTitleSummary(item: EnrichmentInput): Promise<TitleSummaryPayload | null> {
+  const cacheKey = TITLE_SUMMARY_CACHE_KEY(item.link);
+  const cached = await redisGet<TitleSummaryPayload>(cacheKey);
+  if (cached && cached.summary && cached.summary.length >= TITLE_SUMMARY_MIN_LEN) {
+    return cached;
+  }
+
+  // NOTE: deliberately NO `fetchArticleBody` here. License terms only
+  // permit us to use API-supplied fields (title, source) as input to a
+  // summary the user will see.
+  const prompt = buildTitleOnlyPrompt(item);
+
+  let raw = await callGeminiJSON(TITLE_SUMMARY_SYSTEM_PROMPT, prompt);
+  let payload = parseTitleSummaryJSON(raw);
+  if (!payload) {
+    raw = await callClaudeJSON(TITLE_SUMMARY_SYSTEM_PROMPT, prompt);
+    payload = parseTitleSummaryJSON(raw);
+    if (!payload) return null;
+  }
+
+  await redisSet(cacheKey, payload, TITLE_SUMMARY_CACHE_TTL_S);
+  return payload;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main enrichment loop — processes per-topic accumulators AND the
 // conflict-archive (gdelt key) in a single concurrency pool.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -711,14 +782,25 @@ interface Bucket {
   ttl: number;
   kind: BucketKind;
   /**
-   * When true, the LLM-generated `summary` is discarded on writeback and
-   * the item keeps whatever summary it shipped with (from the licensed
-   * upstream API). Set for worldnews-sourced buckets — we have a content
-   * license that lets us re-publish the API's own summary but NOT one
-   * we rewrote ourselves. Legacy RSS/GDELT buckets keep generating LLM
-   * summaries because those pipelines pre-date the license terms.
+   * When true, the standard LLM summary (body-derived, multi-paragraph)
+   * is NOT generated/written. The item keeps whatever summary it
+   * shipped with from the licensed upstream API (Webz / Newscatcher
+   * both ship usable summaries themselves).
+   *
+   * Legacy RSS/GDELT buckets pre-date the license terms and keep
+   * generating LLM summaries from the body.
    */
   skipSummary: boolean;
+  /**
+   * When true, an EXTRA title-only LLM call runs and its single-
+   * sentence summary is written to the item. Used for worldnewsapi
+   * buckets where the upstream does NOT supply a summary AND we don't
+   * have a license to use the scraped article body — so the LLM gets
+   * only the headline + outlet name as input. Coordinates / region
+   * still come from the location-only call which IS allowed to read
+   * the body (factual inference, not content reuse).
+   */
+  generateTitleSummary: boolean;
 }
 
 async function runEnrichment(): Promise<EnrichResult> {
@@ -735,6 +817,7 @@ async function runEnrichment(): Promise<EnrichResult> {
         ttl: ACCUMULATOR_TTL_S,
         kind: 'intel',
         skipSummary: false,
+        generateTitleSummary: false,
       };
     }),
     (async (): Promise<Bucket> => {
@@ -746,12 +829,15 @@ async function runEnrichment(): Promise<EnrichResult> {
         ttl: CONFLICT_ARCHIVE_TTL_S,
         kind: 'conflict',
         skipSummary: false,
+        generateTitleSummary: false,
       };
     })(),
     (async (): Promise<Bucket> => {
-      // World News conflict archive (v2) — license requires we keep the
-      // API's own summary and not substitute an LLM rewrite. Region +
-      // location are still LLM-enriched.
+      // World News conflict archive (v2) — license forbids using the
+      // scraped article body for the summary. Skip the body-based
+      // summary AND run an extra title-only LLM call so we still ship
+      // a short summary to iOS. Location/coords keep using the body
+      // (that's allowed — factual inference).
       const items = await redisGet<ConflictArchiveItem[]>(CONFLICT_ARCHIVE_WN_KEY);
       return {
         id: `${CONFLICT_BUCKET_ID}-wn`,
@@ -760,12 +846,12 @@ async function runEnrichment(): Promise<EnrichResult> {
         ttl: CONFLICT_ARCHIVE_TTL_S,
         kind: 'conflict',
         skipSummary: true,
+        generateTitleSummary: true,
       };
     })(),
     (async (): Promise<Bucket> => {
-      // Live-news v3 — same license constraint as the wn conflict bucket.
-      // We keep the API's `summary` field; LLM only fills region / country
-      // / locationName / lat / lng (allowed under our terms).
+      // Live-news v3 (World News API) — same license constraint as the
+      // wn conflict bucket. Title-only summary, body-based coords.
       const items = await redisGet<ConflictArchiveItem[]>(LIVE_NEWS_WN_KEY);
       return {
         id: 'live-news-wn',
@@ -774,14 +860,12 @@ async function runEnrichment(): Promise<EnrichResult> {
         ttl: LIVE_NEWS_TTL_S,
         kind: 'live-news',
         skipSummary: true,
+        generateTitleSummary: true,
       };
     })(),
     (async (): Promise<Bucket> => {
-      // Live-news v4 (Webz.io) — same shape + same skipSummary contract
-      // as the worldnews live-news bucket. Items have string `id`s
-      // (Webz uuids) instead of numbers, but enrichment touches only
-      // region/country/locationName/location, none of which depend on
-      // id type.
+      // Live-news v4 (Webz.io) — Webz ships its own `summary` field
+      // when present; we use it verbatim and skip LLM summary entirely.
       const items = await redisGet<ConflictArchiveItem[]>(LIVE_NEWS_WEBZ_KEY);
       return {
         id: 'live-news-webz',
@@ -790,12 +874,10 @@ async function runEnrichment(): Promise<EnrichResult> {
         ttl: LIVE_NEWS_TTL_S,
         kind: 'live-news',
         skipSummary: true,
+        generateTitleSummary: false,
       };
     })(),
     (async (): Promise<Bucket> => {
-      // Conflict-archive v3 (Webz.io) — populated by the manual seed
-      // cron + organically by the live-news-webz bucket's enrichment
-      // step (post-runner block farther down).
       const items = await redisGet<ConflictArchiveItem[]>(CONFLICT_ARCHIVE_WEBZ_KEY);
       return {
         id: `${CONFLICT_BUCKET_ID}-webz`,
@@ -804,12 +886,12 @@ async function runEnrichment(): Promise<EnrichResult> {
         ttl: CONFLICT_ARCHIVE_TTL_S,
         kind: 'conflict',
         skipSummary: true,
+        generateTitleSummary: false,
       };
     })(),
     (async (): Promise<Bucket> => {
       // Live-news v5 (Newscatcher). Newscatcher's `nlp.summary` is part
-      // of its licensed payload, so we keep it as-is (skipSummary=true).
-      // Enrichment fills region / country / locationName / location.
+      // of its licensed payload, so we keep it as-is.
       const items = await redisGet<ConflictArchiveItem[]>(LIVE_NEWS_NC_KEY);
       return {
         id: 'live-news-nc',
@@ -818,11 +900,10 @@ async function runEnrichment(): Promise<EnrichResult> {
         ttl: LIVE_NEWS_TTL_S,
         kind: 'live-news',
         skipSummary: true,
+        generateTitleSummary: false,
       };
     })(),
     (async (): Promise<Bucket> => {
-      // Conflict-archive v4 (Newscatcher) — populated by manual seed
-      // + organic growth from the live-news-nc bucket.
       const items = await redisGet<ConflictArchiveItem[]>(CONFLICT_ARCHIVE_NC_KEY);
       return {
         id: `${CONFLICT_BUCKET_ID}-nc`,
@@ -831,6 +912,7 @@ async function runEnrichment(): Promise<EnrichResult> {
         ttl: CONFLICT_ARCHIVE_TTL_S,
         kind: 'conflict',
         skipSummary: true,
+        generateTitleSummary: false,
       };
     })(),
   ]);
@@ -871,12 +953,21 @@ async function runEnrichment(): Promise<EnrichResult> {
       const conflictMissingLocation = bucket.kind === 'conflict'
         && !(item as ConflictArchiveItem).locationName;
 
-      // For licensed-API buckets we never re-generate `summary`, so its
-      // state shouldn't gate enrichment — only region (and locationName
-      // for conflicts) decide whether the LLM still needs to run.
-      const needsEnrichment = bucket.skipSummary
-        ? (!region || conflictMissingLocation)
-        : (!summary || !region || summaryTooShort || conflictMissingLocation);
+      // Decide whether this item still needs an LLM pass:
+      //   • Full LLM buckets (intel, legacy conflict): queue if summary
+      //     is missing/too-short OR region is missing OR (conflict)
+      //     locationName is missing.
+      //   • License-restricted buckets that use the API's summary
+      //     (Webz / Newscatcher): summary state is irrelevant — queue
+      //     only when region or (conflict) locationName is missing.
+      //   • License-restricted buckets that use a title-only LLM
+      //     summary (worldnews): queue when summary is missing (we own
+      //     that field) OR region/locationName are missing.
+      const needsTitleSummary = bucket.generateTitleSummary && !summary;
+      const needsRegion = !region;
+      const needsLocationName = conflictMissingLocation;
+      const needsFullSummary = !bucket.skipSummary && (!summary || summaryTooShort);
+      const needsEnrichment = needsTitleSummary || needsRegion || needsLocationName || needsFullSummary;
 
       if (needsEnrichment) {
         indices.push(i);
@@ -936,16 +1027,32 @@ async function runEnrichment(): Promise<EnrichResult> {
         // shapes are intentionally disjoint on the `summary` field —
         // TypeScript guides each writeback branch to the right one.
         if (bucket.skipSummary) {
-          const payload = await enrichOneLocationOnly(input);
+          // Always run the body-aware location-only call. When the
+          // bucket also wants a title-only summary (worldnews path),
+          // run it in parallel — the body is NEVER passed to that
+          // second call, so the summary text can't leak unlicensed
+          // article content.
+          const [payload, titleSummary] = await Promise.all([
+            enrichOneLocationOnly(input),
+            bucket.generateTitleSummary ? enrichOneTitleSummary(input) : Promise.resolve(null),
+          ]);
+
           if (payload) {
-            // conflict + live-news writeback shape. We never touch `summary`
-            // on these — the upstream licensed API's value stays.
+            // conflict + live-news writeback shape.
             const ci = item as ConflictArchiveItem;
             ci.region = payload.region;
             if (payload.country) ci.country = payload.country;
             if (payload.locationName) ci.locationName = payload.locationName;
             if (payload.lat != null && payload.lng != null) {
               ci.location = { latitude: payload.lat, longitude: payload.lng };
+            }
+            // Title-only summary: only writes when this bucket's
+            // generateTitleSummary flag is set (and the API didn't
+            // already ship one — defensive guard so a Webz/Newscatcher
+            // summary that happened to slip into a worldnews-shaped
+            // item isn't clobbered).
+            if (bucket.generateTitleSummary && titleSummary && !ci.summary) {
+              ci.summary = titleSummary.summary;
             }
             // The explicit isConflict flag drives the iOS CONFLICT chip
             // and our copy-to-archive step in the post-runner block.
