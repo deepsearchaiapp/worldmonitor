@@ -79,12 +79,20 @@
 
   main {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* auto-fit so the layout works for any provider count (4 in Live /
+       Conflict modes, 3 in Raw Samples mode), and adapts to viewport. */
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 16px;
     padding: 16px 20px;
   }
-  @media (max-width: 1100px) { main { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 640px)  { main { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) { main { grid-template-columns: 1fr; } }
+
+  /* Envelope card (Raw Samples tab) — shows the top-level wrapper keys
+     of the upstream response so users can compare `totalResults`,
+     `requestsLeft`, `clusters_count`, etc. side-by-side. */
+  details.item.envelope { border-color: var(--amber); }
+  details.item.envelope summary { background: rgba(255, 183, 77, 0.06); }
+  details.item.envelope .item-title { color: var(--amber); }
 
   .col {
     background: var(--surface);
@@ -160,7 +168,8 @@
     padding: 0 10px 10px;
     border-top: 1px solid var(--border);
   }
-  pre.json {
+  /* JSON tree — every object / array is a native <details> element. */
+  .json-tree {
     margin: 8px 0 0;
     padding: 10px;
     background: var(--bg);
@@ -169,15 +178,58 @@
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     font-size: 10.5px;
     line-height: 1.55;
-    overflow-x: auto;
-    white-space: pre;
     color: var(--text);
+    overflow-x: auto;
   }
-  .json-key    { color: var(--cyan); }
+  .json-line   { padding: 1px 0; white-space: pre; }
+  .json-block  { display: block; }
+  .json-block > .json-summary {
+    cursor: pointer;
+    user-select: none;
+    padding: 1px 0;
+    list-style: none;
+    white-space: pre;
+  }
+  .json-block > .json-summary::-webkit-details-marker { display: none; }
+  .json-block > .json-summary::before {
+    content: '▼';
+    color: var(--text-3);
+    display: inline-block;
+    width: 12px;
+    font-size: 8px;
+    margin-right: 2px;
+  }
+  .json-block:not([open]) > .json-summary::before { content: '▶'; }
+  .json-children {
+    margin-left: 14px;
+    border-left: 1px dotted var(--border);
+    padding-left: 6px;
+  }
+  /* The "{ 5 keys }" counter only makes sense when the block is closed —
+     once it's open the children list IS the content. */
+  .json-block[open] > .json-summary > .json-meta { display: none; }
+  .json-meta  { color: var(--text-3); margin: 0 4px; font-size: 9.5px; font-style: italic; }
+  .json-punct { color: var(--text-2); }
+  .json-key   { color: var(--cyan); }
   .json-string { color: var(--string); }
   .json-number { color: var(--amber); }
   .json-bool   { color: var(--purple); }
   .json-null   { color: var(--text-3); }
+
+  /* "Copy JSON" button on each article. */
+  .json-toolbar { display: flex; justify-content: flex-end; margin-top: 6px; }
+  button.copy-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    padding: 3px 10px;
+    font-size: 10px;
+    border-radius: 4px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  button.copy-btn:hover { color: var(--text); border-color: var(--cyan); }
+  button.copy-btn.copied { color: var(--green); border-color: var(--green); }
 
   .empty {
     padding: 24px 14px;
@@ -220,6 +272,7 @@
     <div class="tab-group" id="tabs">
       <button class="tab active" data-feed="live">Live News</button>
       <button class="tab" data-feed="conflict">Conflict Archive</button>
+      <button class="tab" data-feed="samples">Raw Samples</button>
     </div>
     <input
       type="password"
@@ -234,7 +287,721 @@
 <main id="grid"></main>
 
 <script>
-'use strict';
+    // ── Hardcoded raw upstream samples ───────────────────────────────
+    // Captured by `scripts/probe-*` and pasted in for offline display.
+    // Used by the 'Raw Samples' tab. Refreshing the tab does not re-fetch.
+    // To refresh, re-run the probes and regenerate this block.
+    const SAMPLES = {
+      "worldnews": {
+        "offset": 0,
+        "number": 3,
+        "available": 1647,
+        "news": [
+          {
+            "id": 431596364,
+            "title": "Four To Try: New CBD Bakeries for Sourdough, Salt Bread and “Melbourne-Style Cookies”",
+            "text": "If there’s one thing Melbourne simply cannot get enough of, it’s new bakeries. Here are four more to add to your ever-growing hit list. Bloomwood, CBD When Bloomwood burst onto Melbourne’s cafe scene in 2024, it quickly became a destination for its Asian-influenced viennoiserie. So far, the team has dreamt up inventions like Korean corn cheese danishes, pandan pain suisse and a limited-edition pastry that echoes Chinese tangyuan (sweet rice balls) with mochi, black-sesame custard and ginger-and-sesame cream – all served alongside a menu of specialty matcha and coffee drinks. Last month, the team opened a second location at Bourke Street’s Galleria. Head baker Max Loh, who previously led the kitchen at Bakemono and did a stint as senior chef de partie at the acclaimed Logan Brown in Wellington, New Zealand, pushes the menu towards “items that are more easily paired with daily coffees”, founder Brian Taing told Broadsheet. Find buttery shio pan in special flavours such as ube, salted egg yolk, garlic cream cheese, mentaiko (cod roe) and Hokkaido milk. Plus, croissants, scrolls, toasties and bagels. Cobb Lane, CBD When former Vue de Monde chef Matt Forbes opened the first Cobb Lane in Yarraville in 2013, he said a CBD location felt out of reach. But Cobb Lane quietly gained a following for its 36-hour-fermented sourdough and, by 2022, the petite inner-west cafe (originally on Anderson Street, now on Taylor Street) had expanded into markets in Richmond and South Melbourne. It now provides doughnuts, cookies, viennoiserie and other bakes to more than 200 cafes around Melbourne. In April, Forbes and his business and life partner Amy Newman opened a bakery on Bennetts Lane, just behind Caretaker’s Cottage. Raw products are prepared at the Yarraville bakery, transported, then baked in one of the deck ovens on-site, so the smell of freshly baked bread perpetually wafts through the air. And you’ll find Cobb Lane’s pork-and-fennel sausage rolls and cheesy vego pies as well as a hot version of English pork pie. Bread K, CBD When Korean bakery Bread K opened in Moonee Ponds in 2024, sogeum-ppang (Korean salt bread) was popular, but nowhere near as prevalent in Melbourne as it is now. The small bakery quickly gained a following for its large variety of sogeum-ppang and other Korean baked goods, including soboro buns and chewy “dinosaur egg” bread, which is made with glutinous rice flour, matcha and black sesame. In March, Bread K opened a city store, bringing its Korean bakes to Sutherland Street. Everything is made at the Moonee Ponds location, but there are some CBD-exclusive items such as soboro buns filled with basil cream cheese, and cream buns stuffed with red bean paste and fresh cream. The casual spot is self-serve, so pick up a tray and load it up. Bake Stand, CBD Every so often, someone opens up shop in hopes of becoming the new “it” cookie. But unlike American chains Levain, Milk Bar and Crumble, the latest contender is a Melbourne-born brand, Bake Stand. After opening the first Bake Stand at Melbourne Central last month, founders Vi Thao Tran and pastry chef Steven He (Le Yeahllow) have already expanded with a second location inside Melbourne Walk – officially opening on Thursday May 28 – and plan to open a third Bake Stand at Hyde Melbourne Place before the year’s end. Bake Stand specialises in “Melbourne-style cookies”, which Tran and He say are defined by crisp edges, a chewy centre and their large size (10-centimetre diameter). Flavours include hojicha and milk chocolate; dark chocolate and sea salt; and matcha, strawberry and white chocolate. Each is made with Valrhona chocolate and cultured butter from Sydney-based Pepe Saya. Additional reporting by Haymun Win",
+            "url": "https://www.broadsheet.com.au/melbourne/food-and-drink/article/new-cbd-bakeries-may-2026",
+            "image": "https://cdn.broadsheet.com.au/images/2026/03/27/Cobb Lane - CBD - March 2026 - 5-99766262c1.webp",
+            "video": null,
+            "publish_date": "2026-05-14 16:55:00",
+            "author": "Audrey Payne",
+            "authors": [
+              "Audrey Payne"
+            ],
+            "language": "en",
+            "source_country": "au",
+            "sentiment": 0.673
+          },
+          {
+            "id": 431577798,
+            "title": "A Local Pour for Every Mood: Where To Drink Victorian Spirits Right Now",
+            "text": "There’s no single way to drink local. Some nights call for something sharp and citrus-led, while others suit a Martini with a little olive brine, or a rich whisky Manhattan. That’s the thinking behind Serves of the State, a three-week celebration pairing 45 Victorian distilleries with 15 venues across Melbourne and Victoria, each creating bespoke cocktails that reflect the breadth of the state’s spirits scene. From May 25 to June 14, those venues will each pour three uniquely Victorian cocktails – spanning everything from coastal gin and native botanicals to coffee liqueurs, agave spirits and single malt whisky. As you try them, you can scan a QR code in-venue to vote for your favourite, helping crown Victoria’s Serve of the State. You’ll also go into the draw to win a VIP countryside distillery tour, curated and hosted by Vic Distilled ambassador Tayla Kendall. Whether you lean bright and floral, rich and spirit-forward, or somewhere closer to dessert, there’s a Victorian cocktail with your name on it. Bright and citrusy If sharp, citrus-led drinks are your thing, Hazel is a strong place to start. The Passionfruit and Lemon Myrtle Gimlet keeps the structure of the classic but brightens it with passionfruit and native lemon myrtle syrup. At Springrock, Blushing Duck pairs Angry Duck gin with Lillet Rosé, lemon and grapefruit rosella, while Bush Point balances blanco spirit with lime, verjus and bush salt. Backspace’s Callipo Sour goes all in on Amore Limoncello, yuzu and lemon, while Go FIGure leans aperitivo-style with burnt fig gin and Fernet Branca. At Death & Co, East 87 Hold Up runs tropical with passionfruit and pineapple with Fellow Vanilla and Cream vodka, while Chambray bringsBass & Flinders Noble Stranger Australian brandy, cinnamon and muddled strawberry. Whisky and Alement’s Apple Cart Elixir mixes Melbourne Moonshine Apple Pie Shine with lemon and grapefruit soda, while Mr Mills serves Army & Navy with Patient Wolf Pink Lake gin, grapefruit cordial and alpine strawberry. At The Pinnacle, The Pinny Spritz keeps things easy with aperitivo, prosecco and white chocolate-washed whisky. Jackalope’s Doot Doot Doot pours the Antipodes Gin Highball with apricot and soda, plus Chief’s Son Highball with pineapple and passionfruit. At Moondrop, The Third Date layers Tano Spirits Jagari shochu black koji, yuzushu and hot honey, while Grainery Lane’s Elderfashioned lands between citrus aperitif and Martini with the use of their house Elderflower and London Dry gins. Fruity and refreshing Some drinks are less about structure and more about mood. At Union Electric, Brooklyn In The Summer does exactly what the name promises: think Here's Looking At You Kid Yam Daisy gin, coconut and lemongrass syrup, lemon and aloe vera juice. At Black Kite Commune, Instupituous leans juicy, layering Penni Ave 16th Beach vodka, advocaat, lemon juice and Illawarra plum with lemonade. Bar Selecta keeps things playful with Luna City Pop Highball using Puss & Mew Navy Strength gin, Dragon Hime Gimlet using Herbit Blue Dragon gin and Ichigo Shiso Bramble using Envy Navy gin – all floral, fruit-forward and bright. Dom's Social Club’s Echuca Distillery Diablo blends Echuca Distillery Gold Agave Spirit, cassis and raspberry tea syrup, and the Quiet Corner Distillery Billionaire uses Quiet Corner Distillery Absinthe and bourbon, along with lemon juice, housemade grenadine and absinthe. Reed House’s Purple Dragon combines Little Lon Miss Yoko Lychee gin with dragonfruit and mint, while The Pinnacle’s Wombat Shakerato adds rye, cider and yuzu. Meanwhile, at Hazel, the Box Cutter Spritz mixes Jimmy Rum Navy with pink lady apple, grape and elderflower, while Strawberry Valentino brings together Bellicose pink gin and strawberry oleo. Savoury and Martini territory If your default order starts with “dirty”, this is your section. At Doot Doot Doot, the Mornington Distillery Martini keeps things savoury. Send For Kelp gin is stirred with white flower vermouth and purple basil brine, then finished with basil oil. At Mr Mills, the Pine & Vetiver Martini moves in a greener direction, layering Holcombe’s Spirit Sisters gin with vetiver, alpine bitters and dry vermouth. The Pinnacle offers a sharper take with The Pinny Martini, where MGC - Melbourne Gin Co. Single Shot gin, dry vermouth, fino and dry orange pull the drink towards something cleaner and more citrus-led. Whisky and Alement’s Sesame Sippin’ brings Backwoods Single Malt whisky, mirin and honey, while Black Kite Commune’s Interspectacular finishes with Macedon Distillery Mastiha and mascarpone cream. Rich and spirit-forward For slower drinking, Whisky and Alement and Reed House are strong starts. Apple of My Rye mixes Kinglake breakfast rye cask with Suze and honey-apple cordial, while Blackthorn Royale brings Recollection Spirits sour cherry nalyvka and whisky together. Back at Union Electric, The Priest & The Beast pulls together Black Sheep Hooch, Benedictine, pear and brown sugar syrup for something rounded and softly spiced. Elsewhere, Moondrop's None Of Your Beeswax adds Shaw's Red Wheat vodka with yuzushu, fino sherry and beezwax. And Backspace’s All-Father finishes somewhere between an Old Fashioned and a dessert pour, combining In Good Spirits Butterscotch Whisky, corn whisky, dry vermouth and amaretto. Sweet and dessert-like Some drinks are best ordered instead of dessert. At Dom's Social Club, that means the Seven Spice Chai Espresso Martini, where Hillmartin Distillery Seven Spice Chai gin joins coffee liqueur, cold brew espresso and vanilla sugar syrup, finished with salted cinnamon sugar. Grainery Lane’s Laneway Confidential riffs on Irish coffee with their own rum, while The Blind Tiger leans creamy with crème de cacao with their own gin. At Black Kite Commune, Fantabulous brings Daylesford Spirit Blueberry gin, watermelon and tropical fruit into the mix. Waggle Dance by Union Electric mixes Mates Gin Distillery's Sweet Surrender gin with yellow chartreuse and honey syrup. Whisky and Alement’s Midnight Mocha mixes Infusa Cappuccino, rye and chocolate bitters. At Moondrop, The Last Slice folds Johnnie Walker Black Label, cacao husk pastis, banana and milk punch into dessert form. The Coffee and Fig highball from Mr Mills spotlights That Spirited Lot Coffee vodka with a touch of sherry and fig aperitif. Apollo Bay Distillery gin is the main character in Springrock's Golden Wattle featuring orange, honey and vanilla. And Death & Co’s Beach Goth finishes with Starward Two Fold, banana liqueur and crème de cacao. This article is produced by Broadsheet in partnership with Vic Distilled. Check out all the participating bars and what they’re offering at Serves of the State at vicdistilled.com.au.",
+            "url": "https://www.broadsheet.com.au/melbourne/food-and-drink/article/victoria-spirits-melbourne-bars-cocktails",
+            "image": "https://cdn.broadsheet.com.au/images/2026/05/12/Spirits Victoria Phase Two - Lumea Photo, Amy Hemmings - April 26 156-a6ff1d5ce6.webp",
+            "video": null,
+            "publish_date": "2026-05-14 15:46:00",
+            "author": "Pauline de Leon",
+            "authors": [
+              "Pauline de Leon"
+            ],
+            "language": "en",
+            "category": "politics",
+            "source_country": "au",
+            "sentiment": 0.872
+          },
+          {
+            "id": 431555764,
+            "title": "Your Snack Cravings Are Sorted With This Surry Hills Pub’s Cracking Aperitivo Hour",
+            "text": "There are few better ways to kick off a night out than an aperitivo hour. You can’t go wrong with a snack plate paired with an excellent drink – especially at a Surry Hills staple. We’ve teamed up with Red Rock Deli to throw a weekend-long aperitivo hour at neighbourhood favourite The White Horse. We’re taking the decision paralysis out of food and drink matching by offering paired snacks and cocktails. From May 21 to May 24, the neighbourhood spot is serving dishes from the mind of executive chef Jun Hwang, all of which creatively incorporate the Deli Style Crackers by Red Rock Deli. Four food and drink pairings will be available from 3pm to 5pm on Thursday, and 12pm to 5pm from Friday to Sunday. Korean-style fried chicken will get the Sweet Chilli & Sour Cream cracker treatment. Chicken is cracker-crusted and fried until crisp, dressed in a sweet chilli sauce, then finished with cracker crumb and spring onions, and served with more crackers on the side. This is served alongside a Margarita with lemongrass-infused tequila, juiced cucumber, habanero-infused agave, fresh lime and spiced salt. If you want to start your night with a spicy kick and tropical chaser, this one’s for you. Cheddar & Parmesan crackers keep things simple but elegant. Go for a canapé-style plate of comté-miso mousse piped onto the crackers, topped with shaved brie snow. This is paired with a Dirty Gin & Tonic made with blue-cheese-infused gin, olive brine, Mediterranean tonic and olives. If you like a combination of sweet and smoky, try Honey Soy Chicken crackers served with confit duck leg rillettes, hoisin and crème fraîche. This one is on the snackier side and comes with a Brown Butter Derby: brown-butter fat-washed bourbon, grapefruit, honey syrup, Angostura bitters, cinnamon and a grapefruit twist. And if you feel it’s not a proper aperitivo hour without something more Italian, The White Horse has you covered. The kitchen tops the Sea Salt & Balsamic Vinegar flavoured crackers with stracciatella, balsamic-pickled cherry tomato and nori. It’s matched with the Caprese cocktail – tomato- and basil-infused vodka washed in olive oil, with balsamic vinegar, Bianco vermouth, and garnished with cherry tomato and mozzarella. When it comes to aperitivo hour, there’s no question Italy does it best – but Sydney isn’t far behind. Grab your friends, order a drink and expand your palate at this beloved neighbourhood watering hole. This article is produced by Broadsheet in partnership with Red Rock Deli.",
+            "url": "https://www.broadsheet.com.au/sydney/food-and-drink/article/the-white-horse-aperitivo-hour-surry-hills",
+            "image": "https://cdn.broadsheet.com.au/images/2026/05/12/RRD_Yusuke_Oba_May_2026_40-5eccccf357.webp",
+            "video": null,
+            "publish_date": "2026-05-14 13:42:00",
+            "author": "Scott Renton",
+            "authors": [
+              "Scott Renton"
+            ],
+            "language": "en",
+            "source_country": "au",
+            "sentiment": 0.598
+          }
+        ]
+      },
+      "webz": {
+        "posts": [
+          {
+            "thread": {
+              "uuid": "c0a80a79cd4f554fa1bdff52f4e4d904bb2833e2",
+              "url": "https://www.cbsnews.com/news/alex-murdaugh-trial-paul-murdaugh-testified-from-grave-to-help-convict-father/",
+              "site_full": "www.cbsnews.com",
+              "site": "cbsnews.com",
+              "site_section": "https://www.thebestmix1055.com/feed/",
+              "site_categories": [
+                "sport",
+                "disaster and accident",
+                "weather",
+                "television",
+                "politics",
+                "entertainment",
+                "human interest",
+                "media",
+                "economy, business and finance",
+                "crime, law and justice"
+              ],
+              "section_title": "Fremont",
+              "title": "How Paul Murdaugh testified \"from the grave\" to help convict his father",
+              "title_full": "How Paul Murdaugh testified \"from the grave\" to help convict his father",
+              "published": "2026-05-13T22:19:00.000+03:00",
+              "replies_count": 0,
+              "participants_count": 1,
+              "site_type": "news",
+              "country": "US",
+              "main_image": "https://assets2.cbsnewsstatic.com/hub/i/r/2023/03/05/e0271821-105f-4287-9477-4503596eab89/thumbnail/1200x630/cb25521f86796cdf9bb4f1f187d45ec3/murdaugh-trio.jpg",
+              "performance_score": 10,
+              "domain_rank": 639,
+              "domain_rank_updated": "2026-05-11T00:00:00.000+03:00",
+              "social": {
+                "updated": "2026-05-13T23:44:54.000+00:00",
+                "facebook": {
+                  "likes": 1778,
+                  "comments": 669,
+                  "shares": 228
+                },
+                "vk": {
+                  "shares": 0
+                }
+              }
+            },
+            "uuid": "c0a80a79cd4f554fa1bdff52f4e4d904bb2833e2",
+            "url": "https://www.cbsnews.com/news/alex-murdaugh-trial-paul-murdaugh-testified-from-grave-to-help-convict-father/",
+            "ord_in_thread": 0,
+            "parent_url": null,
+            "author": "Digital Team",
+            "published": "2026-05-13T22:19:00.000+03:00",
+            "title": "How Paul Murdaugh testified \"from the grave\" to help convict his father",
+            "text": "How Paul Murdaugh testified \"from the grave\" to help convict his father\nCASE UPDATE: On May 13, 2026, the South Carolina Supreme Court overturned Alex Murdaugh's double murder convictions and granted ...",
+            "highlightText": "",
+            "highlightTitle": "",
+            "highlightThreadTitle": "",
+            "language": "english",
+            "sentiment": "neutral",
+            "categories": [
+              "Crime, Law and Justice"
+            ],
+            "external_links": [],
+            "external_images": [],
+            "entities": {
+              "persons": [],
+              "organizations": [],
+              "locations": []
+            },
+            "rating": null,
+            "crawled": "2026-05-13T22:27:14.948+03:00",
+            "updated": "2026-05-13T23:44:54.000+00:00"
+          },
+          {
+            "thread": {
+              "uuid": "d858ed0f2ac8d50e882a862188cb50ae86ab0cc7",
+              "url": "https://www.foxnews.com/video/5614615980001",
+              "site_full": "www.foxnews.com",
+              "site": "foxnews.com",
+              "site_section": "https://revolver.news/feed",
+              "site_categories": [
+                "politics",
+                "crime, law and justice",
+                "sport",
+                "arts, culture and entertainment",
+                "media"
+              ],
+              "section_title": "Revolver News",
+              "title": "LIVE NOW: Trump, Xi bilateral meeting officially underway…",
+              "title_full": "LIVE NOW: Trump, Xi bilateral meeting officially underway…",
+              "published": "2026-05-14T06:22:00.000+03:00",
+              "replies_count": 0,
+              "participants_count": 1,
+              "site_type": "news",
+              "country": "US",
+              "main_image": "https://a57.foxnews.com/cf-images.us-east-1.prod.boltdns.net/v1/static/694940094001/15de0523-3be4-4a9a-8159-7020114e7036/b6ff623a-26d6-4fd9-8bb8-0856adbf38ce/1280x720/match/1024/512/image.jpg?ve=1&tl=1",
+              "performance_score": 10,
+              "domain_rank": 461,
+              "domain_rank_updated": "2026-05-11T00:00:00.000+03:00",
+              "social": {
+                "updated": "2026-05-14T04:21:29.000+00:00",
+                "facebook": {
+                  "likes": 16609,
+                  "comments": 7369,
+                  "shares": 39668
+                },
+                "vk": {
+                  "shares": 12
+                }
+              }
+            },
+            "uuid": "d858ed0f2ac8d50e882a862188cb50ae86ab0cc7",
+            "url": "https://www.foxnews.com/video/5614615980001",
+            "ord_in_thread": 0,
+            "parent_url": null,
+            "author": "Dylan Howard",
+            "published": "2026-05-14T06:22:00.000+03:00",
+            "title": "LIVE NOW: Trump, Xi bilateral meeting officially underway…",
+            "text": "Log in to comment on videos and join in on the fun.\nWatch the live stream of Fox News and full episodes.\nReduce eye strain and focus on the content that matters.\nFox News Channel",
+            "highlightText": "",
+            "highlightTitle": "",
+            "highlightThreadTitle": "",
+            "language": "english",
+            "sentiment": "neutral",
+            "categories": [
+              "Politics"
+            ],
+            "external_links": [],
+            "external_images": [],
+            "entities": {
+              "persons": [],
+              "organizations": [],
+              "locations": []
+            },
+            "rating": null,
+            "crawled": "2026-05-14T07:15:27.816+03:00",
+            "updated": "2026-05-14T04:23:23.000+00:00"
+          },
+          {
+            "thread": {
+              "uuid": "309b210b6d836e12003353257925d64353689f41",
+              "url": "https://www.ctvnews.ca/montreal/photos/2026/05/12/unsolved-and-cold-cases-in-montreal/",
+              "site_full": "www.ctvnews.ca",
+              "site": "ctvnews.ca",
+              "site_section": "https://www.ctvnews.ca/montreal",
+              "site_categories": [
+                "politics",
+                "crime, law and justice",
+                "under_construction",
+                "health",
+                "sport",
+                "cold_and_flu",
+                "economy, business and finance",
+                "disaster and accident",
+                "media"
+              ],
+              "section_title": "Montreal: Local News, Weather &amp; Traffic Updates",
+              "title": "IN PHOTOS: Unsolved and cold cases in Montreal - CTVNews",
+              "title_full": "IN PHOTOS: Unsolved and cold cases in Montreal - CTVNews",
+              "published": "2026-05-12T17:32:00.000+03:00",
+              "replies_count": 0,
+              "participants_count": 0,
+              "site_type": "news",
+              "country": "CA",
+              "main_image": "https://www.ctvnews.ca/resizer/v2/45TTIMJNTZEDPDT2VRAIQQPK3I.png?smart=true&amp;auth=da56b21807a3a637a8103f937ba9b84918b5822fd04fd5f16c843541955678c2&amp;width=1200&amp;height=630",
+              "performance_score": 10,
+              "domain_rank": 2990,
+              "domain_rank_updated": "2026-05-11T00:00:00.000+03:00",
+              "social": {
+                "updated": "2026-05-12T21:41:20.000+00:00",
+                "facebook": {
+                  "likes": 8145,
+                  "comments": 6923,
+                  "shares": 39391
+                },
+                "vk": {
+                  "shares": 0
+                }
+              }
+            },
+            "uuid": "309b210b6d836e12003353257925d64353689f41",
+            "url": "https://www.ctvnews.ca/montreal/photos/2026/05/12/unsolved-and-cold-cases-in-montreal/",
+            "ord_in_thread": 0,
+            "parent_url": null,
+            "author": null,
+            "published": "2026-05-12T17:32:00.000+03:00",
+            "title": "IN PHOTOS: Unsolved and cold cases in Montreal - CTVNews",
+            "text": "ADVERTISEMENT\nIN PHOTOS: Unsolved and cold cases in Montreal\nSome cases remain open for years – or even decades – without answers. With no new leads, they go cold, despite the best efforts of investig...",
+            "highlightText": "",
+            "highlightTitle": "",
+            "highlightThreadTitle": "",
+            "language": "english",
+            "sentiment": "neutral",
+            "categories": [
+              "Crime, Law and Justice"
+            ],
+            "external_links": [],
+            "external_images": [],
+            "entities": {
+              "persons": [],
+              "organizations": [],
+              "locations": [
+                {
+                  "name": "Montreal",
+                  "sentiment": "none"
+                }
+              ]
+            },
+            "rating": null,
+            "crawled": "2026-05-13T00:40:13.397+03:00",
+            "updated": "2026-05-12T21:42:55.000+00:00"
+          }
+        ],
+        "totalResults": 911477,
+        "moreResultsAvailable": 911467,
+        "next": "/newsApiLite?token=<REDACTED>&ts=1778501247199&q=language%3Aenglish+thread.country%3A%28US+OR+GB+OR+AU+OR+CA%29&sort=relevancy&order=desc&from=10&ns=67.0504&ni=30ac0434655ac5aefceb0eeb3fddf24befe0ded3&highlight=true&size=10",
+        "requestsLeft": 975,
+        "warnings": null
+      },
+      "newscatcher": {
+        "status": "ok",
+        "total_hits": 10000,
+        "page": 1,
+        "total_pages": 3334,
+        "page_size": 3,
+        "clusters_count": 3,
+        "clusters": [
+          {
+            "cluster_id": "17862745653720110310",
+            "cluster_size": 1,
+            "articles": [
+              {
+                "title": "2026 College of Pharmacy Doctor of Pharmacy Commencement Ceremony",
+                "author": "John Mathias",
+                "authors": [
+                  "Sitenow",
+                  "Sitenow.Uiowa.Edu",
+                  "John Mathias"
+                ],
+                "journalists": [
+                  "John Mathias"
+                ],
+                "published_date": "2026-05-14 10:00:00",
+                "published_date_precision": "timezone unknown",
+                "updated_date": null,
+                "updated_date_precision": null,
+                "link": "https://now.uiowa.edu/event/22050/0",
+                "domain_url": "uiowa.edu",
+                "full_domain_url": "now.uiowa.edu",
+                "name_source": "University of Iowa",
+                "is_headline": true,
+                "paid_content": false,
+                "parent_url": "https://now.uiowa.edu",
+                "country": "US",
+                "rights": "uiowa.edu",
+                "rank": 1197,
+                "media": "https://now.uiowa.edu/profiles/custom/sitenow/assets/favicon.ico",
+                "language": "en",
+                "description": null,
+                "content": "Join us as we celebrate the Class of 2026 PharmD graduates! Doors will open one hour prior to ceremony start. No tickets required.\nDistinguished Commencement Speaker:\nJeffrey Reist, '82 BSPh, PharmD, BCPS\nAssociate Professor Emeritus, University of Iowa College of Pharmacy\nEvent will be livestreamed here:\nhttps://commencement.uiowa.edu/ceremony/spring-2026/2026-college-pharmacy-doctor-pharmacy-commencement-ceremony",
+                "word_count": 47,
+                "is_opinion": false,
+                "twitter_account": null,
+                "all_links": [
+                  "https://www.twitter.com/uiowa",
+                  "https://www.facebook.com/universityofiowa",
+                  "https://www.linkedin.com/edu/school?id=18228&trk=tyah&trkInfo=tas%3Auniversity%20of%20iowa%2Cidx%3A5-1-8",
+                  "https://www.youtube.com/user/universityofiowa",
+                  "https://www.instagram.com/uiowa/"
+                ],
+                "all_domain_links": [
+                  "twitter.com",
+                  "youtube.com",
+                  "linkedin.com",
+                  "instagram.com",
+                  "facebook.com"
+                ],
+                "nlp": {
+                  "theme": "General",
+                  "summary": "Jeffrey Reist, '82 BSPh, PharmD, BCPS, is the Distinguished Commencement Speaker at the University of Iowa College of Pharmacy's spring ceremony. The event will be livestreamed here:https://commencement.uiowa.edu/ceremony/spring-2026.",
+                  "sentiment": {
+                    "title": 0.0,
+                    "content": 0.9815
+                  },
+                  "ner_PER": [
+                    {
+                      "entity_name": "Jeffrey Reist",
+                      "count": 1
+                    }
+                  ],
+                  "ner_ORG": [
+                    {
+                      "entity_name": "PharmD",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "BCPS",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "University of Iowa College of Pharmacy",
+                      "count": 1
+                    }
+                  ],
+                  "ner_MISC": [],
+                  "ner_LOC": []
+                },
+                "id": "59f39fe6a3cbc128445894a70f39610a",
+                "score": 0.0,
+                "additional_domain_info": null
+              }
+            ]
+          },
+          {
+            "cluster_id": "218957876317849510",
+            "cluster_size": 1,
+            "articles": [
+              {
+                "title": "The largest bird to ever live",
+                "author": "",
+                "authors": [],
+                "journalists": [],
+                "published_date": "2026-05-14 11:59:00",
+                "published_date_precision": "timezone unknown",
+                "updated_date": null,
+                "updated_date_precision": null,
+                "link": "https://www.ipm.org/show/amomentofscience/2022-05-05/the-largest-bird-to-ever-live",
+                "domain_url": "ipm.org",
+                "full_domain_url": "ipm.org",
+                "name_source": "IPM Journal",
+                "is_headline": true,
+                "paid_content": false,
+                "parent_url": "https://www.ipm.org/show",
+                "country": "US",
+                "rights": "ipm.org",
+                "rank": 38146,
+                "media": "https://npr.brightspotcdn.com/dims4/default/3f0742f/2147483647/strip/true/crop/800x420+0+56/resize/1200x630!/quality/90/?url=http%3A%2F%2Fnpr-brightspot.s3.amazonaws.com%2Flegacy%2Fimages%2Famos-images%2Felephant_bird_egg.jpg",
+                "language": "en",
+                "description": "The appropriately named elephant bird was the largest bird to ever live. Learn more about this impressive creature with A Moment of Science!",
+                "content": "Elephant birds are aptly named. Not only were they the biggest birds to have ever lived, their taxonomy has inspired big debate.\nWould you risk goading this avian with the insult, 'Hey, bird brain?' Not likely. The herbivorous elephant birds lived on Madagascar, once home to megafauna such as giant lemurs and tortoises. The elephant birds fit right in. Based on skeletal remains, scientists calculate that the largest known specimen stood almost ten feet high, and weighed nearly 1,700 pounds. That's taller than, well, Big Bird from Sesame Street, and heavier than the average polar bear. With powerful legs ending in sharp talons, an elephant bird made a fearsome sight.\nAbout a millennium ago, the formidable fowl was wiped out, likely due in part to egg poaching by hungry humans. At thirteen inches long, the elephant bird's egg is the largest egg of any animal ever—larger, even, than a dinosaur egg.\nImpressed? So were researchers in the 1800s. Each hoping to proclaim a new discovery, they hotly debated the number of species, the significance of bone fragments, and how big the elephant bird truly was. The great debate resulted in a jumbled, contradictory taxonomy. What was the true history of the feathered giant? Only recently have scientists sorted elephant birds into three genuses and four species.\nBirds of fantastical size and shape haunt the pages of the Arabian Nights and journals from Marco Polo. Were these stories based on sightings of a real-life elephant bird? We may never know. Yet the remarkable elephant bird still stands tall—no longer on land, it now towers in our imagination.\nReviewer: Matthew Phillips, Queensland University of Technology\nRead more\nSources\nElephant birds are aptly named. Not only were they the biggest birds to have ever lived, their taxonomy has inspired big debate.\nWould you risk goading this avian with the insult, 'Hey, bird brain?' Not likely. The herbivorous elephant birds lived on Madagascar, once home to megafauna such as giant lemurs and tortoises. The elephant birds fit right in. Based on skeletal remains, scientists calculate that the largest known specimen stood almost ten feet high, and weighed nearly 1,700 pounds. That's taller than, well, Big Bird from Sesame Street , and heavier than the average polar bear. With powerful legs ending in sharp talons, an elephant bird made a fearsome sight.\nAbout a millennium ago, the formidable fowl was wiped out, likely due in part to egg poaching by hungry humans. At thirteen inches long, the elephant bird's egg is the largest egg of any animal ever—larger, even, than a dinosaur egg.\nImpressed? So were researchers in the 1800s. Each hoping to proclaim a new discovery, they hotly debated the number of species, the significance of bone fragments, and how big the elephant bird truly was. The great debate resulted in a jumbled, contradictory taxonomy. What was the true history of the feathered giant? Only recently have scientists sorted elephant birds into three genuses and four species.\nBirds of fantastical size and shape haunt the pages of the Arabian Nights and journals from Marco Polo. Were these stories based on sightings of a real-life elephant bird? We may never know. Yet the remarkable elephant bird still stands tall—no longer on land, it now towers in our imagination.",
+                "word_count": 542,
+                "is_opinion": false,
+                "twitter_account": null,
+                "all_links": [
+                  "https://wtiu.careasy.org/home",
+                  "https://indianapublicmedia.org/amomentofscience/insects-huge.php",
+                  "https://www.facebook.com/amomentofscience/",
+                  "https://f.prxu.org/4317/feed-rss.xml",
+                  "https://doi-org.proxyiub.uits.iu.edu/10.1098/rsos.181295",
+                  "https://youtube.com/wtiunewsbreak/",
+                  "https://www.iu.edu/index.html",
+                  "https://www.smithsonianmag.com/smart-news/giant-intact-egg-extinct-elephant-bird-found-buffalo-museum-180968850/",
+                  "https://ipbs.org/",
+                  "https://www.iu.edu/copyright/index.html#complaints",
+                  "https://www.reddit.com/submit?url=",
+                  "https://www.nationalgeographic.com/science/article/the-surprising-closest-relative-of-the-huge-elephant-birds",
+                  "https://twitter.com/intent/tweet?url=",
+                  "http://wtiu.org/vehicle",
+                  "https://www.bbc.com/",
+                  "https://youtube.com/WTIUtheweeklyspecial/",
+                  "http://www.npr.org/",
+                  "https://video.indianapublicmedia.org/",
+                  "https://www.nytimes.com/2018/09/26/science/largest-elephant-bird.html",
+                  "https://open.spotify.com/show/3tZO0UMnKCRPz3wG9YNVEA",
+                  "https://www.indiana.edu/",
+                  "https://www.facebook.com/sharer/sharer.php?u=",
+                  "https://indianapublicmedia.org/amomentofscience/saber-toothed-tigers-were-really,-really-big.php",
+                  "https://www.youtube.com/@AMomentofSciencePBS",
+                  "https://podcasts.apple.com/us/podcast/a-moment-of-science/id1483949853",
+                  "https://indianapublicmedia.org/amomentofscience/did-climate-change-kill-north-americas-mammals.php",
+                  "https://www.pbs.org",
+                  "https://apts.org/",
+                  "https://www.americanpublicmedia.org/",
+                  "https://www.mphillipsbiol.com/",
+                  "https://youtube.com/wtiu/",
+                  "https://api.whatsapp.com/send?text=",
+                  "https://x.com/momentofscience"
+                ],
+                "all_domain_links": [
+                  "reddit.com",
+                  "x.com",
+                  "nytimes.com",
+                  "nationalgeographic.com",
+                  "careasy.org",
+                  "apple.com",
+                  "ipbs.org",
+                  "prxu.org",
+                  "npr.org",
+                  "indianapublicmedia.org",
+                  "smithsonianmag.com",
+                  "indiana.edu",
+                  "whatsapp.com",
+                  "pbs.org",
+                  "americanpublicmedia.org",
+                  "wtiu.org",
+                  "apts.org",
+                  "twitter.com",
+                  "spotify.com",
+                  "bbc.com",
+                  "youtube.com",
+                  "mphillipsbiol.com",
+                  "facebook.com",
+                  "iu.edu"
+                ],
+                "nlp": {
+                  "theme": "Science",
+                  "summary": "Elephant birds are the biggest birds to have ever lived and their taxonomy has inspired big debate. The herbivorous elephant birds lived on Madagascar, once home to megafauna such as giant lemurs and tortoises. About a millennium ago, the formidable fowl was wiped out due in part to egg poaching by hungry humans. Only recently have scientists sorted elephant birds into three genuses and four species.",
+                  "sentiment": {
+                    "title": 0.8372,
+                    "content": -0.9843
+                  },
+                  "ner_PER": [
+                    {
+                      "entity_name": "Big Bird",
+                      "count": 2
+                    },
+                    {
+                      "entity_name": "Marco Polo",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Matthew Phillips",
+                      "count": 1
+                    }
+                  ],
+                  "ner_ORG": [
+                    {
+                      "entity_name": "Queensland University of Technology",
+                      "count": 1
+                    }
+                  ],
+                  "ner_MISC": [
+                    {
+                      "entity_name": "Sesame Street",
+                      "count": 2
+                    },
+                    {
+                      "entity_name": "Arabian Nights",
+                      "count": 1
+                    }
+                  ],
+                  "ner_LOC": [
+                    {
+                      "entity_name": "Madagascar",
+                      "count": 2
+                    }
+                  ]
+                },
+                "id": "4427df45467e249354d566c287f918c0",
+                "score": 0.0,
+                "additional_domain_info": null
+              }
+            ]
+          },
+          {
+            "cluster_id": "7935361145610191185",
+            "cluster_size": 1,
+            "articles": [
+              {
+                "title": "Landaluce – Medvedev 14 May 2026: tips for this match Simon Dalton (tennis)",
+                "author": "",
+                "authors": [],
+                "journalists": [],
+                "published_date": "2026-05-14 11:00:00",
+                "published_date_precision": "timezone unknown",
+                "updated_date": "2026-05-13 14:24:30",
+                "updated_date_precision": "timezone unknown",
+                "link": "https://legalbet.uk/tips/martin-landaluse-daniil-medvedev-simon-dalton",
+                "domain_url": "legalbet.uk",
+                "full_domain_url": "legalbet.uk",
+                "name_source": null,
+                "is_headline": true,
+                "paid_content": false,
+                "parent_url": "https://legalbet.uk/tips",
+                "country": "GB",
+                "rights": "legalbet.uk",
+                "rank": 178114,
+                "media": "https://web.legalcdn.org/img/favicons4/favicon-48x48.ico",
+                "language": "en",
+                "description": "Martin Landaluce vs Daniil Medvedev: prediction & betting tips 14/05/2026. Check out the predictions from experts and tipsters Legallbet and make your bet!",
+                "content": "Simon Dalton presents his prediction for the ATP match.\nOn 14 May at 14:00 BST in Rome, in the quarter-finals of the Masters tournament, lucky loser Martin Landaluce will face seventh seed Daniil Medvedev.\nLandaluce has already played five matches in the Italian capital, three more than Medvedev, but he is certainly not regarded as the favourite, as he entered the main draw only as a lucky loser. He is the only unseeded player in the quarter-finals; a win would see him reach an ATP semi-final for the first time in his career.\nMartin Landaluce\nBefore 2026, only those close to the sport and the Spanish tennis community knew much about him. This spring he came to worldwide attention at another Masters event in Miami, where he also began from the semi-finals of qualifying but ended up reaching the quarter-finals, along the way knocking out two top-20 players, Luciano Darderi and Karen Khachanov.\nIn Rome he has not yet faced any seeded players, but he did have one big-name opponent — Marin Cilic. The 20-year-old beat him in two straight sets, 6:4, 6:4.\nKey statistics:\nBefore 2026, he had won only two of 16 matches in ATP main draws.\nHe hits his backhand with both hands.\nOver his ATP career on clay he has converted 29% of break points into games.\nIt looks as though we are witnessing the rise of another Spanish prospect. The Spaniard, a product of Rafael Nadal's academy, is already proving on a second surface that he is a player to be reckoned with.\nThe first thing that stands out in his game is his composure, which is rather untypical for a 20-year-old. For example, he saved match point in a tie-break against Sebastian Korda in the fourth round in Miami. He wins 73% of points behind his first serve and, thanks to its power, tries to finish rallies in three or four shots.\nDaniil Medvedev\nFor Daniil Medvedev, the Internazionali BNL d'Italia has been the most successful tournament of this clay-court season. In Monte-Carlo he lost to his first opponent, in Madrid he again went out to an Italian in the last 16, but on Italian soil in Rome he has already come through three opponents. The first Italian he could now face here is Jannik Sinner in the semi-finals.\nKey statistics:\nIn the 2026 season he has already won two titles (Brisbane and Dubai) and was one step away from victory in Indian Wells.\nHis longest winning streak this year is nine matches.\nThis season he has faced Spanish players twice and has beaten both of them (Carlos Alcaraz and Pablo Llamas Ruiz).\nHis peak so far this year came between late February and March, when he reached two finals in a row. In Rome he has been trying to play more aggressively, taking the initiative himself: in each of his two matches here he has hit at least 30 winners. Hard courts suit him better, of course, but even on clay he currently has a positive record (4:2).\nHe dislikes when things go off-plan, and as a multiple title holder — including here in Rome in 2023 — he will be under greater pressure. Few expect him to lose.\nMartin Landaluce vs Daniil Medvedev Prediction\nLandaluce continues to impress, but his situation is psychologically much easier. Even at this stage, a defeat to a clear favourite would hardly be viewed as a failure for him; only throwing away a lead such as 6:2, 5:0 would be a real disappointment.\nMedvedev, by contrast, will feel the burden of expectation and will try to prevent the match from slipping away from his control. The Russian is used to fighting for titles and, given his status and past success in Rome, will approach this quarter-final as a match he 'must' win.\nWe therefore assume that Medvedev will progress, but that Landaluce will offer serious resistance. The logical prediction is a handicap on Landaluce: Prediction – Landaluce with a (+3.5) games handicap.",
+                "word_count": 661,
+                "is_opinion": false,
+                "twitter_account": null,
+                "all_links": [
+                  "https://legalbet.ro/ponturi/martn-landaluce-daniil-medvedev-ponturi-pariuri-14-05-2026-vasile-ciobanu/",
+                  "https://legalbet.ru/",
+                  "https://legalbet.by/",
+                  "https://legalbet.rs/tipovi/martin-landaluse-danil-medvedev-prognoza-i-tipovi-za-kladjenje-14-05-2026-marko-kovacevic/",
+                  "https://legalbet.tj/",
+                  "https://legalbet.kz/",
+                  "https://www.gamblingtherapy.org/en",
+                  "https://legalbet.mx/",
+                  "https://www.gamstop.co.uk/",
+                  "https://legalbet.com.br/palpites/martin-landaluce-x-daniil-medvedev-palpites-apostas-e-odds-14052026-jose-santos/",
+                  "https://www.begambleaware.org/",
+                  "https://www.gamcare.org.uk/",
+                  "https://www.gamblingcommission.gov.uk/",
+                  "https://legalbet.co/",
+                  "https://legalbet.es/",
+                  "https://legalbet.dk/"
+                ],
+                "all_domain_links": [
+                  "legalbet.by",
+                  "legalbet.tj",
+                  "gamblingtherapy.org",
+                  "gamblingcommission.gov.uk",
+                  "legalbet.kz",
+                  "gamstop.co.uk",
+                  "begambleaware.org",
+                  "legalbet.mx",
+                  "legalbet.co",
+                  "legalbet.ru",
+                  "gamcare.org.uk",
+                  "legalbet.es",
+                  "legalbet.ro",
+                  "legalbet.dk",
+                  "legalbet.com.br",
+                  "legalbet.rs"
+                ],
+                "nlp": {
+                  "theme": "Sports",
+                  "summary": "Martin Landaluce and Daniil Medvedev will play each other in the quarter-finals of the Internazionali BNL d'Italia in Rome on 14 May at 14:00 BST. Simon Dalton presents his prediction for the ATP match. ",
+                  "sentiment": {
+                    "title": 0.0,
+                    "content": 0.0
+                  },
+                  "ner_PER": [
+                    {
+                      "entity_name": "Daniil Medvedev",
+                      "count": 3
+                    },
+                    {
+                      "entity_name": "Martin Landaluce",
+                      "count": 2
+                    },
+                    {
+                      "entity_name": "Simon Dalton",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Landaluce",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Medvedev",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Luciano Darderi",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Karen Khachanov",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Marin Cilic",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Rafael Nadal",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Sebastian Korda",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Jannik Sinner",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Carlos Alcaraz",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Pablo Llamas Ruiz",
+                      "count": 1
+                    }
+                  ],
+                  "ner_ORG": [
+                    {
+                      "entity_name": "ATP",
+                      "count": 4
+                    }
+                  ],
+                  "ner_MISC": [
+                    {
+                      "entity_name": "Italian",
+                      "count": 4
+                    },
+                    {
+                      "entity_name": "Spanish",
+                      "count": 3
+                    },
+                    {
+                      "entity_name": "Masters",
+                      "count": 2
+                    },
+                    {
+                      "entity_name": "BST",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Spaniard",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Internazionali BNL d'Italia",
+                      "count": 1
+                    }
+                  ],
+                  "ner_LOC": [
+                    {
+                      "entity_name": "Rome",
+                      "count": 5
+                    },
+                    {
+                      "entity_name": "Miami",
+                      "count": 2
+                    },
+                    {
+                      "entity_name": "Monte-Carlo",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Madrid",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Brisbane",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Dubai",
+                      "count": 1
+                    },
+                    {
+                      "entity_name": "Indian Wells",
+                      "count": 1
+                    }
+                  ]
+                },
+                "id": "c5ad1cda964b630db1ac72404f4f30e7",
+                "score": 0.0,
+                "additional_domain_info": null
+              }
+            ]
+          }
+        ]
+      }
+    };
+
+    'use strict';
 
 /**
  * Provider table — single source of truth for the dashboard.
@@ -249,6 +1016,10 @@ const PROVIDERS = [
       live:     '/api/live-news/v2/list-us-headlines',
       conflict: '/api/conflict-archive/v1/list',
     },
+    // Legacy has no upstream API — it's a scraped RSS pipeline. The
+    // "Raw Samples" tab hides this column since there's no upstream
+    // wire shape to compare against.
+    sample: null,
   },
   {
     id: 'worldnews',
@@ -257,6 +1028,9 @@ const PROVIDERS = [
       live:     '/api/live-news/v3/list-us-headlines',
       conflict: '/api/conflict-archive/v2/list',
     },
+    /** Upstream URL the snapshot came from — shown as the endpoint label. */
+    sampleEndpoint: 'GET https://api.worldnewsapi.com/search-news?lang=en&source-countries=us,gb,au,ca&number=3',
+    sample: () => SAMPLES.worldnews,
   },
   {
     id: 'webz',
@@ -265,6 +1039,8 @@ const PROVIDERS = [
       live:     '/api/live-news/v4/list-us-headlines',
       conflict: '/api/conflict-archive/v3/list',
     },
+    sampleEndpoint: 'GET https://api.webz.io/newsApiLite?q=language:english thread.country:(US OR GB OR AU OR CA)&size=3',
+    sample: () => SAMPLES.webz,
   },
   {
     id: 'newscatcher',
@@ -273,11 +1049,28 @@ const PROVIDERS = [
       live:     '/api/live-news/v5/list-us-headlines',
       conflict: '/api/conflict-archive/v4/list',
     },
+    sampleEndpoint: 'POST https://v3-api.newscatcherapi.com/api/latest_headlines  (when=3h, +NLP, +clustering)',
+    sample: () => SAMPLES.newscatcher,
   },
 ];
 
+/** Providers visible in the current tab. Raw Samples mode hides legacy. */
+function activeProviders() {
+  if (currentFeed === 'samples') return PROVIDERS.filter((p) => typeof p.sample === 'function');
+  return PROVIDERS;
+}
+
 const ITEMS_PER_PROVIDER = 5;
 const KEY_STORAGE = 'wm.dashboard.apiKey';
+
+/**
+ * Optional backend override via `?base=https://...`. Lets you open the
+ * dashboard from anywhere (file://, vite dev, a different host) and
+ * still point fetches at the deployed API. With no override, paths are
+ * relative — works when the dashboard is served from the same origin
+ * as the API.
+ */
+const API_BASE = (new URLSearchParams(window.location.search).get('base') || '').replace(/\/+$/, '');
 
 const grid       = document.getElementById('grid');
 const tabs       = document.getElementById('tabs');
@@ -299,90 +1092,175 @@ tabs.addEventListener('click', (e) => {
   if (!t) return;
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === t));
   currentFeed = t.dataset.feed;
+  // Refresh + API key are only meaningful for the live tabs. Hide them
+  // when the user is browsing static snapshots.
+  const isSamples = currentFeed === 'samples';
+  keyInput.style.display   = isSamples ? 'none' : '';
+  refreshBtn.style.display = isSamples ? 'none' : '';
   loadAll();
 });
 
 refreshBtn.addEventListener('click', loadAll);
 
-/** Lightweight syntax highlighter for the JSON blocks. */
-function highlightJSON(value) {
-  const json = JSON.stringify(value, null, 2)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  return json.replace(
-    /("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,
-    (match) => {
-      let cls = 'json-number';
-      if (/^"/.test(match)) cls = /:$/.test(match) ? 'json-key' : 'json-string';
-      else if (/true|false/.test(match)) cls = 'json-bool';
-      else if (/null/.test(match)) cls = 'json-null';
-      return `<span class="${cls}">${match}</span>`;
-    },
-  );
+/**
+ * Render a JSON value as a collapsible tree. Every object / array becomes
+ * a native <details> element so the user can open/close any sub-tree.
+ * Top-level call: `renderJSONTree(item)`. Recursive calls pass the key
+ * (or array index) so the rendered row shows `"name": value`.
+ *
+ * No external lib — we lean on <details> for collapse state instead of
+ * tracking it in JS. That means the page can have hundreds of collapsible
+ * blocks open simultaneously with no perf cost, and ⌘-F search-in-page
+ * still finds collapsed content thanks to the browser's lookup behavior
+ * (Safari/Chrome auto-expand details that contain a match).
+ */
+function renderJSONTree(value, key, _depth) {
+  const keyPart = key != null
+    ? `<span class="json-key">"${escapeHtml(String(key))}"</span><span class="json-punct">:</span> `
+    : '';
+
+  if (value === null)                  return renderLeaf(keyPart, 'null', 'json-null');
+  if (typeof value === 'string')       return renderLeaf(keyPart, JSON.stringify(value), 'json-string');
+  if (typeof value === 'number')       return renderLeaf(keyPart, String(value), 'json-number');
+  if (typeof value === 'boolean')      return renderLeaf(keyPart, String(value), 'json-bool');
+
+  const isArray = Array.isArray(value);
+  const entries = isArray
+    ? value.map((v, i) => ({ k: String(i), v }))
+    : Object.keys(value).map((k) => ({ k, v: value[k] }));
+
+  if (entries.length === 0) {
+    const empty = isArray ? '[]' : '{}';
+    return `<div class="json-line">${keyPart}<span class="json-punct">${empty}</span></div>`;
+  }
+
+  const open  = isArray ? '[' : '{';
+  const close = isArray ? ']' : '}';
+  const meta  = isArray
+    ? `${entries.length} ${entries.length === 1 ? 'item' : 'items'}`
+    : `${entries.length} ${entries.length === 1 ? 'key' : 'keys'}`;
+
+  const children = entries.map((e) => renderJSONTree(e.v, e.k, (_depth || 0) + 1)).join('');
+
+  return `<details class="json-block" open>` +
+           `<summary class="json-summary">${keyPart}` +
+             `<span class="json-punct">${open}</span>` +
+             `<span class="json-meta">${meta}</span>` +
+             `<span class="json-punct">${close}</span>` +
+           `</summary>` +
+           `<div class="json-children">${children}</div>` +
+         `</details>`;
 }
 
-/** Pull a sensible "items" array out of any of the four provider response shapes. */
+function renderLeaf(keyPart, displayText, cls) {
+  return `<div class="json-line">${keyPart}<span class="${cls}">${escapeHtml(displayText)}</span></div>`;
+}
+
+/**
+ * Pull a sensible items list out of any provider's response shape.
+ *
+ *   • iOS-wire shape (our normalised endpoints):  `body.items`
+ *   • WorldNews API raw:                           `body.news`
+ *   • Webz.io raw:                                 `body.posts`
+ *   • Newscatcher raw (clustered):                 `body.clusters`
+ */
 function pickItems(body) {
   if (Array.isArray(body)) return body;
   if (body && Array.isArray(body.items)) return body.items;
   if (body && Array.isArray(body.posts)) return body.posts;
+  if (body && Array.isArray(body.news)) return body.news;
+  if (body && Array.isArray(body.clusters)) return body.clusters;
   return [];
 }
 
-/** Best-effort identifier of which country an item is from (varies by provider). */
+/**
+ * Top-level metadata (everything OTHER than the items array). Used to
+ * surface the response envelope in the "Raw Samples" tab so users can
+ * see e.g. `requestsLeft`, `total_hits`, `available`, etc.
+ */
+function pickEnvelope(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const envelope = {};
+  for (const k of Object.keys(body)) {
+    if (k === 'items' || k === 'posts' || k === 'news' || k === 'clusters') continue;
+    envelope[k] = body[k];
+  }
+  return Object.keys(envelope).length > 0 ? envelope : null;
+}
+
+/**
+ * Newscatcher returns clusters with the canonical article at
+ * `cluster.articles[0]`. For the row-summary pickers below we transparently
+ * follow that one level of indirection so the column header still shows
+ * the real article info instead of "{cluster_id: ...}".
+ */
+function unwrap(item) {
+  if (item && Array.isArray(item.articles) && item.articles.length > 0) {
+    return item.articles[0];
+  }
+  return item;
+}
+
 function pickCountry(item) {
+  const a = unwrap(item);
   return (
-    item.country ||
-    item.source_country ||
-    (item.thread && item.thread.country) ||
+    a.country ||
+    a.source_country ||
+    (a.thread && a.thread.country) ||
     ''
   ).toString().toLowerCase();
 }
 
-/** Best-effort title fallback chain. */
 function pickTitle(item) {
-  return item.title || (item.thread && item.thread.title) || '(no title)';
+  const a = unwrap(item);
+  return a.title || (a.thread && a.thread.title) || '(no title)';
 }
 
-/** Best-effort source/outlet name fallback. */
 function pickSource(item) {
+  const a = unwrap(item);
   return (
-    item.source ||
-    item.name_source ||
-    item.domain_url ||
-    (item.thread && (item.thread.site || item.thread.site_full)) ||
+    a.source ||
+    a.name_source ||
+    a.domain_url ||
+    (a.thread && (a.thread.site || a.thread.site_full)) ||
     ''
   );
 }
 
-/** Best-effort publish-time fallback. */
 function pickPublishedAt(item) {
-  if (typeof item.publishedAt === 'number') {
-    // ms or seconds — auto-detect
-    const ms = item.publishedAt > 10_000_000_000 ? item.publishedAt : item.publishedAt * 1000;
+  const a = unwrap(item);
+  if (typeof a.publishedAt === 'number') {
+    const ms = a.publishedAt > 10_000_000_000 ? a.publishedAt : a.publishedAt * 1000;
     return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
   }
-  return item.published_date || item.published || '';
+  return a.published_date || a.published || '';
 }
 
 /** Build the static skeleton — column per provider, will be filled by fetchAndRender(). */
 function renderSkeleton() {
-  grid.innerHTML = PROVIDERS.map((p) => `
-    <section class="col" data-provider="${p.id}">
-      <div class="col-head">
-        <div class="col-title">${p.label}</div>
-        <div class="col-endpoint">${p.feeds[currentFeed]}</div>
-        <div class="col-stats" data-stats>
-          <span class="stat"><strong>—</strong> ms</span>
-          <span class="stat"><strong>—</strong> items</span>
+  const providers = activeProviders();
+  grid.innerHTML = providers.map((p) => {
+    // Pick the right "endpoint" string per tab. In samples mode we show
+    // the upstream API URL the snapshot was captured from.
+    const endpoint = currentFeed === 'samples'
+      ? (p.sampleEndpoint || '(no upstream)')
+      : `${API_BASE || ''}${p.feeds[currentFeed]}`;
+    const loadingText = currentFeed === 'samples' ? 'Rendering snapshot' : 'Loading';
+    return `
+      <section class="col" data-provider="${p.id}">
+        <div class="col-head">
+          <div class="col-title">${p.label}</div>
+          <div class="col-endpoint">${endpoint}</div>
+          <div class="col-stats" data-stats>
+            <span class="stat"><strong>—</strong></span>
+          </div>
         </div>
-      </div>
-      <div class="items" data-items>
-        <div class="loading">Loading</div>
-      </div>
-    </section>
-  `).join('');
+        <div class="items" data-items>
+          <div class="loading">${loadingText}</div>
+        </div>
+      </section>
+    `;
+  }).join('');
 }
 
 function renderColumn(provider, payload) {
@@ -398,18 +1276,47 @@ function renderColumn(provider, payload) {
   }
 
   const items = pickItems(payload.body).slice(0, ITEMS_PER_PROVIDER);
-  stats.innerHTML = `
-    <span class="stat ok"><strong>${payload.status}</strong></span>
-    <span class="stat"><strong>${payload.elapsedMs}</strong> ms</span>
-    <span class="stat"><strong>${pickItems(payload.body).length}</strong> items total</span>
-  `;
+  if (currentFeed === 'samples') {
+    stats.innerHTML = `
+      <span class="stat ok"><strong>SNAPSHOT</strong></span>
+      <span class="stat"><strong>${pickItems(payload.body).length}</strong> items in sample</span>
+    `;
+  } else {
+    stats.innerHTML = `
+      <span class="stat ok"><strong>${payload.status}</strong></span>
+      <span class="stat"><strong>${payload.elapsedMs}</strong> ms</span>
+      <span class="stat"><strong>${pickItems(payload.body).length}</strong> items total</span>
+    `;
+  }
+
+  // In the Raw Samples tab, prepend a card for the response envelope —
+  // top-level fields like `totalResults`, `requestsLeft`, `available`,
+  // `clusters_count`. Useful for showing each provider's wire shape.
+  const envelopeHtml = (() => {
+    if (currentFeed !== 'samples') return '';
+    const env = pickEnvelope(payload.body);
+    if (!env) return '';
+    return `
+      <details class="item envelope">
+        <summary>
+          <div class="item-title">↳ Response envelope</div>
+          <div class="item-meta">
+            <span>${Object.keys(env).length} top-level keys</span>
+          </div>
+        </summary>
+        <div class="item-body">
+          <div class="json-tree">${renderJSONTree(env)}</div>
+        </div>
+      </details>
+    `;
+  })();
 
   if (items.length === 0) {
-    body.innerHTML = '<div class="empty">No items.</div>';
+    body.innerHTML = envelopeHtml || '<div class="empty">No items.</div>';
     return;
   }
 
-  body.innerHTML = items.map((item, idx) => {
+  body.innerHTML = envelopeHtml + items.map((item, idx) => {
     const title = pickTitle(item);
     const country = pickCountry(item);
     const src = pickSource(item);
@@ -426,11 +1333,36 @@ function renderColumn(provider, payload) {
           </div>
         </summary>
         <div class="item-body">
-          <pre class="json">${highlightJSON(item)}</pre>
+          <div class="json-tree">${renderJSONTree(item)}</div>
+          <div class="json-toolbar">
+            <button class="copy-btn" data-copy-idx="${idx}">Copy JSON</button>
+          </div>
         </div>
       </details>
     `;
   }).join('');
+
+  // Wire up the Copy buttons after the HTML is in the DOM.
+  body.querySelectorAll('button.copy-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const idx = Number(btn.dataset.copyIdx);
+      const item = items[idx];
+      if (!item) return;
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(item, null, 2));
+        const orig = btn.textContent;
+        btn.textContent = 'Copied ✓';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = orig;
+          btn.classList.remove('copied');
+        }, 1200);
+      } catch {
+        btn.textContent = 'Copy failed';
+      }
+    });
+  });
 }
 
 function escapeHtml(s) {
@@ -439,9 +1371,20 @@ function escapeHtml(s) {
   ));
 }
 
-/** One fetch per provider; returns the timing/status/body for renderColumn. */
+/**
+ * Resolve one column's payload. Live / Conflict tabs fetch over HTTP;
+ * Raw Samples tab pulls from the in-page SAMPLES constant — no network.
+ * Both shapes return `{ status, body, elapsedMs }` for renderColumn.
+ */
 async function fetchProvider(provider) {
-  const url = provider.feeds[currentFeed];
+  if (currentFeed === 'samples') {
+    if (typeof provider.sample !== 'function') {
+      return { error: 'No sample available for this provider', elapsedMs: 0 };
+    }
+    return { status: 200, body: provider.sample(), elapsedMs: 0, sourceLabel: 'snapshot' };
+  }
+
+  const url = API_BASE + provider.feeds[currentFeed];
   const t0 = performance.now();
   try {
     const headers = { 'Accept': 'application/json' };
@@ -463,8 +1406,10 @@ async function fetchProvider(provider) {
 
 async function loadAll() {
   renderSkeleton();
-  // Fire all four in parallel; render each as it lands.
-  await Promise.all(PROVIDERS.map(async (p) => {
+  // Fire all visible providers in parallel; render each as it lands.
+  // (Raw Samples mode returns synchronously from `fetchProvider`, but
+  // the same code path is fine — it just resolves immediately.)
+  await Promise.all(activeProviders().map(async (p) => {
     const payload = await fetchProvider(p);
     renderColumn(p, payload);
   }));
