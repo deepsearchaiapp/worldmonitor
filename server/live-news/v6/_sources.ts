@@ -60,6 +60,18 @@
  *   - Hang-on-Vercel-egress (always abort at 30s budget cap):
  *     Washington Post (×4), CBC (×7). Bring back via the Railway
  *     relay if v6's _normalize.ts gets relayOnly support.
+ *
+ * # 2026-05-15 entertainment cleanup
+ *
+ * Dropped 10 feeds whose celebrity/lifestyle content was polluting
+ * the news-tier clusters (entertainment stories share semantic space
+ * with politics-of-celebrities content, dragging unrelated items
+ * together):
+ *   - 100% entertainment: BBC Entertainment
+ *   - UK red-tops / celeb-heavy tabloids: The Sun, Daily Mirror (×2),
+ *     Daily Mail (×2), Metro UK
+ *   - US tabloids: The Daily Beast, NY Post
+ *   - Canadian tabloid: Toronto Sun News
  */
 
 export interface NewsSource {
@@ -107,13 +119,14 @@ export const V6_NEWS_SOURCES: readonly NewsSource[] = [
   { name: 'BBC Technology',         url: 'https://feeds.bbci.co.uk/news/technology/rss.xml',                  priority: 2 },
   { name: 'BBC Science',            url: 'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml',     priority: 2 },
   { name: 'BBC Health',             url: 'https://feeds.bbci.co.uk/news/health/rss.xml',                      priority: 2 },
-  { name: 'BBC Entertainment',      url: 'https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml',      priority: 2 },
 
   { name: 'France 24',              url: 'https://www.france24.com/en/rss',                                   priority: 2 },
   { name: 'DW (all English)',       url: 'https://rss.dw.com/rdf/rss-en-all',                                 priority: 2 },
   { name: 'DW Top Stories',         url: 'https://rss.dw.com/xml/rss-en-top',                                 priority: 2 },
   { name: 'DW World',               url: 'https://rss.dw.com/rdf/rss-en-world',                               priority: 2 },
   { name: 'Euronews',               url: 'https://www.euronews.com/rss?level=theme&name=news',                priority: 2 },
+  { name: 'Der Spiegel International', url: 'https://www.spiegel.de/international/index.rss',                 priority: 2 },
+  { name: 'RFI English International', url: 'https://www.rfi.fr/en/international/rss',                        priority: 2 },
   { name: 'Sky News World',         url: 'https://feeds.skynews.com/feeds/rss/world.xml',                     priority: 2 },
   { name: 'ABC News International', url: 'https://abcnews.go.com/abcnews/internationalheadlines',             priority: 2 },
 
@@ -138,14 +151,12 @@ export const V6_NEWS_SOURCES: readonly NewsSource[] = [
 
   { name: 'LA Times Local',         url: 'https://www.latimes.com/local/rss2.0.xml',                          priority: 3 },
   { name: 'LA Times World',         url: 'https://www.latimes.com/world/rss2.0.xml',                          priority: 3 },
-  { name: 'NY Post',                url: 'https://nypost.com/feed/',                                          priority: 3 },
   { name: 'HuffPost US',            url: 'https://chaski.huffpost.com/us/auto/vertical/us-news',              priority: 4 },
   { name: 'HuffPost World',         url: 'https://chaski.huffpost.com/us/auto/vertical/world-news',           priority: 4 },
   { name: 'The Hill',               url: 'https://thehill.com/homenews/feed/',                                priority: 4 },
   { name: 'Vox World Politics',     url: 'https://www.vox.com/rss/world-politics/index.xml',                  priority: 4 },
   { name: 'Slate News & Politics',  url: 'https://slate.com/feeds/news-and-politics.rss',                     priority: 4 },
   { name: 'Time',                   url: 'https://feeds.feedburner.com/time/topstories',                      priority: 3 },
-  { name: 'The Daily Beast',        url: 'https://feeds.feedburner.com/thedailybeast/articles',               priority: 4 },
   { name: 'ProPublica',             url: 'https://www.propublica.org/feeds/propublica/main',                  priority: 4 },
   { name: 'The Intercept',          url: 'https://theintercept.com/feed/?lang=en',                            priority: 4 },
 
@@ -173,15 +184,9 @@ export const V6_NEWS_SOURCES: readonly NewsSource[] = [
   { name: 'The Independent UK',     url: 'https://www.independent.co.uk/news/uk/rss',                         priority: 3 },
   { name: 'The Independent World',  url: 'https://www.independent.co.uk/news/world/rss',                      priority: 3 },
   { name: 'The Independent Politics', url: 'https://www.independent.co.uk/news/uk/politics/rss',              priority: 3 },
-  { name: 'Daily Mail',             url: 'https://www.dailymail.co.uk/home/index.rss',                        priority: 4 },
-  { name: 'Daily Mail News',        url: 'https://www.dailymail.co.uk/news/index.rss',                        priority: 4 },
   { name: 'Daily Express',          url: 'https://www.express.co.uk/posts/rss/1/news',                        priority: 4 },
-  { name: 'Daily Mirror News',      url: 'https://www.mirror.co.uk/news/?service=rss',                        priority: 4 },
-  { name: 'Daily Mirror World',     url: 'https://www.mirror.co.uk/news/world-news/?service=rss',             priority: 4 },
   { name: 'Evening Standard',       url: 'https://www.standard.co.uk/news/rss',                               priority: 4 },
   { name: 'Channel 4 News',         url: 'https://www.channel4.com/news/feed',                                priority: 3 },
-  { name: 'Metro UK',               url: 'https://metro.co.uk/feed/',                                         priority: 4 },
-  { name: 'The Sun',                url: 'https://www.thesun.co.uk/feed/',                                    priority: 4 },
   { name: 'Politics.co.uk',         url: 'https://www.politics.co.uk/feed/',                                  priority: 4 },
 
   // ────────────────────────────────────────────────────────────────────
@@ -199,7 +204,6 @@ export const V6_NEWS_SOURCES: readonly NewsSource[] = [
   { name: 'Global News Politics',   url: 'https://globalnews.ca/politics/feed/',                              priority: 3 },
 
   { name: 'National Post',          url: 'https://nationalpost.com/feed/',                                    priority: 3 },
-  { name: 'Toronto Sun News',       url: 'https://torontosun.com/category/news/feed',                         priority: 4 },
   { name: 'Ottawa Citizen',         url: 'https://ottawacitizen.com/feed/',                                   priority: 4 },
   { name: 'Vancouver Sun',          url: 'https://vancouversun.com/feed/',                                    priority: 4 },
   { name: 'The Province',           url: 'https://theprovince.com/feed/',                                     priority: 4 },
@@ -222,6 +226,44 @@ export const V6_NEWS_SOURCES: readonly NewsSource[] = [
   { name: 'RNZ',                    url: 'https://www.rnz.co.nz/rss/news.xml',                                priority: 3 },
   { name: 'RTÉ News',               url: 'https://www.rte.ie/news/rss/news-headlines.xml',                    priority: 3 },
   { name: 'The Journal (IE)',       url: 'https://www.thejournal.ie/feed/',                                   priority: 4 },
+
+  // ────────────────────────────────────────────────────────────────────
+  // Asia / Pacific
+  //
+  // Skipped 2026-05-15 audit failures:
+  //   - Channel News Asia (TITLE-ONLY — empty descriptions on first 2 items)
+  //   - Today Online (HTTP-404)
+  // ────────────────────────────────────────────────────────────────────
+  { name: 'South China Morning Post', url: 'https://www.scmp.com/rss/91/feed/',                                priority: 2 },
+  { name: 'Asia Times',             url: 'https://asiatimes.com/category/world/feed/',                        priority: 3 },
+
+  // ────────────────────────────────────────────────────────────────────
+  // India
+  //
+  // Skipped 2026-05-15 audit failures (all TITLE-ONLY — descriptions empty):
+  //   - The Indian Express World
+  //   - Times of India World
+  // ────────────────────────────────────────────────────────────────────
+  { name: 'NDTV World',             url: 'https://feeds.feedburner.com/ndtvnews-world-news',                  priority: 2 },
+  { name: 'The Hindu World',        url: 'https://www.thehindu.com/news/international/feeder/default.rss',    priority: 3 },
+  { name: 'ThePrint World',         url: 'https://theprint.in/category/world/feed/',                          priority: 4 },
+  { name: 'Firstpost World',        url: 'https://www.firstpost.com/commonfeeds/v1/mfp/rss/world.xml',        priority: 4 },
+
+  // ────────────────────────────────────────────────────────────────────
+  // Africa / MENA — long-tail regional coverage the world-tier feeds miss
+  //
+  // Anadolu Agency is Turkey's state-affiliated wire — priority 3 to
+  // match other national wire-tier outlets. We only use `cat=guncel`
+  // (current — the firehose) instead of every topical sub-endpoint:
+  // running multiple AA category feeds had the same story appear
+  // 2-3 times under different `source` names, artificially inflating
+  // cluster source counts against the WM_V6_MIN_SOURCES gate.
+  //
+  // Skipped 2026-05-15 audit failures:
+  //   - Morocco World News (HTTP-403 from cloud IPs)
+  // ────────────────────────────────────────────────────────────────────
+  { name: 'News24 World',           url: 'https://feeds.24.com/articles/news24/World/rss',                    priority: 2 },
+  { name: 'Anadolu Agency',         url: 'https://www.aa.com.tr/en/rss/default?cat=guncel',                   priority: 3 },
 
   // ────────────────────────────────────────────────────────────────────
   // Paywalled — priority 5 keeps them out of the canonical pick but
