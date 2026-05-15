@@ -4,24 +4,30 @@
  * Schedule in vercel.json: every 15 min. Pulls RSS feeds, embeds new
  * items via Gemini, clusters at threshold 0.7, writes the v6 digest.
  *
- * # Runtime
+ * # Why this returns 202 immediately and runs in background
  *
- * Edge runtime with `maxDuration: 60` — Vercel Pro plan ceiling is
- * 300 s, so 60 s leaves comfortable headroom. Typical refresh
- * completes in 25-40 s (158 RSS feeds × parallel fetch + Gemini
- * embedding + Redis write). The default 25 s Edge cap would kill us
- * mid-flight, hence the explicit override.
+ * Vercel Edge functions have a HARD 25 s initial-response cap that
+ * applies on every plan, including Pro. `maxDuration` only extends
+ * how long the function can keep running AFTER the initial response
+ * goes out — useful for streaming, useless for a sync await that
+ * holds the response open. With 158 RSS feeds being fan-fetched +
+ * Gemini embedding + Redis writes, the full refresh takes 25-40 s
+ * and the function gets killed mid-flight with "did not return an
+ * initial response within 25 s".
  *
- * The synchronous-await pattern (rather than `keepAlive` + 202) is
- * convenient during stabilisation — `curl` against this endpoint
- * returns the full result body, including per-feed status counts.
- * If we ever drop back to Hobby tier we'd want to revert to the
- * background pattern; for now Pro lets us keep things simple.
+ * The fix: kick off the work via `keepAlive` (Vercel's `waitUntil`)
+ * and return 202 right away. Pro lets that background work run for
+ * up to 300 s, plenty of headroom. Cron monitor sees a fast 2xx and
+ * keeps the schedule firing on time.
+ *
+ * Subsequent ticks are safe to overlap with in-flight work: every
+ * step (per-feed cache, embedding cache, digest write) is idempotent.
  */
 
 import { refreshLiveNewsV6 } from '../../../server/live-news/v6/refresh';
+import { keepAlive } from '../../../server/_shared/keep-alive';
 
-export const config = { runtime: 'edge', maxDuration: 60 };
+export const config = { runtime: 'edge', maxDuration: 300 };
 
 function isAuthorizedCron(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -43,11 +49,25 @@ export default async function handler(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ error: 'Forbidden — cron-only endpoint' }), { status: 403, headers });
   }
 
-  try {
-    const result = await refreshLiveNewsV6();
-    return new Response(JSON.stringify(result), { status: 200, headers });
-  } catch (err) {
-    console.error('[live-news:v6:refresh] handler failed:', err instanceof Error ? err.message : err);
-    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500, headers });
-  }
+  // Kick off the refresh in the background — see file header for why.
+  // The `.then(...)` arms write the result/error to Vercel logs so we
+  // still see the per-tick summary; the HTTP response races out long
+  // before the work completes.
+  keepAlive(
+    refreshLiveNewsV6().then(
+      (result) => {
+        console.log('[live-news:v6:refresh] completed:', JSON.stringify(result));
+        return result;
+      },
+      (err) => {
+        console.error('[live-news:v6:refresh] background failed:', err instanceof Error ? err.message : err);
+      },
+    ),
+    'live-news-v6-refresh',
+  );
+
+  return new Response(
+    JSON.stringify({ status: 'queued', startedAt: new Date().toISOString() }),
+    { status: 202, headers },
+  );
 }
