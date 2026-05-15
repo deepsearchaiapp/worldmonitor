@@ -23,7 +23,14 @@ export const DIGEST_KEY = 'live-news:v6:digest';
 const DIGEST_TTL_S = 3 * 24 * 60 * 60; // 3-day project max
 const ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_ITEMS = 500;
-const FETCH_DEADLINE_MS = 20_000;
+/**
+ * Wall-clock cap on the parallel fan-out. With 159 feeds the slowest
+ * 5-10 % (WashPost, CBC, ITV — large XML payloads + sometimes
+ * Cloudflare challenges) can exceed 20 s. Bumped to 30 s; the Edge
+ * function still has plenty of headroom before its function timeout
+ * and the rest of the cron (clustering + Redis write) runs in <3 s.
+ */
+const FETCH_DEADLINE_MS = 30_000;
 
 export interface RefreshResult {
   status: 'ok' | 'skipped';

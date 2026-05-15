@@ -30,7 +30,14 @@
  * references; safe to import from the live-news Edge handlers.
  */
 
-const EMBED_MODEL = 'text-embedding-004';
+/**
+ * Current Gemini embedding model. We had `text-embedding-004` before but
+ * Google retired/moved it — calls 404 with "not found for API version
+ * v1beta". `gemini-embedding-001` is the GA replacement, 3072-dim
+ * natively, supports `outputDimensionality` truncation so we can keep
+ * our 768-dim storage / cosine calibration unchanged.
+ */
+const EMBED_MODEL = 'gemini-embedding-001';
 const EMBED_DIM = 768;
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:batchEmbedContents`;
 const MAX_BATCH = 100;
@@ -73,6 +80,10 @@ export async function embedBatch(texts: string[]): Promise<(Float32Array | null)
         model: `models/${EMBED_MODEL}`,
         content: { parts: [{ text: text.slice(0, 8000) }] }, // hard cap on input length
         taskType: TASK_TYPE,
+        // Truncate via Matryoshka representation to match our existing
+        // 768-dim storage. Without this the model returns 3072 and our
+        // base64ToFloat32 / cluster cosine calibration breaks.
+        outputDimensionality: EMBED_DIM,
       })),
     };
 
