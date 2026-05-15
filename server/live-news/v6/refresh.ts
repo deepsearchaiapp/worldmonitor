@@ -67,9 +67,9 @@ function mergeItems(existing: ClusteredItem[], fresh: ClusteredItem[]): Clustere
       country: prev.country ?? next.country,
       region: prev.region ?? next.region,
       isConflict: prev.isConflict ?? next.isConflict,
-      confidence: prev.confidence ?? next.confidence,
-      // Always take fresh summary/imageUrl/sources — those track cluster
-      // membership which changes as new outlets cover the story.
+      // Always take fresh summary/imageUrl/sources/isAlert — those
+      // track cluster membership which changes as new outlets cover
+      // the story.
     });
   }
   // Drop items past the rolling window, sort newest-first, cap.

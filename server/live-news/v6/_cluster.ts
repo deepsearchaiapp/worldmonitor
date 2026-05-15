@@ -50,6 +50,122 @@ const MAX_INPUT_LEN = 400;
  */
 const EMBED_PIPELINE_CHUNK = 100;
 
+/**
+ * Unique-publisher count above which a cluster is flagged `isAlert: true`.
+ * Override via `WM_V6_ALERT_MIN_SOURCES`. iOS renders a red "Alert" badge
+ * next to the title when this fires — surfaces fast-spreading breaking
+ * news without needing wire-service or rate-of-publication tracking.
+ */
+const DEFAULT_ALERT_MIN_SOURCES = 8;
+function alertMinSources(): number {
+  const raw = process.env.WM_V6_ALERT_MIN_SOURCES;
+  if (!raw) return DEFAULT_ALERT_MIN_SOURCES;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 2 ? Math.floor(n) : DEFAULT_ALERT_MIN_SOURCES;
+}
+
+/**
+ * Map feed-name → user-facing publisher root.
+ *
+ * Why: we run ~10 BBC sub-feeds, 4 NYT sub-feeds, 5 Guardian sub-feeds
+ * etc. Without normalization, a story covered by BBC once shows up in
+ * `sources[]` 3 times if 3 BBC sub-feeds carry it — inflating the
+ * cluster's source count and showing duplicate "BBC" rows to the user.
+ *
+ * Names not in the map pass through unchanged (safe default for newly
+ * added feeds).
+ */
+const PUBLISHER_MAP: Record<string, string> = {
+  // BBC family
+  'BBC World': 'BBC', 'BBC International': 'BBC', 'BBC Africa': 'BBC',
+  'BBC Asia': 'BBC', 'BBC Europe': 'BBC', 'BBC Latin America': 'BBC',
+  'BBC Middle East': 'BBC', 'BBC US & Canada': 'BBC', 'BBC Australia': 'BBC',
+  'BBC Business': 'BBC', 'BBC Technology': 'BBC', 'BBC Science': 'BBC',
+  'BBC Health': 'BBC', 'BBC UK': 'BBC', 'BBC UK Politics': 'BBC',
+  'BBC England': 'BBC', 'BBC Scotland': 'BBC', 'BBC Wales': 'BBC',
+  'BBC Northern Ireland': 'BBC',
+  // Deutsche Welle
+  'DW (all English)': 'Deutsche Welle', 'DW Top Stories': 'Deutsche Welle',
+  'DW World': 'Deutsche Welle',
+  // Sky News
+  'Sky News World': 'Sky News', 'Sky News UK': 'Sky News',
+  'Sky News Politics': 'Sky News', 'Sky News Business': 'Sky News',
+  // ABC News (US) — `abcnews.go.com`
+  'ABC News (US)': 'ABC News', 'ABC News International': 'ABC News',
+  'ABC Politics (US)': 'ABC News', 'ABC US Headlines': 'ABC News',
+  // ABC News (AU) — `abc.net.au`, distinct broadcaster
+  'ABC News (AU) Just In': 'ABC News (AU)',
+  // CBS
+  'CBS US': 'CBS News', 'CBS World': 'CBS News', 'CBS Politics': 'CBS News',
+  // NBC
+  'NBC World': 'NBC News',
+  // PBS
+  'PBS NewsHour': 'PBS', 'PBS Politics': 'PBS',
+  // Guardian
+  'The Guardian World': 'The Guardian', 'The Guardian International': 'The Guardian',
+  'The Guardian UK': 'The Guardian', 'The Guardian Politics': 'The Guardian',
+  'The Guardian Business': 'The Guardian', 'The Guardian Tech': 'The Guardian',
+  'The Guardian Science': 'The Guardian', 'The Guardian Australia': 'The Guardian',
+  // Independent
+  'The Independent UK': 'The Independent', 'The Independent World': 'The Independent',
+  'The Independent Politics': 'The Independent',
+  // HuffPost
+  'HuffPost US': 'HuffPost', 'HuffPost World': 'HuffPost',
+  // LA Times
+  'LA Times Local': 'LA Times', 'LA Times World': 'LA Times',
+  // Global News
+  'Global News World': 'Global News', 'Global News Canada': 'Global News',
+  'Global News Politics': 'Global News',
+  // NYT
+  'NYT Homepage': 'New York Times', 'NYT US': 'New York Times',
+  'NYT World': 'New York Times', 'NYT Politics': 'New York Times',
+  'NYT Business': 'New York Times', 'NYT Technology': 'New York Times',
+  'NYT Science': 'New York Times', 'NYT Health': 'New York Times',
+  // WSJ
+  'WSJ World': 'Wall Street Journal', 'WSJ US Business': 'Wall Street Journal',
+  'WSJ Markets': 'Wall Street Journal', 'WSJ Tech': 'Wall Street Journal',
+  // Atlantic
+  'The Atlantic National': 'The Atlantic',
+  // FT
+  'FT World': 'Financial Times',
+};
+
+function publisherOf(sourceName: string): string {
+  return PUBLISHER_MAP[sourceName] ?? sourceName;
+}
+
+/**
+ * Query-string parameters that publishers stick onto RSS-served URLs
+ * for analytics. They have no user value and leak our pipeline
+ * fingerprint. Stripped from every link before items go on the wire.
+ *
+ * Also handles any param starting with `utm_` (Google Analytics
+ * convention) — that catches the long tail without us having to
+ * enumerate `utm_source`, `utm_medium`, etc. individually.
+ */
+const TRACKING_PARAMS = new Set([
+  'at_medium', 'at_campaign', 'at_source', 'at_link_type', 'at_format', 'at_ptr_type',
+  'ns_mchannel', 'ns_campaign', 'ns_source', 'ito',
+  'feature', 'feed', 'rss', 'src',
+  'CMP', 'cmp', 'spm', 'ref', 'ref_src', 'ref_url',
+]);
+
+function stripTracking(url: string): string {
+  try {
+    const u = new URL(url);
+    let changed = false;
+    for (const key of [...u.searchParams.keys()]) {
+      if (TRACKING_PARAMS.has(key) || key.startsWith('utm_')) {
+        u.searchParams.delete(key);
+        changed = true;
+      }
+    }
+    return changed ? u.toString() : url;
+  } catch {
+    return url;
+  }
+}
+
 export interface ClusterSource {
   source: string;
   title: string;
@@ -75,9 +191,13 @@ export interface ClusteredItem {
   summary: string | null;
   /** First image URL found across cluster members (RSS-supplied). */
   imageUrl: string | null;
-  /** Every outlet covering this story, canonical first. iOS renders
-   *  this as the "Also covered by N outlets" affordance. */
+  /** Every outlet covering this story, canonical first. Deduped by
+   *  publisher root (so multi-feed BBC/Sky/NYT show once each). iOS
+   *  renders this as the "Also covered by N outlets" affordance. */
   sources: ClusterSource[];
+  /** True when unique-publisher count crosses WM_V6_ALERT_MIN_SOURCES
+   *  threshold (default 8). iOS shows a red "Alert" badge next to
+   *  the title. */
   isAlert: boolean;
   titleHash: string;
   // Enrichment-only fields — filled by the location-only LLM cron
@@ -87,8 +207,6 @@ export interface ClusteredItem {
   country: string | null;
   region?: string;
   isConflict: boolean | null;
-  confidence: number | null;
-  rawDescription: string | null;
 }
 
 function inputTextFor(item: RawRssItem): string {
@@ -112,15 +230,29 @@ function pickCanonical(members: RawRssItem[]): RawRssItem {
   })[0]!;
 }
 
-/** Longest plaintext description across the cluster — that's the v6
- *  wire summary. */
-function pickLongestDescription(members: RawRssItem[]): string | null {
-  let best = '';
+/**
+ * Pick the cluster's wire `summary`. Default: the longest plaintext
+ * description across all cluster members.
+ *
+ * BUT: if the canonical outlet's own description is at least 80% the
+ * length of that maximum, we prefer the canonical's description — its
+ * angle is more likely aligned with the canonical's title (the one we
+ * actually show as the headline). Stops cases like cluster headline =
+ * "Five Italians die during cave dive" while summary describes the
+ * sole survivor's angle picked from a tabloid follow-up.
+ */
+function pickSummary(members: RawRssItem[], canonical: RawRssItem): string | null {
+  let longest = '';
   for (const m of members) {
     const d = (m.description || '').trim();
-    if (d.length > best.length) best = d;
+    if (d.length > longest.length) longest = d;
   }
-  return best.length > 0 ? best : null;
+  if (longest.length === 0) return null;
+  const canonDesc = (canonical.description || '').trim();
+  if (canonDesc.length === 0) return longest;
+  // Within 80% of longest → prefer canonical's for title-summary alignment.
+  if (canonDesc.length >= longest.length * 0.8) return canonDesc;
+  return longest;
 }
 
 /** First non-null image across the cluster. Members are tried in the
@@ -242,41 +374,60 @@ export async function clusterRssItems(items: RawRssItem[]): Promise<ClusteredIte
   }
 
   // ── 4. Post-process into wire shape ──
+  const alertMin = alertMinSources();
   const clustered: ClusteredItem[] = [];
   for (const [canonicalHash, memberList] of members) {
     const canonical = pickCanonical(memberList);
-    const longestDesc = pickLongestDescription(memberList);
+    const summary = pickSummary(memberList, canonical);
     const firstImg = pickFirstImage(memberList, canonical);
 
-    // sources[] — canonical first, then alternates by publishedAt DESC.
-    const alternates = memberList
+    // sources[]: canonical first, then alternates by publishedAt DESC.
+    // Deduped by publisher root — multi-feed outlets (BBC/Sky/NYT/etc.)
+    // collapse to one entry, with the freshest article URL/title for
+    // that publisher kept.
+    const ordered = [canonical, ...memberList
       .filter((m) => m.link !== canonical.link)
-      .sort((a, b) => b.publishedAt - a.publishedAt);
+      .sort((a, b) => b.publishedAt - a.publishedAt)];
 
-    const sources: ClusterSource[] = [canonical, ...alternates].map((m) => ({
-      source: m.source,
-      title: m.title,
-      link: m.link,
-      publishedAt: m.publishedAt,
-    }));
+    const byPublisher = new Map<string, ClusterSource>();
+    for (const m of ordered) {
+      const publisher = publisherOf(m.source);
+      const existing = byPublisher.get(publisher);
+      // Canonical is processed first; only replace if a later item has
+      // a NEWER publishedAt for the same publisher (rare follow-up).
+      if (!existing || m.publishedAt > existing.publishedAt) {
+        byPublisher.set(publisher, {
+          source: publisher,
+          title: m.title,
+          link: stripTracking(m.link),
+          publishedAt: m.publishedAt,
+        });
+      }
+    }
+    // Re-order: canonical's publisher first, rest by publishedAt DESC.
+    const canonicalPublisher = publisherOf(canonical.source);
+    const canonicalSource = byPublisher.get(canonicalPublisher)!;
+    byPublisher.delete(canonicalPublisher);
+    const sources: ClusterSource[] = [
+      canonicalSource,
+      ...[...byPublisher.values()].sort((a, b) => b.publishedAt - a.publishedAt),
+    ];
 
     clustered.push({
       id: canonicalHash,
-      source: canonical.source,
+      source: canonicalPublisher,
       title: canonical.title,
-      link: canonical.link,
+      link: stripTracking(canonical.link),
       publishedAt: canonical.publishedAt,
-      summary: longestDesc,
+      summary,
       imageUrl: firstImg,
       sources,
-      isAlert: false,
+      isAlert: sources.length >= alertMin,
       titleHash: canonical.titleHash,
       location: null,
       locationName: null,
       country: null,
       isConflict: null,
-      confidence: null,
-      rawDescription: longestDesc,  // mirror, used by enrich's title-only fallback
     });
   }
 
