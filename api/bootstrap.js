@@ -87,6 +87,55 @@ const TIER_CDN_CACHE = {
 
 const NEG_SENTINEL = '__WM_NEG__';
 
+// ── Value decompression ────────────────────────────────────────────
+// Large Redis values are gzip-compressed by server/_shared/redis.ts when
+// WM_REDIS_COMPRESSION=1, stored as a self-describing envelope:
+//   { "__wmgz": 1, "d": "<base64-gzip>" }
+// Every reader must be compression-aware. This mirrors `decodeFromStorage`
+// in server/_shared/redis.ts — bootstrap keeps its own copy because it is a
+// deliberately self-contained edge function.
+const COMPRESSION_ENVELOPE_KEY = '__wmgz';
+
+function isCompressedEnvelope(v) {
+  return (
+    typeof v === 'object' && v !== null
+    && COMPRESSION_ENVELOPE_KEY in v
+    && typeof v.d === 'string'
+  );
+}
+
+function base64ToBytes(b64) {
+  const binary = atob(b64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+async function gunzipToString(bytes) {
+  const stream = new Response(new Blob([bytes])).body.pipeThrough(new DecompressionStream('gzip'));
+  return await new Response(stream).text();
+}
+
+/** Decode a raw Upstash pipeline result. Handles the dual-shape response
+ *  (string vs already-parsed object) and the gzip envelope. Returns null on
+ *  any failure — caller treats null as a cache miss. */
+async function decodeFromStorage(raw) {
+  let parsed;
+  if (typeof raw === 'string') {
+    try { parsed = JSON.parse(raw); } catch { return null; }
+  } else {
+    parsed = raw;
+  }
+  if (isCompressedEnvelope(parsed)) {
+    try {
+      return JSON.parse(await gunzipToString(base64ToBytes(parsed.d)));
+    } catch {
+      return null;
+    }
+  }
+  return parsed;
+}
+
 // ── Redis helpers ──────────────────────────────────────────────────
 
 async function getCachedJsonBatch(keys) {
@@ -107,13 +156,22 @@ async function getCachedJsonBatch(keys) {
   if (!resp.ok) return result;
 
   const data = await resp.json();
+  if (!Array.isArray(data)) return result;
+
+  // Decode every result in parallel — `decodeFromStorage` handles both the
+  // dual-shape Upstash response and the gzip-envelope format.
+  const decoded = await Promise.all(
+    data.map((entry) => {
+      const raw = entry?.result;
+      return raw === undefined || raw === null
+        ? Promise.resolve(null)
+        : decodeFromStorage(raw);
+    }),
+  );
   for (let i = 0; i < keys.length; i++) {
-    const raw = data[i]?.result;
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed !== NEG_SENTINEL) result.set(keys[i], parsed);
-      } catch { /* skip malformed */ }
+    const parsed = decoded[i];
+    if (parsed !== null && parsed !== undefined && parsed !== NEG_SENTINEL) {
+      result.set(keys[i], parsed);
     }
   }
   return result;
