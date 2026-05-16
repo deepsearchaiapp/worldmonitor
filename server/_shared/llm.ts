@@ -319,6 +319,14 @@ export interface GeminiCallOptions {
    * "wrapped in code fences" failure mode common with free-form prompts.
    */
   jsonMode?: boolean;
+  /**
+   * Sets `thinkingConfig.thinkingBudget`. Gemini 2.5 models do internal
+   * "thinking" that draws down the same `maxOutputTokens` budget as the
+   * response — for a large fixed-schema JSON output this can starve the
+   * actual answer and truncate it into invalid JSON. Pass `0` to disable
+   * thinking on structured-extraction calls. Omit to keep the model default.
+   */
+  thinkingBudget?: number;
   /** TEMP (Helicone debug): tag identifying which feature/cron is making
    *  this call. See identical field on ClaudeCallOptions for details. */
   caller?: string;
@@ -354,6 +362,7 @@ export async function callGemini(opts: GeminiCallOptions): Promise<GeminiCallRes
     temperature = 0.2,
     timeoutMs = 25_000,
     jsonMode = false,
+    thinkingBudget,
   } = opts;
 
   // TEMP (Helicone): Gemini's proxy lives at gateway.helicone.ai/v1beta and
@@ -371,6 +380,9 @@ export async function callGemini(opts: GeminiCallOptions): Promise<GeminiCallRes
   };
   if (jsonMode) {
     generationConfig.responseMimeType = 'application/json';
+  }
+  if (thinkingBudget !== undefined) {
+    generationConfig.thinkingConfig = { thinkingBudget };
   }
 
   const body: Record<string, unknown> = {

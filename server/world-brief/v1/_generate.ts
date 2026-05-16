@@ -238,7 +238,12 @@ async function buildSection(
     prompt: userPrompt(picked),
     model: 'gemini-2.5-flash',
     jsonMode: true,
-    maxTokens: 4000,
+    // gemini-2.5-flash "thinking" draws down maxOutputTokens; left on, an
+    // 8-cluster JSON payload truncates into invalid JSON. Thinking adds
+    // nothing to fixed-schema extraction, so disable it and give the
+    // response a generous budget.
+    thinkingBudget: 0,
+    maxTokens: 8000,
     temperature: 0.3,
     timeoutMs: 30_000,
     caller: `world-brief:${mode}`,
@@ -251,7 +256,10 @@ async function buildSection(
 
   const parsed = parseLlmResponse(result.content);
   if (!parsed) {
-    console.warn(`[world-brief] mode=${mode} unparseable LLM response`);
+    console.warn(
+      `[world-brief] mode=${mode} unparseable LLM response ` +
+        `(len=${result.content.length} tail=${JSON.stringify(result.content.slice(-120))})`,
+    );
     return null;
   }
 
