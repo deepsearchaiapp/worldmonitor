@@ -555,7 +555,7 @@ export async function clusterRssItems(items: RawRssItem[]): Promise<ClusteredIte
   // ── 4. Post-process into wire shape ──
   const alertMin = alertMinSources();
   const clustered: ClusteredItem[] = [];
-  for (const [canonicalHash, memberList] of members) {
+  for (const memberList of members.values()) {
     const rssMembers = memberList.filter((m) => m.origin === 'rss');
     // GDELT-only clusters have no trusted anchor and can never reach the
     // RSS-source gate — drop them so they don't consume digest slots.
@@ -626,7 +626,13 @@ export async function clusterRssItems(items: RawRssItem[]): Promise<ClusteredIte
     const gdeltLoc = pickGdeltLocation(memberList);
 
     clustered.push({
-      id: canonicalHash,
+      // Identity = the PICKED canonical's titleHash, NOT the titleHash of
+      // whichever item happened to start the cluster. The starter varies
+      // with input order every refresh; the canonical (lowest priority,
+      // newest) is stable. Using the starter made `mergeItems` (which
+      // dedups by `id`) treat the same story as new each refresh, so the
+      // 24h digest accumulated duplicate entries of one story.
+      id: canonical.titleHash,
       source: canonicalPublisher,
       title: canonical.title,
       link: stripTracking(canonical.link),
