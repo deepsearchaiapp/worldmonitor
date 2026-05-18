@@ -50,12 +50,8 @@ jobs:
           ACLED_ACCESS_TOKEN: ${{ secrets.ACLED_ACCESS_TOKEN }}
 
       # --- Environment & climate ---
-      - name: Seed natural events
-        run: node scripts/seed-natural-events.mjs
-        env:
-          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
-          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-
+      # NOTE: "Seed natural events" moved to seed-hourly.yml — wildfires plus
+      # storms/floods/volcanoes now refresh hourly instead of every 2 hours.
       - name: Seed climate anomalies
         run: node scripts/seed-climate-anomalies.mjs
         env:

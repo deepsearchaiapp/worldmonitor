@@ -1,0 +1,28 @@
+name: Seed Hourly Data (Every hour)
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: seed-hourly
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Map layers: Wildfires (NASA EONET, major fires) + Natural Events
+      # (EONET storms/floods/volcanoes + GDACS + NHC). One month rolling window.
+      - name: Seed natural events
+        run: node scripts/seed-natural-events.mjs
+        env:
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}

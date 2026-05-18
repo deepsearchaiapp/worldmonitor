@@ -11,7 +11,7 @@ const CANONICAL_KEY = 'natural:events:v1';
 const CACHE_TTL = 3600; // 1 hour
 
 const DAYS = 30;
-const WILDFIRE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const WILDFIRE_MIN_ACRES = 10_000;
 
 const GDACS_TO_CATEGORY = {
   EQ: 'earthquakes',
@@ -42,8 +42,18 @@ function normalizeCategory(id) {
   return NATURAL_EVENT_CATEGORIES.has(c) ? c : 'manmade';
 }
 
+// Intentional controlled burns reported by agencies as "RX"/"Prescribed Fire"
+// — not real wildfires, so they are excluded from the map.
+function isPrescribedBurn(title) {
+  const t = String(title || '').toLowerCase();
+  return t.includes('prescribed') || t.startsWith('rx ') || t.includes(' rx ');
+}
+
 async function fetchEonet(days) {
-  const url = `${EONET_API_URL}?status=open&days=${days}`;
+  // status=all (not just open) so recently-closed storms, floods and volcanic
+  // events within the last `days` window are still surfaced — most severe
+  // events close within days, and open-only dropped almost all of them.
+  const url = `${EONET_API_URL}?status=all&days=${days}`;
   const res = await fetch(url, {
     headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
     signal: AbortSignal.timeout(15_000),
@@ -52,7 +62,6 @@ async function fetchEonet(days) {
 
   const data = await res.json();
   const events = [];
-  const now = Date.now();
 
   for (const event of data.events || []) {
     const category = event.categories?.[0];
@@ -66,7 +75,13 @@ async function fetchEonet(days) {
     const eventDate = new Date(latestGeo.date);
     const [lon, lat] = latestGeo.coordinates;
 
-    if (normalizedCategory === 'wildfires' && now - eventDate.getTime() > WILDFIRE_MAX_AGE_MS) continue;
+    let magnitude = latestGeo.magnitudeValue ?? 0;
+    if (normalizedCategory === 'wildfires') {
+      // Keep only major wildfires: peak burned area >= 10k acres, no controlled burns.
+      if (isPrescribedBurn(event.title)) continue;
+      magnitude = Math.max(0, ...event.geometry.map((g) => g.magnitudeValue ?? 0));
+      if (magnitude < WILDFIRE_MIN_ACRES) continue;
+    }
 
     const source = event.sources?.[0];
     events.push({
@@ -78,7 +93,7 @@ async function fetchEonet(days) {
       lat,
       lon,
       date: eventDate.getTime(),
-      magnitude: latestGeo.magnitudeValue ?? 0,
+      magnitude,
       magnitudeUnit: latestGeo.magnitudeUnit || '',
       sourceUrl: source?.url || '',
       sourceName: source?.id || '',
