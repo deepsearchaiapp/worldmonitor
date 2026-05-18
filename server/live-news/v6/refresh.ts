@@ -277,6 +277,30 @@ export async function refreshLiveNewsV6(): Promise<RefreshResult> {
     `category=${gdeltCategoryItems.length}`,
   );
 
+  // ── Phase 1c: read the existing digest NOW — before clustering ───────
+  // This cron runs on the Edge runtime, and the ~25 s clustering CPU burn
+  // leaves the isolate too degraded to complete the (multi-MB) digest
+  // fetch afterwards — the post-cluster read timed out every run. Reading
+  // it up front, while the isolate is fresh, sidesteps that. The digest is
+  // only written by this cron, so its value can't change under us between
+  // here and the Phase 3 merge.
+  //
+  // strict=true so a timeout/HTTP failure THROWS rather than masquerading
+  // as an empty digest — merging against [] would rebuild from scratch and
+  // discard every cluster's accumulated enrichment.
+  let existing: ClusteredItem[] = [];
+  let digestReadOk = true;
+  try {
+    existing = ((await getCachedJson(DIGEST_KEY, false, 8_000, true)) as ClusteredItem[] | null) ?? [];
+    console.log(`[live-news:v6:refresh] phase=digest-read existing=${existing.length}`);
+  } catch (err) {
+    digestReadOk = false;
+    console.warn(
+      `[live-news:v6:refresh] existing-digest read failed (pre-cluster): ` +
+      `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   // ── Phase 2: Embed + cluster ─────────────────────────────────────────
   // RSS + GDELT items go through ONE clustering pass. GDELT items attach
   // to RSS clusters as corroboration; GDELT-only clusters are dropped
@@ -299,26 +323,15 @@ export async function refreshLiveNewsV6(): Promise<RefreshResult> {
   );
 
   // ── Phase 3: Merge + Redis write ─────────────────────────────────────
-  // 5 s read timeout (vs the 1.5 s user-facing default): the digest is a
-  // multi-MB compressed blob and a timed-out read here is destructive —
-  // it forces a rebuild-from-scratch that drops accumulated enrichment.
-  // This is a cron, so a slightly longer wait costs nothing.
   const writeStart = Date.now();
-  let existing: ClusteredItem[];
-  try {
-    // strict=true so a timeout/HTTP failure THROWS rather than masquerading
-    // as an empty digest. 8 s budget — no user is waiting, and we now skip
-    // (rather than rebuild) on failure, so a longer wait is purely upside.
-    existing = ((await getCachedJson(DIGEST_KEY, false, 8_000, true)) as ClusteredItem[] | null) ?? [];
-  } catch (err) {
-    // The existing-digest read FAILED — distinct from a genuinely empty
-    // digest. Merging against [] here would rebuild from scratch and
-    // discard every cluster's accumulated enrichment (location / topics /
-    // region / isConflict). Skip the write entirely; the prior digest
-    // stays intact and the next refresh merges against it normally.
+  if (!digestReadOk) {
+    // The pre-cluster digest read (Phase 1c) failed. Merging against []
+    // would rebuild from scratch and discard every cluster's accumulated
+    // enrichment (location / topics / region / isConflict). Skip the
+    // write; the prior digest stays intact and the next refresh merges
+    // against it normally.
     console.warn(
-      `[live-news:v6:refresh] phase=write SKIPPED — existing-digest read failed, ` +
-      `preserving prior digest: ${err instanceof Error ? err.message : String(err)}`,
+      `[live-news:v6:refresh] phase=write SKIPPED — existing-digest read failed, preserving prior digest`,
     );
     return {
       status: 'skipped',
