@@ -102,6 +102,11 @@ export interface RawRssItem {
   /** GDELT-only: every outlet that ran this story, per GKG. These are
    *  appended below the RSS sources in the cluster's `sources[]`. */
   gdeltSources?: GdeltSourceEntry[];
+  /** GDELT-only: intel-topic ids this story's headline keyword-matched
+   *  (cyber, military, …). The cluster unions these across its GDELT
+   *  members into `ClusteredItem.categories`. Absent on conflict
+   *  candidates and RSS items. */
+  gdeltCategories?: string[];
 }
 
 /** Cap on the cached `body` field. The embedder only ingests the first

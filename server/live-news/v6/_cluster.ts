@@ -289,6 +289,13 @@ export interface ClusteredItem {
   country: string | null;
   region?: string;
   isConflict: boolean | null;
+  /** Intel-topic ids this cluster qualifies for — the union of every GDELT
+   *  category member's `gdeltCategories`. The cluster is surfaced in
+   *  category X's feed when X is listed here. Empty when the cluster has no
+   *  category-tagged GDELT member. GDELT-only clusters are dropped, so any
+   *  tagged cluster already has ≥1 RSS member — the "≥1 RSS + ≥1 category
+   *  source" gate is satisfied by construction. */
+  categories: string[];
 }
 
 /**
@@ -625,6 +632,14 @@ export async function clusterRssItems(items: RawRssItem[]): Promise<ClusteredIte
     // the enrich cron LLM-geocodes from the RSS members instead.
     const gdeltLoc = pickGdeltLocation(memberList);
 
+    // Category tags — union of every GDELT member's keyword-matched topics.
+    const categorySet = new Set<string>();
+    for (const m of memberList) {
+      if (m.origin === 'gdelt' && Array.isArray(m.gdeltCategories)) {
+        for (const cat of m.gdeltCategories) categorySet.add(cat);
+      }
+    }
+
     clustered.push({
       // Identity = the PICKED canonical's titleHash, NOT the titleHash of
       // whichever item happened to start the cluster. The starter varies
@@ -650,6 +665,7 @@ export async function clusterRssItems(items: RawRssItem[]): Promise<ClusteredIte
       locationName: gdeltLoc?.locationName ?? null,
       country: gdeltLoc?.country ?? null,
       isConflict: null,
+      categories: [...categorySet],
     });
   }
 

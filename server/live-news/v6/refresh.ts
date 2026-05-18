@@ -31,6 +31,12 @@ export const DIGEST_KEY = 'live-news:v6:digest';
 // gated out of any cluster that lacks ≥3 RSS publishers (read side).
 const GDELT_CANDIDATES_KEY = 'gdelt:conflict-candidates:v1';
 
+// GDELT category candidates — keyword-matched stories for the 9 non-conflict
+// intel topics, written by api/intel-news/v1/refresh.ts. They cluster
+// alongside RSS + conflict candidates; a cluster inherits a category when it
+// has ≥1 RSS member + ≥1 category-tagged GDELT member.
+const GDELT_CATEGORY_CANDIDATES_KEY = 'gdelt:category-candidates:v1';
+
 /** Fixed high sourcePriority for GDELT items so they sort last anywhere
  *  priority matters. `pickCanonical` excludes them outright regardless. */
 const GDELT_SOURCE_PRIORITY = 99;
@@ -43,6 +49,18 @@ interface GdeltConflictCandidate {
   source: string;
   publishedAt: number;
   location: { lat: number; lng: number; country: string | null; locationName: string | null } | null;
+  sources: Array<{ source: string; title: string; link: string; publishedAt: number }>;
+}
+
+/** Shape of entries in `gdelt:category-candidates:v1` — must match the
+ *  `GdeltCategoryCandidate` written by api/intel-news/v1/refresh.ts. */
+interface GdeltCategoryCandidate {
+  title: string;
+  link: string;
+  source: string;
+  publishedAt: number;
+  location: { lat: number; lng: number; country: string | null; locationName: string | null } | null;
+  categories: string[];
   sources: Array<{ source: string; title: string; link: string; publishedAt: number }>;
 }
 
@@ -69,6 +87,44 @@ async function loadGdeltCandidates(): Promise<RawRssItem[]> {
     imageUrl: null,
     titleHash: hashes[i]!,
     origin: 'gdelt' as const,
+    gdeltLocation: c.location
+      ? {
+          latitude: c.location.lat,
+          longitude: c.location.lng,
+          country: c.location.country,
+          locationName: c.location.locationName,
+        }
+      : null,
+    gdeltSources: Array.isArray(c.sources) ? c.sources : [],
+  }));
+}
+
+/**
+ * Load GDELT category candidates and convert them to `RawRssItem`s tagged
+ * `origin: 'gdelt'` + `gdeltCategories`. Same corroboration role as the
+ * conflict candidates (never canonical, never displayed as content) — they
+ * additionally carry the intel-topic tags the cluster inherits.
+ */
+async function loadCategoryCandidates(): Promise<RawRssItem[]> {
+  const raw = (await getCachedJson(GDELT_CATEGORY_CANDIDATES_KEY)) as GdeltCategoryCandidate[] | null;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const valid = raw.filter(
+    (c) => c && c.title && c.link && Array.isArray(c.categories) && c.categories.length > 0,
+  );
+  const hashes = await Promise.all(valid.map((c) => titleHashFor(c.title)));
+  return valid.map((c, i) => ({
+    source: c.source || 'GDELT',
+    sourceUrl: '',
+    sourcePriority: GDELT_SOURCE_PRIORITY,
+    title: c.title,
+    link: c.link,
+    publishedAt: typeof c.publishedAt === 'number' ? c.publishedAt : Date.now(),
+    description: '',
+    body: '',
+    imageUrl: null,
+    titleHash: hashes[i]!,
+    origin: 'gdelt' as const,
+    gdeltCategories: c.categories,
     gdeltLocation: c.location
       ? {
           latitude: c.location.lat,
@@ -179,16 +235,26 @@ export async function refreshLiveNewsV6(): Promise<RefreshResult> {
     };
   }
 
-  // ── Phase 1b: GDELT conflict candidates ──────────────────────────────
-  const gdeltItems = await loadGdeltCandidates();
-  console.log(`[live-news:v6:refresh] phase=gdelt loaded=${gdeltItems.length} candidates`);
+  // ── Phase 1b: GDELT conflict + category candidates ───────────────────
+  const [gdeltItems, gdeltCategoryItems] = await Promise.all([
+    loadGdeltCandidates(),
+    loadCategoryCandidates(),
+  ]);
+  console.log(
+    `[live-news:v6:refresh] phase=gdelt conflict=${gdeltItems.length} ` +
+    `category=${gdeltCategoryItems.length}`,
+  );
 
   // ── Phase 2: Embed + cluster ─────────────────────────────────────────
   // RSS + GDELT items go through ONE clustering pass. GDELT items attach
   // to RSS clusters as corroboration; GDELT-only clusters are dropped
   // inside clusterRssItems (no trusted anchor).
   const clusterStart = Date.now();
-  const clustered = await clusterRssItems([...normalized.items, ...gdeltItems]);
+  const clustered = await clusterRssItems([
+    ...normalized.items,
+    ...gdeltItems,
+    ...gdeltCategoryItems,
+  ]);
   const clusterMs = Date.now() - clusterStart;
   const multiSource = clustered.filter((c) => c.sources.length > 1).length;
   const gdeltBacked = clustered.filter(

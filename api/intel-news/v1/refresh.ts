@@ -872,6 +872,155 @@ async function mergeIntoGdeltCandidates(fresh: GdeltConflictCandidate[]): Promis
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GDELT CATEGORY candidates — keyword-based, for the 9 non-conflict intel
+// topics (cyber, military, nuclear, sanctions, intelligence, maritime,
+// business, scitech, entertainment).
+//
+// Same idea as the conflict candidates above, fed into the SAME v6
+// RSS-embedding clusterer — but selection is by INTEL_TOPICS title KEYWORD
+// patterns, not GKG themes. GKG themes are extracted from article bodies
+// and are too noisy to use as a standalone category label without an LLM
+// gate (CYBER_ATTACK fires on "exam leak", WMD on a diplomatic summit).
+// The headline keyword is the precision anchor; themes can be layered in
+// later as a recall booster gated by keyword confirmation.
+//
+// A candidate surfaces only by clustering with trusted RSS; a cluster is
+// shown in category X when it has ≥1 RSS member + ≥1 category-X GDELT
+// member. Each candidate carries the topic ids its headline matched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GDELT_CATEGORY_CANDIDATES_KEY = 'gdelt:category-candidates:v1';
+const GDELT_CATEGORY_CANDIDATES_MAX = 8000;
+
+/** One deduplicated GDELT category story. Mirrors GdeltConflictCandidate
+ *  but tagged with the intel-topic ids its headline keyword-matched. */
+interface GdeltCategoryCandidate {
+  title: string;
+  link: string;
+  source: string;
+  publishedAt: number;
+  location: GdeltLocation | null;
+  /** Non-conflict intel-topic ids this headline matched (≥1). */
+  categories: string[];
+  sources: Array<{ source: string; title: string; link: string; publishedAt: number }>;
+}
+
+/** Non-conflict intel topics a headline keyword-matches. Conflict is
+ *  excluded — it has its own theme-based candidate path above. */
+function matchedCategories(title: string): string[] {
+  const out: string[] = [];
+  for (const topic of INTEL_TOPICS) {
+    if (topic.id === 'conflict') continue;
+    if (topic.titlePattern.test(title)) out.push(topic.id);
+  }
+  return out;
+}
+
+/**
+ * From a batch's parsed rows, pull rows whose headline matches ≥1
+ * non-conflict intel topic and collapse syndicated copies into one
+ * candidate per story (title-normalized). `categories` is the union of
+ * every group member's matched topics; `location` is the first parseable
+ * GKG location in the group.
+ */
+function extractCategoryCandidates(rows: ParsedRow[]): GdeltCategoryCandidate[] {
+  const matched = rows
+    .map((row) => ({ row, categories: matchedCategories(row.title) }))
+    .filter((m) => m.categories.length > 0);
+
+  const groups = new Map<string, Array<{ row: ParsedRow; categories: string[] }>>();
+  for (const m of matched) {
+    const k = normalizeTitle(m.row.title);
+    if (!k) continue;
+    const g = groups.get(k) ?? [];
+    g.push(m);
+    groups.set(k, g);
+  }
+
+  const candidates: GdeltCategoryCandidate[] = [];
+  for (const group of groups.values()) {
+    group.sort((a, b) => b.row.date - a.row.date);
+    const canonical = group[0]!;
+    const categories = [...new Set(group.flatMap((m) => m.categories))];
+    let location: GdeltLocation | null = null;
+    for (const m of group) {
+      const loc = parsePrimaryLocation(m.row.v2Locations, m.row.v1Locations);
+      if (loc) { location = loc; break; }
+    }
+    candidates.push({
+      title: canonical.row.title,
+      link: canonical.row.url,
+      source: canonical.row.domain,
+      publishedAt: canonical.row.date,
+      location,
+      categories,
+      sources: group.slice(0, GDELT_CANDIDATE_SOURCES_MAX).map((m) => ({
+        source: m.row.domain, title: m.row.title, link: m.row.url, publishedAt: m.row.date,
+      })),
+    });
+  }
+  return candidates;
+}
+
+/**
+ * Merge fresh category candidates into the rolling accumulator at
+ * `gdelt:category-candidates:v1`. Identity is the title-normalized key;
+ * `categories` and `sources` are unioned across batches. Same 3-day
+ * retention as the conflict candidates + the v6 clusterer's window.
+ */
+async function mergeIntoCategoryCandidates(fresh: GdeltCategoryCandidate[]): Promise<{
+  added: number;
+  total: number;
+}> {
+  if (fresh.length === 0) {
+    const existing = await redisGet<GdeltCategoryCandidate[]>(GDELT_CATEGORY_CANDIDATES_KEY);
+    return { added: 0, total: Array.isArray(existing) ? existing.length : 0 };
+  }
+
+  const cutoff = Date.now() - GDELT_CANDIDATES_RETENTION_MS;
+  const existing = (await redisGet<GdeltCategoryCandidate[]>(GDELT_CATEGORY_CANDIDATES_KEY)) ?? [];
+
+  const byTitle = new Map<string, GdeltCategoryCandidate>();
+  for (const c of existing) {
+    if (!c || typeof c.title !== 'string') continue;
+    const k = normalizeTitle(c.title);
+    if (k) byTitle.set(k, c);
+  }
+
+  let added = 0;
+  for (const c of fresh) {
+    const k = normalizeTitle(c.title);
+    if (!k) continue;
+    const prior = byTitle.get(k);
+    if (prior) {
+      const seen = new Set(prior.sources.map((s) => s.link));
+      const mergedSources = [...prior.sources];
+      for (const s of c.sources) {
+        if (mergedSources.length >= GDELT_CANDIDATE_SOURCES_MAX) break;
+        if (!seen.has(s.link)) { mergedSources.push(s); seen.add(s.link); }
+      }
+      byTitle.set(k, {
+        ...prior,
+        sources: mergedSources,
+        categories: [...new Set([...(prior.categories ?? []), ...c.categories])],
+        location: prior.location ?? c.location,
+      });
+    } else {
+      byTitle.set(k, c);
+      added++;
+    }
+  }
+
+  const merged = [...byTitle.values()]
+    .filter((c) => typeof c.publishedAt === 'number' && c.publishedAt >= cutoff)
+    .sort((a, b) => b.publishedAt - a.publishedAt)
+    .slice(0, GDELT_CATEGORY_CANDIDATES_MAX);
+
+  await redisSet(GDELT_CATEGORY_CANDIDATES_KEY, merged, GDELT_CANDIDATES_TTL_S);
+  return { added, total: merged.length };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Process a single batch URL end-to-end
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -887,6 +1036,8 @@ interface BatchResult {
   }>;
   /** GDELT conflict-candidate extraction stats for this batch. */
   gdeltCandidates: { extracted: number; newlyAdded: number; total: number };
+  /** GDELT category-candidate extraction stats for this batch. */
+  gdeltCategoryCandidates: { extracted: number; newlyAdded: number; total: number };
 }
 
 async function processBatch(gkgUrl: string): Promise<BatchResult | null> {
@@ -994,6 +1145,16 @@ async function processBatch(gkgUrl: string): Promise<BatchResult | null> {
     `+${gdeltMerge.added} new → ${gdeltMerge.total} in accumulator (${Date.now() - tGdelt}ms)`,
   );
 
+  // GDELT category candidates — keyword-based, for the 9 non-conflict intel
+  // topics. Feeds the same v6 clusterer; see the candidate section header.
+  const tCat = Date.now();
+  const categoryCandidates = extractCategoryCandidates(parsedRows);
+  const categoryMerge = await mergeIntoCategoryCandidates(categoryCandidates);
+  console.log(
+    `[intel-news:refresh] gdelt-category-candidates: ${categoryCandidates.length} extracted → ` +
+    `+${categoryMerge.added} new → ${categoryMerge.total} in accumulator (${Date.now() - tCat}ms)`,
+  );
+
   return {
     rows: lines.length,
     withTitles: parsedRows.length,
@@ -1002,6 +1163,11 @@ async function processBatch(gkgUrl: string): Promise<BatchResult | null> {
       extracted: candidates.length,
       newlyAdded: gdeltMerge.added,
       total: gdeltMerge.total,
+    },
+    gdeltCategoryCandidates: {
+      extracted: categoryCandidates.length,
+      newlyAdded: categoryMerge.added,
+      total: categoryMerge.total,
     },
   };
 }
@@ -1023,6 +1189,8 @@ interface RefreshResult {
   totalNewlyAdded: number;
   /** GDELT conflict-candidate stats (latest accumulator size, items added). */
   gdeltCandidates: { newlyAdded: number; total: number };
+  /** GDELT category-candidate stats (latest accumulator size, items added). */
+  gdeltCategoryCandidates: { newlyAdded: number; total: number };
 }
 
 /** Walk back N batches (15 min apart) from a yyyymmddhhmmss timestamp. */
@@ -1066,6 +1234,7 @@ async function refreshIntelNews(backfill: number): Promise<RefreshResult> {
   // GDELT candidate stats — `total` is the latest accumulator size seen,
   // `newlyAdded` sums across batches (matters for backfill runs).
   const gdeltCandidates = { newlyAdded: 0, total: 0 };
+  const gdeltCategoryCandidates = { newlyAdded: 0, total: 0 };
 
   for (const url of urls) {
     if (Date.now() - start > BUDGET_MS) {
@@ -1091,6 +1260,8 @@ async function refreshIntelNews(backfill: number): Promise<RefreshResult> {
       }
       gdeltCandidates.newlyAdded += result.gdeltCandidates.newlyAdded;
       gdeltCandidates.total = result.gdeltCandidates.total; // latest, not summed
+      gdeltCategoryCandidates.newlyAdded += result.gdeltCategoryCandidates.newlyAdded;
+      gdeltCategoryCandidates.total = result.gdeltCategoryCandidates.total;
     } catch (err) {
       console.warn(`[intel-news:refresh] batch ${url} threw: ${(err as Error).message}`);
     }
@@ -1101,9 +1272,13 @@ async function refreshIntelNews(backfill: number): Promise<RefreshResult> {
   console.log(
     `[intel-news:refresh] GKG ingestion done in ${durationMs}ms · ` +
     `${batchesDone}/${urls.length} batches · ${totalNewlyAdded} newly-added items · ` +
-    `gdelt-candidates +${gdeltCandidates.newlyAdded} → ${gdeltCandidates.total}`,
+    `gdelt-candidates +${gdeltCandidates.newlyAdded} → ${gdeltCandidates.total} · ` +
+    `gdelt-category-candidates +${gdeltCategoryCandidates.newlyAdded} → ${gdeltCategoryCandidates.total}`,
   );
-  return { batches: batchesDone, durationMs, totals, totalNewlyAdded, gdeltCandidates };
+  return {
+    batches: batchesDone, durationMs, totals, totalNewlyAdded,
+    gdeltCandidates, gdeltCategoryCandidates,
+  };
 }
 
 // Enrichment is a SEPARATE cron (`/api/intel-news/v1/enrich`, scheduled at
