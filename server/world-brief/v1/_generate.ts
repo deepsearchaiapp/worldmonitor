@@ -1,19 +1,20 @@
 /**
  * World Brief generator — the hourly "AI World Brief" shown on top of the
- * conflict and live-news feed sections.
+ * conflict, live-news, and per-category feed sections.
  *
  * Reads the v6 RSS-clustering digest (`live-news:v6:digest`), ranks the
  * most-referenced clusters, and asks Gemini for an original-wording,
- * copyright-safe factual brief of each. Two sections are produced:
+ * copyright-safe factual brief of each. Sections produced:
  *
- *   conflict  — clusters with `isConflict === true`, ranked by TOTAL source
- *               count (RSS + GDELT corroboration both count).
- *   liveNews  — all clusters, ranked by distinct RSS-publisher count only
- *               (GDELT never counts). Reused by every non-conflict feed
- *               section in the app.
+ *   conflict   — clusters with `isConflict === true`, ranked by TOTAL source
+ *                count (RSS + GDELT corroboration both count).
+ *   liveNews   — all clusters, ranked by distinct RSS-publisher count only.
+ *   categories — one section per intel topic (cyber, military, …): clusters
+ *                whose enrich-LLM `topics[]` include that category, ranked
+ *                by total source count.
  *
- * GDELT members deepen the conflict ranking but never reach the LLM — only
- * RSS headlines + the RSS-supplied lede are sent for summarization, per the
+ * GDELT members deepen the ranking but never reach the LLM — only RSS
+ * headlines + the RSS-supplied lede are sent for summarization, per the
  * pipeline rule that GDELT content never touches an LLM.
  */
 
@@ -38,6 +39,16 @@ const MAX_MEMBER_HEADLINES = 10;
 const MAX_TEXT_LEN = 600;
 /** Cap on the per-cluster "all sources" list surfaced to the reader. */
 const MAX_SOURCE_REFS = 30;
+/** Parallel section builds — 11 sections, one Gemini call each. Capped so
+ *  the burst stays within Gemini rate limits. */
+const SECTION_CONCURRENCY = 4;
+
+/** The 9 GDELT intel categories — kept in sync with enrich.ts VALID_TOPICS. */
+export const CATEGORY_IDS = [
+  'cyber', 'military', 'nuclear', 'sanctions', 'intelligence',
+  'maritime', 'business', 'scitech', 'entertainment',
+] as const;
+export type CategoryId = (typeof CATEGORY_IDS)[number];
 
 export type BriefThreatLevel = 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'MODERATE';
 const THREAT_ORDER: BriefThreatLevel[] = ['MODERATE', 'ELEVATED', 'HIGH', 'CRITICAL'];
@@ -61,7 +72,8 @@ export interface WorldBriefCluster {
   /** 2–4 free-form uppercase topical tags. */
   tags: string[];
   threatLevel: BriefThreatLevel;
-  /** Ranking metric: total sources for conflict, RSS publishers for live-news. */
+  /** Ranking metric: total sources for conflict/category, RSS publishers
+   *  for live-news. */
   sourceCount: number;
   /** Every outlet covering this story — RSS first, deduped by URL, capped.
    *  Surfaced as the tappable "all sources" list in the detail view. */
@@ -83,9 +95,13 @@ export interface WorldBriefPayload {
   generatedAt: number;
   conflict: WorldBriefSection | null;
   liveNews: WorldBriefSection | null;
+  /** One section per intel category. A null value means generation failed
+   *  (LKG then restores the prior); an empty-clusters section means the
+   *  category genuinely had nothing to brief this cycle. */
+  categories: Record<string, WorldBriefSection | null>;
 }
 
-type BriefMode = 'conflict' | 'live-news';
+type BriefMode = 'conflict' | 'live-news' | CategoryId;
 
 interface PickedCluster {
   cluster: ClusteredItem;
@@ -145,22 +161,37 @@ function buildSourceRefs(c: ClusteredItem): WorldBriefSourceRef[] {
 /**
  * Pick the top-N most-referenced clusters for a section.
  *
- *   conflict   — only `isConflict` clusters, scored by total source count.
- *   live-news  — all clusters, scored by distinct RSS-publisher count.
+ *   conflict   — `isConflict` clusters, ≥ MIN_RSS_SOURCES gate, scored by
+ *                total source count.
+ *   live-news  — all clusters, ≥ MIN_RSS_SOURCES gate, scored by distinct
+ *                RSS-publisher count.
+ *   category   — clusters whose enrich-LLM `topics[]` include the category.
+ *                NO RSS-count gate (category clusters are sparser, and a
+ *                tagged cluster already has ≥1 RSS member since GDELT-only
+ *                clusters are dropped at cluster time). Scored by total
+ *                source count.
  *
- * Both modes require ≥ MIN_RSS_SOURCES distinct RSS publishers (the display
- * gate); GDELT corroboration never satisfies the gate. Ranked clusters are
- * then greedily de-duplicated: a candidate sharing more than one exact
- * source URL with an already-picked cluster is the same event (the embedder
- * failed to merge it) and is skipped.
+ * Ranked clusters are then greedily de-duplicated: a candidate sharing more
+ * than one exact source URL with an already-picked cluster is the same
+ * event (the embedder failed to merge it) and is skipped.
  */
 function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster[] {
   const ranked = clusters
-    .filter((c) => c && Array.isArray(c.sources) && rssSourceCount(c) >= MIN_RSS_SOURCES)
-    .filter((c) => (mode === 'conflict' ? c.isConflict === true : true))
+    .filter((c) => {
+      if (!c || !Array.isArray(c.sources)) return false;
+      if (mode === 'conflict') {
+        return c.isConflict === true && rssSourceCount(c) >= MIN_RSS_SOURCES;
+      }
+      if (mode === 'live-news') {
+        return rssSourceCount(c) >= MIN_RSS_SOURCES;
+      }
+      return Array.isArray(c.topics) && c.topics.includes(mode);
+    })
     .map((c) => ({
       cluster: c,
-      score: mode === 'conflict' ? c.sources.length : rssSourceCount(c),
+      // live-news ranks by distinct RSS publishers; conflict + categories
+      // rank by total source count (RSS + GDELT corroboration).
+      score: mode === 'live-news' ? rssSourceCount(c) : c.sources.length,
       urls: clusterUrlSet(c),
     }))
     .sort((a, b) => b.score - a.score || b.cluster.publishedAt - a.cluster.publishedAt);
@@ -186,11 +217,23 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
 
 // ── LLM prompt ───────────────────────────────────────────────────────────────
 
+/** Editorial desk persona per section — sets the LLM's framing. */
+const DESK_LABEL: Record<BriefMode, string> = {
+  'conflict': 'a geopolitical conflict-monitoring intelligence desk',
+  'live-news': 'a world-news intelligence desk',
+  'cyber': 'a cybersecurity intelligence desk',
+  'military': 'a defense and military-affairs desk',
+  'nuclear': 'a nuclear-affairs and non-proliferation desk',
+  'sanctions': 'a sanctions and trade-policy desk',
+  'intelligence': 'an intelligence and espionage-affairs desk',
+  'maritime': 'a maritime and naval-affairs desk',
+  'business': 'a business and economics desk',
+  'scitech': 'a science and technology desk',
+  'entertainment': 'an entertainment and culture desk',
+};
+
 function systemPrompt(mode: BriefMode): string {
-  const desk =
-    mode === 'conflict'
-      ? 'a geopolitical conflict-monitoring intelligence desk'
-      : 'a world-news intelligence desk';
+  const desk = DESK_LABEL[mode];
   return `You are the editor of ${desk}. You receive several news stories. Each story is a cluster of headlines from multiple independent outlets covering the SAME event, plus a short lede.
 
 For EACH story, write an original, neutral, factual brief. This is critical:
@@ -203,10 +246,10 @@ For each story produce:
 - "whatHappened": 1-2 sentences stating the core facts (who / what / when / where).
 - "whyItMatters": one sentence on the significance or wider implications.
 - "tags": 2 to 4 short UPPERCASE topical tags, e.g. "MISSILE STRIKE", "CEASEFIRE TALKS", "SANCTIONS", "ELECTION".
-- "threatLevel": one of "CRITICAL", "HIGH", "ELEVATED", "MODERATE" — how severe or escalatory the event is${mode === 'conflict' ? '' : ' (for non-conflict news, judge overall global significance instead)'}.
+- "threatLevel": one of "CRITICAL", "HIGH", "ELEVATED", "MODERATE" — how severe or escalatory the event is${mode === 'conflict' ? '' : ' (for non-conflict news, judge overall significance instead)'}.
 
 Also produce:
-- "overview": a SHORT global summary — 2 to 4 sentences, no more. Cover only the handful of developments of genuine worldwide significance; do NOT try to touch every story. Skip routine or minor items entirely.
+- "overview": a SHORT summary — 2 to 4 sentences, no more. Cover only the handful of developments of genuine significance; do NOT try to touch every story. Skip routine or minor items entirely.
 - "overallThreatLevel": one of "CRITICAL", "HIGH", "ELEVATED", "MODERATE" — the highest level the overall situation warrants.
 
 Respond with ONLY a JSON object of exactly this shape:
@@ -287,10 +330,13 @@ function parseLlmResponse(content: string): LlmResponse | null {
 // ── Section build ────────────────────────────────────────────────────────────
 
 /**
- * Build one brief section. Returns null when there is nothing to brief or
- * the LLM call fails outright — the caller then falls back to the prior
- * payload (last-known-good). A partial LLM response is tolerated: clusters
- * the model omitted fall back to the raw cluster title/lede.
+ * Build one brief section.
+ *   • 0 clusters → an empty section (clusters: []) — a valid "nothing to
+ *     brief" state, NOT a failure.
+ *   • LLM call / parse failure → null — the caller then carries forward the
+ *     prior section (last-known-good).
+ * A partial LLM response is tolerated: clusters the model omitted fall back
+ * to the raw cluster title/lede.
  */
 async function buildSection(
   clusters: ClusteredItem[],
@@ -298,8 +344,8 @@ async function buildSection(
 ): Promise<WorldBriefSection | null> {
   const picked = pickClusters(clusters, mode);
   if (picked.length === 0) {
-    console.warn(`[world-brief] mode=${mode} no clusters passed the gate`);
-    return null;
+    console.warn(`[world-brief] mode=${mode} no clusters — empty section`);
+    return { overview: '', threatLevel: 'MODERATE', clusters: [] };
   }
 
   const result = await callGemini({
@@ -369,36 +415,74 @@ async function buildSection(
 
 // ── Public entry points ──────────────────────────────────────────────────────
 
+/** Run `fn` over `items` with at most `limit` in flight at once. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < items.length) {
+      const i = cursor++;
+      results[i] = await fn(items[i]!);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+  return results;
+}
+
 /**
- * Generate both brief sections from the current v6 digest. On a per-section
- * failure the previous section is carried forward (last-known-good).
+ * Generate all brief sections from the current v6 digest — conflict,
+ * live-news, and one per intel category. On a per-section LLM failure the
+ * previous section is carried forward (last-known-good).
  */
 export async function generateWorldBrief(): Promise<WorldBriefPayload> {
   const digest = (await getCachedJson(DIGEST_KEY, false, 5_000)) as ClusteredItem[] | null;
   const clusters = Array.isArray(digest) ? digest : [];
   console.log(`[world-brief] digest clusters=${clusters.length}`);
 
-  const [conflict, liveNews] = await Promise.all([
-    buildSection(clusters, 'conflict'),
-    buildSection(clusters, 'live-news'),
-  ]);
+  const modes: BriefMode[] = ['conflict', 'live-news', ...CATEGORY_IDS];
+  const built = await mapWithConcurrency(
+    modes,
+    SECTION_CONCURRENCY,
+    (mode) => buildSection(clusters, mode),
+  );
+  const sectionByMode = new Map<BriefMode, WorldBriefSection | null>();
+  modes.forEach((m, i) => sectionByMode.set(m, built[i] ?? null));
 
   const payload: WorldBriefPayload = {
     generatedAt: Date.now(),
-    conflict,
-    liveNews,
+    conflict: sectionByMode.get('conflict') ?? null,
+    liveNews: sectionByMode.get('live-news') ?? null,
+    categories: Object.fromEntries(
+      CATEGORY_IDS.map((id) => [id, sectionByMode.get(id) ?? null]),
+    ),
   };
 
-  if (!conflict || !liveNews) {
+  // LKG: a null section means generation failed — restore the prior one.
+  const anyFailed = payload.conflict === null || payload.liveNews === null
+    || CATEGORY_IDS.some((id) => payload.categories[id] === null);
+  if (anyFailed) {
     const prev = (await getCachedJson(WORLD_BRIEF_KEY, false, 3_000)) as WorldBriefPayload | null;
     if (prev) {
-      if (!conflict && prev.conflict) {
+      if (!payload.conflict && prev.conflict) {
         payload.conflict = prev.conflict;
-        console.log('[world-brief] conflict section preserved from last-known-good');
+        console.log('[world-brief] conflict section preserved (LKG)');
       }
-      if (!liveNews && prev.liveNews) {
+      if (!payload.liveNews && prev.liveNews) {
         payload.liveNews = prev.liveNews;
-        console.log('[world-brief] liveNews section preserved from last-known-good');
+        console.log('[world-brief] liveNews section preserved (LKG)');
+      }
+      for (const id of CATEGORY_IDS) {
+        const prevCat = prev.categories?.[id];
+        if (!payload.categories[id] && prevCat) {
+          payload.categories[id] = prevCat;
+          console.log(`[world-brief] ${id} section preserved (LKG)`);
+        }
       }
     }
   }
@@ -410,6 +494,7 @@ export interface RefreshWorldBriefResult {
   status: 'ok' | 'empty';
   conflictClusters: number;
   liveNewsClusters: number;
+  categoryClusters: number;
   generatedAt: string;
 }
 
@@ -421,15 +506,23 @@ export async function refreshWorldBrief(): Promise<RefreshWorldBriefResult> {
 
   const conflictClusters = payload.conflict?.clusters.length ?? 0;
   const liveNewsClusters = payload.liveNews?.clusters.length ?? 0;
+  const categoryClusters = CATEGORY_IDS.reduce(
+    (sum, id) => sum + (payload.categories[id]?.clusters.length ?? 0),
+    0,
+  );
+  const perCategory = CATEGORY_IDS
+    .map((id) => `${id}=${payload.categories[id]?.clusters.length ?? 0}`)
+    .join(' ');
   console.log(
     `[world-brief] DONE total=${Date.now() - startedAt}ms ` +
-      `conflict=${conflictClusters} liveNews=${liveNewsClusters}`,
+      `conflict=${conflictClusters} liveNews=${liveNewsClusters} ${perCategory}`,
   );
 
   return {
-    status: conflictClusters + liveNewsClusters > 0 ? 'ok' : 'empty',
+    status: conflictClusters + liveNewsClusters + categoryClusters > 0 ? 'ok' : 'empty',
     conflictClusters,
     liveNewsClusters,
+    categoryClusters,
     generatedAt: new Date(payload.generatedAt).toISOString(),
   };
 }

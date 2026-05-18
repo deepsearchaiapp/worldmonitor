@@ -203,13 +203,13 @@ function stripTrailingTruncation(s: string): string {
   // Call-to-action phrases publishers append to a cut-off lede. Anchored
   // to end-of-string, optionally bracketed and trailed by ellipsis/arrows.
   const ctaRe =
-    /[\s.…»›→▶|–—-]*[[(]?\s*(?:continue\s+reading|keep\s+reading|read\s+(?:more|on|the\s+(?:full\s+)?(?:story|article)|full\s+(?:story|article))|view\s+(?:full\s+)?coverage|full\s+(?:story|coverage))\s*[\])]?\s*$/iu;
+    /[\s.…»›→▶|–—-]*[\[(]?\s*(?:continue\s+reading|keep\s+reading|read\s+(?:more|on|the\s+(?:full\s+)?(?:story|article)|full\s+(?:story|article))|view\s+(?:full\s+)?coverage|full\s+(?:story|coverage))\s*[\])]?\s*$/iu;
   let out = s.trim();
   for (let i = 0; i < 6; i++) {
     const before = out;
     out = out
       .replace(ctaRe, '')
-      .replace(/\s*[[(]\s*(?:…|\.{2,})\s*[\])]\s*$/u, '') // bracketed: [...]  […]
+      .replace(/\s*[\[(]\s*(?:…|\.{2,})\s*[\])]\s*$/u, '') // bracketed: [...]  […]
       .replace(/\s*(?:…|\.{3,})\s*$/u, '')                // bare ellipsis
       .replace(/[\s»›→▶|–—-]+$/u, '')                     // leftover separators/arrows
       .trim();
