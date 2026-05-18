@@ -599,7 +599,7 @@ const VALID_TOPICS = new Set([
  *  enrichment cache key (cold cache → forces a re-LLM) and the per-cluster
  *  `enrichVersion` re-queue gate, so a prompt change re-classifies every
  *  v6 digest cluster instead of only newly-arriving ones. */
-const LOCATION_PROMPT_VERSION = 3;
+const LOCATION_PROMPT_VERSION = 4;
 
 const LOCATION_ONLY_CACHE_KEY = (link: string): string =>
   `enrichment-loc:v${LOCATION_PROMPT_VERSION}:${createHash('sha256').update(link).digest('hex')}`;
@@ -627,10 +627,12 @@ const LOCATION_ONLY_SYSTEM_PROMPT = `You classify a news article. Return ONE JSO
       "sanctions"     — sanctions, embargoes, tariffs, trade restrictions, export controls
       "intelligence"  — espionage, spy agencies, surveillance programs, classified leaks, covert operations
       "maritime"      — central to naval forces, ships, ports, piracy, or a sea incident — NOT just because oil prices or shipping get a mention
-      "business"      — the story's MAIN subject is companies, markets, earnings, IPOs, or central-bank / monetary policy — NOT general politics or diplomacy that merely carries economic implications
+      "business"      — a company, a financial market, or an economic indicator is the LITERAL subject (earnings, IPOs, mergers, stock / bond markets, central-bank or monetary policy, corporate leadership)
       "scitech"       — science, technology, AI, space, medical research, innovation
       "entertainment" — film, TV, music, celebrities, gaming, awards, the sports business
-    Tag a category ONLY when it is a primary subject of the story. NEVER tag for background context, a passing mention, or a downstream consequence. Most stories have 0-2 topics; 3 or more should be rare. Return [] when none apply.
+    Tag a category ONLY when it is a primary subject of the story. NEVER tag for background context, a passing mention, or a downstream consequence. Most stories have 0-2 topics; 3 or more should be rare.
+    Be especially strict with "business": NEVER tag it for elections, opinion polls, government budgets, fiscal-policy debates, diplomacy, legal trials, or political-personality stories — even when money or the economy comes up. "business" requires a company, a financial market, or an economic indicator as the literal subject.
+    Return [] when none apply.
 
   - country: ISO 3166-1 alpha-2 code of the primary country in the story. ONLY include when isConflict=true. OMIT for non-conflict stories.
 
