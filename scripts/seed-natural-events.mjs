@@ -11,7 +11,7 @@ const CANONICAL_KEY = 'natural:events:v1';
 const CACHE_TTL = 21600; // 6h — comfortably longer than the hourly seed cron so a late run can't empty the feed
 
 const DAYS = 30;
-const WILDFIRE_MIN_ACRES = 10_000;
+const WILDFIRE_MIN_ACRES = 7_000;
 
 const GDACS_TO_CATEGORY = {
   EQ: 'earthquakes',
@@ -77,7 +77,7 @@ async function fetchEonet(days) {
 
     let magnitude = latestGeo.magnitudeValue ?? 0;
     if (normalizedCategory === 'wildfires') {
-      // Keep only major wildfires: peak burned area >= 10k acres, no controlled burns.
+      // Keep only major wildfires: peak burned area >= 7k acres, no controlled burns.
       if (isPrescribedBurn(event.title)) continue;
       magnitude = Math.max(0, ...event.geometry.map((g) => g.magnitudeValue ?? 0));
       if (magnitude < WILDFIRE_MIN_ACRES) continue;

@@ -18,7 +18,7 @@ const GDACS_API = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/MAP';
 const NHC_BASE = 'https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/NHC_tropical_weather/MapServer';
 
 const DAYS = 30;
-const WILDFIRE_MIN_ACRES = 10_000;
+const WILDFIRE_MIN_ACRES = 7_000;
 
 const GDACS_TO_CATEGORY: Record<string, string> = {
   EQ: 'earthquakes',
@@ -156,7 +156,7 @@ async function fetchEonet(days: number): Promise<NaturalEvent[]> {
 
     let magnitude: number = latestGeo.magnitudeValue ?? 0;
     if (normalizedCategory === 'wildfires') {
-      // Keep only major wildfires: peak burned area >= 10k acres, no controlled burns.
+      // Keep only major wildfires: peak burned area >= 7k acres, no controlled burns.
       if (isPrescribedBurn(event.title)) continue;
       magnitude = Math.max(0, ...event.geometry.map((g: any) => g.magnitudeValue ?? 0));
       if (magnitude < WILDFIRE_MIN_ACRES) continue;
