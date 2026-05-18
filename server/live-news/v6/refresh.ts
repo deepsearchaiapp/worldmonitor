@@ -41,6 +41,28 @@ const GDELT_CATEGORY_CANDIDATES_KEY = 'gdelt:category-candidates:v1';
  *  priority matters. `pickCanonical` excludes them outright regardless. */
 const GDELT_SOURCE_PRIORITY = 99;
 
+/**
+ * Per-set cap on GDELT candidates fed into the clustering pass (applied
+ * to the conflict set and the category set independently).
+ *
+ * Why: clustering cost grows ~quadratically with the item count. Uncapped,
+ * the two GDELT sets reached ~7 k items — on top of ~1.7 k RSS — and
+ * pushed the cluster phase past 60 s, which in turn starved the digest
+ * read/write (Redis timeouts → a destructive rebuild-from-scratch).
+ *
+ * GDELT items are corroboration only — they attach to RSS clusters but
+ * never become canonical. The FRESHEST candidates are the ones that
+ * actually match current RSS stories; stale ones almost never attach.
+ * So we keep the newest N of each set. Override via
+ * `WM_V6_GDELT_CANDIDATE_CAP`.
+ */
+function gdeltCandidateCap(): number {
+  const raw = process.env.WM_V6_GDELT_CANDIDATE_CAP;
+  if (!raw) return 2000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000;
+}
+
 /** Shape of entries in `gdelt:conflict-candidates:v1` — must match the
  *  `GdeltConflictCandidate` written by api/intel-news/v1/refresh.ts. */
 interface GdeltConflictCandidate {
@@ -74,8 +96,11 @@ async function loadGdeltCandidates(): Promise<RawRssItem[]> {
   const raw = (await getCachedJson(GDELT_CANDIDATES_KEY)) as GdeltConflictCandidate[] | null;
   if (!Array.isArray(raw) || raw.length === 0) return [];
   const valid = raw.filter((c) => c && c.title && c.link);
-  const hashes = await Promise.all(valid.map((c) => titleHashFor(c.title)));
-  return valid.map((c, i) => ({
+  // Freshest-N cap before clustering — see gdeltCandidateCap().
+  valid.sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0));
+  const capped = valid.slice(0, gdeltCandidateCap());
+  const hashes = await Promise.all(capped.map((c) => titleHashFor(c.title)));
+  return capped.map((c, i) => ({
     source: c.source || 'GDELT',
     sourceUrl: '',
     sourcePriority: GDELT_SOURCE_PRIORITY,
@@ -112,8 +137,11 @@ async function loadCategoryCandidates(): Promise<RawRssItem[]> {
   const valid = raw.filter(
     (c) => c && c.title && c.link && Array.isArray(c.categories) && c.categories.length > 0,
   );
-  const hashes = await Promise.all(valid.map((c) => titleHashFor(c.title)));
-  return valid.map((c, i) => ({
+  // Freshest-N cap before clustering — see gdeltCandidateCap().
+  valid.sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0));
+  const capped = valid.slice(0, gdeltCandidateCap());
+  const hashes = await Promise.all(capped.map((c) => titleHashFor(c.title)));
+  return capped.map((c, i) => ({
     source: c.source || 'GDELT',
     sourceUrl: '',
     sourcePriority: GDELT_SOURCE_PRIORITY,
@@ -276,7 +304,31 @@ export async function refreshLiveNewsV6(): Promise<RefreshResult> {
   // it forces a rebuild-from-scratch that drops accumulated enrichment.
   // This is a cron, so a slightly longer wait costs nothing.
   const writeStart = Date.now();
-  const existing = ((await getCachedJson(DIGEST_KEY, false, 5_000)) as ClusteredItem[] | null) ?? [];
+  let existing: ClusteredItem[];
+  try {
+    // strict=true so a timeout/HTTP failure THROWS rather than masquerading
+    // as an empty digest. 8 s budget — no user is waiting, and we now skip
+    // (rather than rebuild) on failure, so a longer wait is purely upside.
+    existing = ((await getCachedJson(DIGEST_KEY, false, 8_000, true)) as ClusteredItem[] | null) ?? [];
+  } catch (err) {
+    // The existing-digest read FAILED — distinct from a genuinely empty
+    // digest. Merging against [] here would rebuild from scratch and
+    // discard every cluster's accumulated enrichment (location / topics /
+    // region / isConflict). Skip the write entirely; the prior digest
+    // stays intact and the next refresh merges against it normally.
+    console.warn(
+      `[live-news:v6:refresh] phase=write SKIPPED — existing-digest read failed, ` +
+      `preserving prior digest: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return {
+      status: 'skipped',
+      feeds: normalized.feedStatuses,
+      fetched: normalized.items.length,
+      clustered: clustered.length,
+      totalAfter: 0,
+      generatedAt: new Date().toISOString(),
+    };
+  }
   const merged = mergeItems(existing, clustered);
   await setCachedJson(DIGEST_KEY, merged, DIGEST_TTL_S);
   const writeMs = Date.now() - writeStart;

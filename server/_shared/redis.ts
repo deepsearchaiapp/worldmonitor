@@ -171,10 +171,21 @@ export async function getCachedJson(
   key: string,
   raw = false,
   timeoutMs: number = REDIS_OP_TIMEOUT_MS,
+  /**
+   * When true, an operational failure (timeout / network / non-2xx /
+   * decode error) THROWS instead of returning `null`. A genuine key-miss
+   * still returns `null`. Lets a caller tell "the read failed" apart from
+   * "the key is empty" — critical when an empty result would otherwise
+   * trigger a destructive rebuild-from-scratch.
+   */
+  strict = false,
 ): Promise<unknown | null> {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
+  if (!url || !token) {
+    if (strict) throw new Error('[redis] missing UPSTASH_REDIS_REST_URL/TOKEN');
+    return null;
+  }
   try {
     const finalKey = raw ? key : prefixKey(key);
     const resp = await fetch(`${url}/get/${encodeURIComponent(finalKey)}`, {
@@ -184,6 +195,7 @@ export async function getCachedJson(
     if (!resp.ok) {
       const body = await resp.text().catch(() => '');
       console.warn(`[redis] getCachedJson HTTP ${resp.status} for "${finalKey}":`, body.slice(0, 200));
+      if (strict) throw new Error(`[redis] getCachedJson HTTP ${resp.status} for "${finalKey}"`);
       return null;
     }
     // Dual-shape handling: Upstash sometimes returns the value as a string
@@ -196,6 +208,7 @@ export async function getCachedJson(
     return await decodeFromStorage(data.result);
   } catch (err) {
     console.warn('[redis] getCachedJson failed:', errMsg(err));
+    if (strict) throw err instanceof Error ? err : new Error(String(err));
     return null;
   }
 }

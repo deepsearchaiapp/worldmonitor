@@ -11,7 +11,7 @@
  * the const below if results need adjusting.
  */
 
-import { embedBatch, cosineSim, float32ToBase64, base64ToFloat32 } from '../../_shared/embeddings';
+import { embedBatch, float32ToBase64, base64ToFloat32 } from '../../_shared/embeddings';
 import { getCachedJsonBatch, runRedisPipeline } from '../../_shared/redis';
 import type { RawRssItem, GdeltItemLocation } from './_normalize';
 import { fetchArticleBodyBatch } from './_article-fetcher';
@@ -615,6 +615,12 @@ export async function clusterRssItems(items: RawRssItem[]): Promise<ClusteredIte
   // share — preventing a marginal early member from pulling in
   // tangentially-related items via cluster drift.
   const sumEmbedByCanonical = new Map<string, Float32Array>();
+  // ‖cluster sum‖, kept in sync with sumEmbedByCanonical. Caching the
+  // magnitude turns each candidate comparison into a single dot-product
+  // loop instead of three (dot + ‖a‖ + ‖b‖) — the inner loop runs
+  // millions of times per refresh, so this ~3× speedup on the hot path
+  // is what keeps the cluster phase inside its time budget.
+  const sumNormByCanonical = new Map<string, number>();
 
   // Process oldest-first so older stories accrete younger reports.
   const sorted = [...items].sort((a, b) => a.publishedAt - b.publishedAt);
@@ -628,28 +634,49 @@ export async function clusterRssItems(items: RawRssItem[]): Promise<ClusteredIte
       continue;
     }
 
+    // ‖e‖ is constant across every cluster comparison below — compute once.
+    let eNorm = 0;
+    for (let k = 0; k < e.length; k++) eNorm += e[k]! * e[k]!;
+    eNorm = Math.sqrt(eNorm);
+
     let bestSim = -1;
     let bestCanonical: string | null = null;
-    for (const [canonical, sumEmbed] of sumEmbedByCanonical) {
-      const s = cosineSim(e, sumEmbed);
-      if (s > bestSim) {
-        bestSim = s;
-        bestCanonical = canonical;
+    if (eNorm > 0) {
+      for (const [canonical, sumEmbed] of sumEmbedByCanonical) {
+        const sumNorm = sumNormByCanonical.get(canonical)!;
+        if (sumNorm <= 0) continue;
+        // cosine = dot(e, sum) / (‖e‖·‖sum‖); only the dot needs the loop.
+        let dot = 0;
+        const n = Math.min(e.length, sumEmbed.length);
+        for (let k = 0; k < n; k++) dot += e[k]! * sumEmbed[k]!;
+        const s = dot / (eNorm * sumNorm);
+        if (s > bestSim) {
+          bestSim = s;
+          bestCanonical = canonical;
+        }
       }
     }
 
     if (bestSim >= threshold && bestCanonical) {
       clusterOf.set(it.titleHash, bestCanonical);
       members.get(bestCanonical)!.push(it);
-      // Fold this item into the running cluster sum.
+      // Fold this item into the running cluster sum, then refresh the
+      // cached magnitude since the sum changed.
       const sum = sumEmbedByCanonical.get(bestCanonical)!;
-      for (let k = 0; k < sum.length; k++) sum[k] = sum[k]! + e[k]!;
+      let sn = 0;
+      for (let k = 0; k < sum.length; k++) {
+        sum[k] = sum[k]! + e[k]!;
+        sn += sum[k]! * sum[k]!;
+      }
+      sumNormByCanonical.set(bestCanonical, Math.sqrt(sn));
     } else {
       // New cluster — start the running sum with a copy of e (don't
-      // mutate the cached embedding shared with embedByHash).
+      // mutate the cached embedding shared with embedByHash). The sum is
+      // a copy of e, so its magnitude is ‖e‖.
       clusterOf.set(it.titleHash, it.titleHash);
       members.set(it.titleHash, [it]);
       sumEmbedByCanonical.set(it.titleHash, new Float32Array(e));
+      sumNormByCanonical.set(it.titleHash, eNorm);
     }
   }
 
