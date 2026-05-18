@@ -307,6 +307,25 @@ export interface ClusteredItem {
 }
 
 /**
+ * Corroboration gate for the GDELT-category feeds (cyber / military /
+ * nuclear / …). A category cluster surfaces only when ≥2 distinct outlets
+ * carry the story and at least one is a trusted RSS feed — a lone RSS
+ * outlet with no corroboration is withheld.
+ *
+ * The RSS-presence half is structurally always true (GDELT-only clusters
+ * are dropped at cluster time, so every cluster has ≥1 RSS member); it's
+ * checked explicitly anyway so the rule is self-evident and survives any
+ * future change to that invariant.
+ *
+ * The conflict + live-news feeds run their own (stricter, RSS-only) gates
+ * via separate endpoints and are unaffected by this one.
+ */
+export function isCategoryCorroborated(c: ClusteredItem): boolean {
+  const sources = Array.isArray(c.sources) ? c.sources : [];
+  return sources.length >= 2 && sources.some((s) => s.origin === 'rss');
+}
+
+/**
  * Build the text the embedder ingests.
  *
  * # Layout

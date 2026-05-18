@@ -4,15 +4,17 @@
  * business, scitech, entertainment).
  *
  * Reads `live-news:v6:digest` and returns the clusters the enrich LLM
- * multi-label-classified into ≥1 category (`ClusteredItem.topics`). Optional
- * `?category=X` pre-filters to one category server-side.
+ * multi-label-classified into ≥1 category (`ClusteredItem.topics`), gated
+ * by the category corroboration rule (≥2 outlets, ≥1 RSS — see
+ * `isCategoryCorroborated`). Optional `?category=X` pre-filters to one
+ * category server-side.
  *
  * The live-news + conflict feeds keep their own endpoints + the ≥3-RSS
  * gate; this endpoint is purely additive.
  */
 
 import { getCachedJson } from '../../_shared/redis';
-import type { ClusteredItem } from '../../live-news/v6/_cluster';
+import { isCategoryCorroborated, type ClusteredItem } from '../../live-news/v6/_cluster';
 
 const DIGEST_KEY = 'live-news:v6:digest';
 
@@ -79,7 +81,8 @@ export async function listIntelNewsV6(category: string | null): Promise<ListInte
         c &&
         Array.isArray(c.topics) &&
         c.topics.length > 0 &&
-        (!category || c.topics.includes(category)),
+        (!category || c.topics.includes(category)) &&
+        isCategoryCorroborated(c),
     )
     .sort((a, b) => b.publishedAt - a.publishedAt)
     .map(toItem);

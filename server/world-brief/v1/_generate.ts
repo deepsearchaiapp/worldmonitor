@@ -20,7 +20,7 @@
 
 import { getCachedJson, setCachedJson } from '../../_shared/redis';
 import { callGemini } from '../../_shared/llm';
-import type { ClusteredItem } from '../../live-news/v6/_cluster';
+import { isCategoryCorroborated, type ClusteredItem } from '../../live-news/v6/_cluster';
 
 /** v6 digest key — see server/live-news/v6/refresh.ts (DIGEST_KEY). */
 const DIGEST_KEY = 'live-news:v6:digest';
@@ -165,10 +165,9 @@ function buildSourceRefs(c: ClusteredItem): WorldBriefSourceRef[] {
  *                total source count.
  *   live-news  — all clusters, ≥ MIN_RSS_SOURCES gate, scored by distinct
  *                RSS-publisher count.
- *   category   — clusters whose enrich-LLM `topics[]` include the category.
- *                NO RSS-count gate (category clusters are sparser, and a
- *                tagged cluster already has ≥1 RSS member since GDELT-only
- *                clusters are dropped at cluster time). Scored by total
+ *   category   — clusters whose enrich-LLM `topics[]` include the category,
+ *                gated by the category corroboration rule (≥2 outlets, ≥1
+ *                RSS — see `isCategoryCorroborated`). Scored by total
  *                source count.
  *
  * Ranked clusters are then greedily de-duplicated: a candidate sharing more
@@ -185,7 +184,9 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
       if (mode === 'live-news') {
         return rssSourceCount(c) >= MIN_RSS_SOURCES;
       }
-      return Array.isArray(c.topics) && c.topics.includes(mode);
+      return (
+        Array.isArray(c.topics) && c.topics.includes(mode) && isCategoryCorroborated(c)
+      );
     })
     .map((c) => ({
       cluster: c,
