@@ -146,6 +146,27 @@ const PUBLISHER_MAP: Record<string, string> = {
   'The Atlantic National': 'The Atlantic',
   // FT
   'FT World': 'Financial Times',
+  // Daily Sabah (10 sub-feeds → one publisher)
+  'Daily Sabah Home': 'Daily Sabah', 'Daily Sabah Türkiye': 'Daily Sabah',
+  'Daily Sabah Politics': 'Daily Sabah', 'Daily Sabah World': 'Daily Sabah',
+  'Daily Sabah Mid-East': 'Daily Sabah', 'Daily Sabah Europe': 'Daily Sabah',
+  'Daily Sabah Americas': 'Daily Sabah', 'Daily Sabah Asia Pacific': 'Daily Sabah',
+  'Daily Sabah Africa': 'Daily Sabah', 'Daily Sabah Business': 'Daily Sabah',
+  // Straits Times
+  'The Straits Times World': 'The Straits Times',
+  'The Straits Times Asia': 'The Straits Times',
+  'The Straits Times Singapore': 'The Straits Times',
+  // RTHK
+  'RTHK World': 'RTHK', 'RTHK Local': 'RTHK',
+  // Korea Herald
+  'Korea Herald All': 'Korea Herald', 'Korea Herald National': 'Korea Herald',
+  'Korea Herald World': 'Korea Herald', 'Korea Herald Business': 'Korea Herald',
+  // Bangkok Post
+  'Bangkok Post Top Stories': 'Bangkok Post',
+  'Bangkok Post Thailand': 'Bangkok Post',
+  'Bangkok Post World': 'Bangkok Post',
+  // Rappler
+  'Rappler World': 'Rappler',
 };
 
 function publisherOf(sourceName: string): string {
@@ -209,6 +230,61 @@ function normalizeUrlForDedup(url: string): string {
   } catch {
     return url.toLowerCase();
   }
+}
+
+/**
+ * Lowercased host of a URL, with `www.` stripped and `HOST_ALIASES` folded
+ * (so a single blacklist entry like `bbc.com` also covers `bbc.co.uk` via
+ * the alias map, and `news.bbc.com` via suffix matching below). Returns ''
+ * on an unparseable URL — those bypass the blacklist (no host = no match).
+ */
+function hostOf(url: string): string {
+  try {
+    const u = new URL(url);
+    let host = u.hostname.toLowerCase().replace(/^www\./, '');
+    host = HOST_ALIASES[host] ?? host;
+    return host;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Publisher blacklist — comma-separated domains in `WM_V6_SOURCE_BLACKLIST`.
+ * Empty / unset → no filtering.
+ *
+ * Matched against the article-URL host (post-`HOST_ALIASES` fold), with
+ * suffix matching so `bbc.com` blocks `news.bbc.com` etc. Articles ABOUT a
+ * blacklisted outlet published elsewhere are NOT blocked — we filter by
+ * who PUBLISHED the article (the URL host), not by where the name appears.
+ *
+ * Applied at cluster post-processing time: generation and clustering see
+ * every member, so cluster identity is unchanged, but the canonical,
+ * summary, `sources[]`, and GDELT corroboration are picked from the
+ * allowed set only. A cluster whose only RSS anchor is blacklisted gets
+ * dropped (no allowed publisher → no story; option a per the discussion).
+ */
+function loadSourceBlacklist(): Set<string> {
+  const raw = process.env.WM_V6_SOURCE_BLACKLIST;
+  if (!raw) return new Set();
+  return new Set(
+    raw
+      .split(',')
+      .map((s) => s.trim().toLowerCase().replace(/^www\./, ''))
+      .filter((s) => s.length > 0),
+  );
+}
+
+/** True if `host` exactly matches a blacklist entry or is a subdomain of
+ *  one — i.e. `news.bbc.com` matches a `bbc.com` entry, but `bbcfake.com`
+ *  does not. Empty host / empty blacklist → false. */
+function isHostBlacklisted(host: string, blacklist: Set<string>): boolean {
+  if (!host || blacklist.size === 0) return false;
+  if (blacklist.has(host)) return true;
+  for (const bad of blacklist) {
+    if (host.endsWith('.' + bad)) return true;
+  }
+  return false;
 }
 
 /**
@@ -692,14 +768,25 @@ export async function clusterRssItems(items: RawRssItem[]): Promise<ClusteredIte
 
   // ── 4. Post-process into wire shape ──
   const alertMin = alertMinSources();
+  // Publisher blacklist (env-configured) — applied per-cluster below. See
+  // `loadSourceBlacklist` for matching rules.
+  const blacklist = loadSourceBlacklist();
   const clustered: ClusteredItem[] = [];
   for (const memberList of members.values()) {
-    const rssMembers = memberList.filter((m) => m.origin === 'rss');
+    // Drop blacklisted outlets from the user-facing view of the cluster.
+    // Generation + clustering ran against every member, so cluster
+    // identity is unchanged — but the canonical, summary, image, and the
+    // RSS sources list are picked from the allowed members only.
+    const rssMembers = memberList.filter(
+      (m) => m.origin === 'rss' && !isHostBlacklisted(hostOf(m.link), blacklist),
+    );
     // GDELT-only clusters have no trusted anchor and can never reach the
-    // RSS-source gate — drop them so they don't consume digest slots.
+    // RSS-source gate — drop them so they don't consume digest slots. The
+    // same drop covers clusters whose only RSS anchor is blacklisted (no
+    // allowed publisher → no story).
     if (rssMembers.length === 0) continue;
 
-    const canonical = pickCanonical(memberList);
+    const canonical = pickCanonical(rssMembers);
     // Summary + image come strictly from RSS members — never GDELT.
     const summary = pickSummary(rssMembers, canonical);
     const firstImg = pickFirstImage(rssMembers, canonical);
@@ -741,6 +828,10 @@ export async function clusterRssItems(items: RawRssItem[]): Promise<ClusteredIte
     for (const m of memberList) {
       if (m.origin !== 'gdelt' || !m.gdeltSources) continue;
       for (const g of m.gdeltSources) {
+        // Same publisher blacklist as RSS — applied by article-URL host so
+        // a GDELT corroboration entry pointing at a blocked outlet is
+        // dropped, regardless of how GDELT spelled the source name.
+        if (isHostBlacklisted(hostOf(g.link), blacklist)) continue;
         const key = normalizeUrlForDedup(g.link);
         if (rssUrlKeys.has(key) || gdeltByUrl.has(key)) continue;
         gdeltByUrl.set(key, {

@@ -301,4 +301,95 @@ export const V6_NEWS_SOURCES: readonly NewsSource[] = [
   { name: 'The Telegraph News',     url: 'https://www.telegraph.co.uk/news/rss.xml',                          priority: 5 },
 
   { name: 'Financial Post',         url: 'https://financialpost.com/feed',                                    priority: 5 },
+
+  // ────────────────────────────────────────────────────────────────────
+  // 2026-05-20 expansion — broader regional coverage
+  //
+  // Multi-feed outlets (Daily Sabah, Straits Times, RTHK, Korea Herald,
+  // Bangkok Post, Rappler) have their sub-feeds collapsed into a single
+  // publisher entry by `publisherOf` in _cluster.ts — without that, the
+  // same story appearing in N sub-feeds inflates the cluster source count.
+  //
+  // RFE/RL is included as-is per the source list (URL is `/api/`) — verify
+  // it parses as RSS on first refresh; swap to a `/rss/...` feed if not.
+  // ────────────────────────────────────────────────────────────────────
+
+  // ── Türkiye — Daily Sabah ──
+  { name: 'Daily Sabah Home',         url: 'https://www.dailysabah.com/rss/home-page',                          priority: 3 },
+  { name: 'Daily Sabah Türkiye',      url: 'https://www.dailysabah.com/rss/turkiye',                            priority: 3 },
+  { name: 'Daily Sabah Politics',     url: 'https://www.dailysabah.com/rss/politics',                           priority: 3 },
+  { name: 'Daily Sabah World',        url: 'https://www.dailysabah.com/rss/world',                              priority: 3 },
+  { name: 'Daily Sabah Mid-East',     url: 'https://www.dailysabah.com/rss/world/mid-east',                     priority: 3 },
+  { name: 'Daily Sabah Europe',       url: 'https://www.dailysabah.com/rss/world/europe',                       priority: 3 },
+  { name: 'Daily Sabah Americas',     url: 'https://www.dailysabah.com/rss/world/americas',                     priority: 3 },
+  { name: 'Daily Sabah Asia Pacific', url: 'https://www.dailysabah.com/rss/world/asia-pacific',                 priority: 3 },
+  { name: 'Daily Sabah Africa',       url: 'https://www.dailysabah.com/rss/world/africa',                       priority: 3 },
+  { name: 'Daily Sabah Business',     url: 'https://www.dailysabah.com/rss/business',                           priority: 3 },
+
+  // ── Asia / Pacific — additions ──
+  { name: 'The Straits Times World',  url: 'https://www.straitstimes.com/news/world/rss.xml',                   priority: 3 },
+  { name: 'The Straits Times Asia',   url: 'https://www.straitstimes.com/news/asia/rss.xml',                    priority: 3 },
+  { name: 'The Straits Times Singapore', url: 'https://www.straitstimes.com/news/singapore/rss.xml',            priority: 3 },
+  { name: 'RTHK World',               url: 'https://rthk.hk/rthk/news/rss/e_expressnews_einternational.xml',    priority: 2 },
+  { name: 'RTHK Local',               url: 'https://rthk.hk/rthk/news/rss/e_expressnews_elocal.xml',            priority: 2 },
+  { name: 'Hong Kong Free Press',     url: 'https://hongkongfp.com/feed',                                       priority: 4 },
+  { name: 'The Japan Times',          url: 'https://www.japantimes.co.jp/feed/',                                priority: 3 },
+  { name: 'Japan Today',              url: 'https://japantoday.com/feed',                                       priority: 4 },
+  { name: 'Kyodo News English',       url: 'https://english.kyodonews.net/rss/all.xml',                         priority: 2 },
+  { name: 'Korea Herald All',         url: 'https://www.koreaherald.com/rss/newsAll',                           priority: 3 },
+  { name: 'Korea Herald National',    url: 'https://www.koreaherald.com/rss/kh_National',                       priority: 3 },
+  { name: 'Korea Herald World',       url: 'https://www.koreaherald.com/rss/kh_World',                          priority: 3 },
+  { name: 'Korea Herald Business',    url: 'https://www.koreaherald.com/rss/kh_Business',                       priority: 3 },
+  { name: 'Yonhap News English',      url: 'https://en.yna.co.kr/RSS/news.xml',                                 priority: 3 },
+  { name: 'Taipei Times',             url: 'https://www.taipeitimes.com/xml/index.rss',                         priority: 3 },
+  { name: 'Bangkok Post Top Stories', url: 'https://www.bangkokpost.com/rss/data/topstories.xml',               priority: 3 },
+  { name: 'Bangkok Post Thailand',    url: 'https://www.bangkokpost.com/rss/data/thailand.xml',                 priority: 3 },
+  { name: 'Bangkok Post World',       url: 'https://www.bangkokpost.com/rss/data/world.xml',                    priority: 3 },
+  { name: 'Inquirer.net',             url: 'https://www.inquirer.net/fullfeed',                                 priority: 3 },
+  { name: 'Rappler',                  url: 'https://www.rappler.com/feed',                                      priority: 3 },
+  { name: 'Rappler World',            url: 'https://www.rappler.com/world/feed',                                priority: 3 },
+  { name: 'Antara News English',     url: 'https://en.antaranews.com/rss/news.xml',                             priority: 3 },
+  { name: 'VnExpress International',  url: 'https://e.vnexpress.net/rss/news.rss',                              priority: 3 },
+  { name: 'Vietnam News Society',     url: 'https://vietnamnews.vn/rss/society.rss',                            priority: 3 },
+  { name: 'Dawn',                     url: 'https://www.dawn.com/feeds/home',                                   priority: 3 },
+  { name: 'The Daily Star (BD)',      url: 'https://www.thedailystar.net/frontpage/rss.xml',                    priority: 3 },
+  { name: 'Express Tribune',          url: 'https://tribune.com.pk/feed/home',                                  priority: 3 },
+
+  // ── United States — additions ──
+  { name: 'Semafor',                  url: 'https://semafor.com/rss.xml',                                       priority: 4 },
+
+  // ── United Kingdom — additions ──
+  { name: 'Belfast Telegraph',        url: 'https://www.belfasttelegraph.co.uk/rss/',                           priority: 4 },
+
+  // ── Australia — additions ──
+  { name: 'PerthNow',                 url: 'https://www.perthnow.com.au/news/feed',                             priority: 4 },
+  { name: 'The Canberra Times',       url: 'https://www.canberratimes.com.au/rss.xml',                          priority: 3 },
+
+  // ── Europe — national outlets ──
+  { name: 'El País English',          url: 'https://elpais.com/rss/elpais/inenglish.xml',                       priority: 3 },
+  { name: 'Kyiv Post',                url: 'https://www.kyivpost.com/feed',                                     priority: 3 },
+  { name: 'RFE/RL',                   url: 'https://www.rferl.org/api/',                                        priority: 2 },
+  { name: 'The Local Spain',          url: 'https://feeds.thelocal.com/rss/es',                                 priority: 4 },
+  { name: 'NL Times',                 url: 'https://nltimes.nl/rssfeed2',                                       priority: 4 },
+  { name: 'DutchNews.nl',             url: 'https://www.dutchnews.nl/feed',                                     priority: 4 },
+  { name: 'The Bulletin (BE)',       url: 'https://thebulletin.be/rss.xml',                                     priority: 4 },
+  { name: 'Brussels Morning',         url: 'https://brusselsmorning.com/feed',                                  priority: 4 },
+  { name: 'Ekathimerini English',     url: 'http://www.ekathimerini.com/rss',                                   priority: 3 },
+  { name: 'Greek Reporter',           url: 'https://greekreporter.com/greece/feed',                             priority: 4 },
+  { name: 'Hungary Today',            url: 'https://hungarytoday.hu/feed',                                      priority: 4 },
+  { name: 'Budapest Times',           url: 'https://www.budapesttimes.hu/feed',                                 priority: 4 },
+
+  // ── Africa / MENA — additions ──
+  { name: 'Middle East Eye',          url: 'https://www.middleeasteye.net/rss',                                 priority: 4 },
+  { name: 'Mail & Guardian',          url: 'https://mg.co.za/feed',                                             priority: 3 },
+  { name: 'Daily Maverick',           url: 'https://www.dailymaverick.co.za/dmrss',                             priority: 3 },
+  { name: 'IOL',                      url: 'https://rss.iol.io/iol/news',                                       priority: 3 },
+  { name: 'Premium Times',            url: 'https://www.premiumtimesng.com/feed',                               priority: 3 },
+  { name: 'Punch',                    url: 'https://rss.punchng.com/v1/category/latest_news',                   priority: 3 },
+  { name: 'Daily Nation',             url: 'https://nation.africa/kenya/rss.xml',                               priority: 3 },
+  { name: 'Egypt Independent',        url: 'https://www.egyptindependent.com/feed',                             priority: 3 },
+  { name: 'Daily News Egypt',         url: 'https://www.dailynewsegypt.com/feed',                               priority: 3 },
+
+  // ── Latin America ──
+  { name: 'Buenos Aires Times',       url: 'https://www.batimes.com.ar/feed',                                   priority: 3 },
 ];
