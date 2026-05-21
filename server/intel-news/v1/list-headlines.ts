@@ -119,7 +119,12 @@ export interface ListIntelNewsResponse {
 /** Read the accumulator without merging. Used as the failure fallback. */
 async function readAccumulator(topicId: string): Promise<IntelNewsItem[]> {
   const key = `intel-news:topic:v6:${topicId}${ACCUMULATOR_KEY_SUFFIX}`;
-  const cached = (await getCachedJson(key)) as IntelNewsItem[] | null;
+  // 5 s read timeout (vs the 1.5 s user-facing default): per-topic
+  // accumulators are multi-MB compressed blobs (~500 items × rich
+  // sources[]) and a timeout here returns an empty topic to the user,
+  // showing as "8/10 topics, 2 empty" in the logs. The wrapping endpoint
+  // is itself cached for 30 min, so the longer wait only hits on cache miss.
+  const cached = (await getCachedJson(key, false, 5_000)) as IntelNewsItem[] | null;
   if (!Array.isArray(cached)) return [];
   // Filter on read too — protects against accumulator entries that
   // pre-date a retention-window change without forcing a key bump.
