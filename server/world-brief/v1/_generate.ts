@@ -31,8 +31,13 @@ export const WORLD_BRIEF_KEY = 'news:world-brief:v1';
  *  is surfaced to the user via `generatedAt` on the card. */
 const WORLD_BRIEF_TTL_S = 25 * 60 * 60;
 
-/** Distinct-RSS-publisher gate — matches the live-news/conflict read gate. */
+/** Distinct-RSS-publisher gate for the live-news section — unchanged (≥3). */
 const MIN_RSS_SOURCES = Number(process.env.WM_V6_MIN_SOURCES) || 3;
+
+/** Conflict gate — looser than live-news: ≥1 RSS anchor + ≥3 total sources
+ *  (RSS + GDELT). Mirrors the conflict-archive read gate; env-tunable. */
+const CONFLICT_MIN_RSS = Number(process.env.WM_CONFLICT_MIN_RSS_SOURCES) || 1;
+const CONFLICT_MIN_TOTAL = Number(process.env.WM_CONFLICT_MIN_TOTAL_SOURCES) || 3;
 
 const TOP_N = 8;
 const MAX_MEMBER_HEADLINES = 10;
@@ -179,7 +184,9 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
     .filter((c) => {
       if (!c || !Array.isArray(c.sources)) return false;
       if (mode === 'conflict') {
-        return c.isConflict === true && rssSourceCount(c) >= MIN_RSS_SOURCES;
+        return c.isConflict === true
+          && rssSourceCount(c) >= CONFLICT_MIN_RSS
+          && c.sources.length >= CONFLICT_MIN_TOTAL;
       }
       if (mode === 'live-news') {
         return rssSourceCount(c) >= MIN_RSS_SOURCES;

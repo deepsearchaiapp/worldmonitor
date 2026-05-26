@@ -23,14 +23,23 @@ const TOP_LEVEL_TTL_S = 30;
 
 const RSE_KEY = 'conflict:archive:rse:v1';
 
-/** Minimum distinct RSS publishers for a conflict cluster to be shown.
- *  Mirrors the live-news gate; override via `WM_V6_MIN_SOURCES`. */
-const DEFAULT_MIN_SOURCES = 3;
-function minSources(): number {
-  const raw = process.env.WM_V6_MIN_SOURCES;
-  if (!raw) return DEFAULT_MIN_SOURCES;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_MIN_SOURCES;
+/** Conflict visibility gate: a cluster is shown when it has ≥ MIN_RSS distinct
+ *  RSS publishers AND ≥ MIN_TOTAL total sources (RSS + GDELT corroboration).
+ *
+ *  Looser than the live-news ≥3-RSS gate (which is unchanged): a breaking
+ *  conflict story often surfaces on 1–2 trusted RSS outlets first, with GDELT
+ *  corroboration filling in. Requiring ≥1 RSS still guarantees a trusted anchor
+ *  (no GDELT-only stories), while the ≥3-total floor keeps a corroboration bar.
+ *  Both env-tunable. */
+const DEFAULT_MIN_RSS = 1;
+const DEFAULT_MIN_TOTAL = 3;
+function conflictGate(): { minRss: number; minTotal: number } {
+  const r = Number(process.env.WM_CONFLICT_MIN_RSS_SOURCES);
+  const t = Number(process.env.WM_CONFLICT_MIN_TOTAL_SOURCES);
+  return {
+    minRss: Number.isFinite(r) && r >= 0 ? Math.floor(r) : DEFAULT_MIN_RSS,
+    minTotal: Number.isFinite(t) && t >= 1 ? Math.floor(t) : DEFAULT_MIN_TOTAL,
+  };
 }
 
 /** Distinct RSS publishers in a cluster's sources[]. A source counts as
@@ -92,11 +101,11 @@ export async function listConflictArchiveV5(): Promise<ListConflictArchiveV5Resp
         merged.set(it.link, it);
       }
 
-      // Visibility gate: ≥ minSources distinct RSS publishers. GDELT
-      // corroboration in sources[] never counts toward this.
-      const min = minSources();
+      // Visibility gate: ≥1 RSS anchor AND ≥3 total sources (GDELT counts
+      // toward the total but not the RSS floor).
+      const { minRss, minTotal } = conflictGate();
       const items = Array.from(merged.values())
-        .filter((it) => min <= 1 || rssSourceCount(it) >= min)
+        .filter((it) => rssSourceCount(it) >= minRss && (it.sources?.length ?? 0) >= minTotal)
         .sort((a, b) => b.publishedAt - a.publishedAt)
         .map((it) => ({
           source: it.source,
@@ -119,7 +128,7 @@ export async function listConflictArchiveV5(): Promise<ListConflictArchiveV5Resp
 
       console.log(
         `[conflict-archive:v5] rse=${rse?.length ?? 0} → ${items.length} ` +
-        `visible (min-rss-sources=${min})`,
+        `visible (min-rss=${minRss} min-total=${minTotal})`,
       );
 
       return { items, generatedAt: new Date().toISOString() };

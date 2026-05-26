@@ -343,6 +343,13 @@ export async function refreshLiveNewsV6(): Promise<RefreshResult> {
     };
   }
   const merged = mergeItems(existing, clustered);
+  // Recovery beat BEFORE the first write. The ~35 s CPU-heavy clustering above
+  // leaves the Edge isolate too starved to drive the write's network round-trip,
+  // so attempt #1 was aborting (`setCachedJson failed: aborted due to timeout`)
+  // on essentially every run — only the retry's 1 s pause let it through. A ~1 s
+  // pause up front lets attempt #1 run on a recovered isolate, removing the
+  // per-run failure noise. Cron-only, so no user-facing latency.
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
   // Generous write budget + one retry. The digest is a multi-MB blob and
   // this write lands right after the CPU-heavy clustering, when the Edge
   // isolate is sluggish — the 3 s default timed out every run. 20 s is
