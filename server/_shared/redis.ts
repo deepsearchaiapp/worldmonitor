@@ -1,7 +1,12 @@
 // Reads are user-facing — a fast timeout means we fall back to the upstream
-// fetcher quickly when Redis is laggy. 1.5 s is well past Upstash's ~150 ms
-// p99 in normal operation, so it only kicks in when something is wrong.
-const REDIS_OP_TIMEOUT_MS = 1_500;
+// fetcher quickly when Redis is laggy. The big read blobs (v6 digest ~1.5 MB,
+// conflict-archive ~2.2 MB) take longer than a tiny key to pull over the
+// Upstash REST API, and under load (or right after the CPU-heavy v6 cron
+// degrades the isolate) a 1.5 s budget tail-times-out — returning an empty
+// feed to the user. 3 s gives the large-blob GET enough headroom while still
+// bailing fast when Redis is genuinely down. Pairs with WM_REDIS_COMPRESSION,
+// which shrinks these blobs ~3–4× and brings the transfer well back under budget.
+const REDIS_OP_TIMEOUT_MS = 3_000;
 
 // Writes are inside `cachedFetchJson`'s critical path — the caller awaits
 // them before returning the just-fetched payload to the user. A failed SET
