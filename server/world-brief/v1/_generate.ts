@@ -361,7 +361,13 @@ async function buildSection(
     // max_tokens budget to absorb any thinking overhead.
     maxTokens: 8000,
     temperature: 0.3,
-    timeoutMs: 30_000,
+    // 60 s, not 30 s: since Gemini calls route through the eachlabs OpenAI-
+    // compatible router (vs direct to Google), the round-trip got slower and
+    // a 30 s budget aborted 2–3 of the 11 sections per run — each then fell
+    // back to last-known-good. The refresh function has maxDuration=300 s and
+    // uses ~60 s total, so even worst-case (4-concurrency, ~3 waves × 60 s) has
+    // ample headroom. Lets slow-but-valid calls finish instead of going stale.
+    timeoutMs: 60_000,
   });
 
   if (!result) {
