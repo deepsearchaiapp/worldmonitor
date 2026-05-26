@@ -93,10 +93,13 @@ export interface NewsSource {
  *  typical major-outlet feeds (BBC ~30/day, Guardian ~45/day). */
 export const ITEMS_PER_FEED = 25;
 
-/** Drop items older than 3 days before they enter the pipeline.
- *  Matches the project-wide 3-day retention cap; also redundant with
- *  the digest's 24h rolling window but cheap defense-in-depth. */
-export const MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+/** Drop items older than 30h before they enter the pipeline. The digest's
+ *  rolling window is 24h, so anything older is embedded + clustered and then
+ *  thrown away at merge — wasted Gemini calls, CPU, and Redis embedding
+ *  churn. 30h aligns ingest with the digest window plus a 6h buffer (lets a
+ *  slightly-older item still corroborate a live cluster) while cutting the
+ *  per-run item count. */
+export const MAX_AGE_MS = 30 * 60 * 60 * 1000;
 
 /**
  * The v6 corpus. ~130 feeds across world/US/UK/Canada/AU-NZ-IE plus

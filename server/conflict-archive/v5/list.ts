@@ -76,7 +76,14 @@ export async function listConflictArchiveV5(): Promise<ListConflictArchiveV5Resp
       // read here returns an empty feed to the user. This is a cache-miss
       // path behind a 30 s wrapper cache, so the longer wait only hits once
       // per cache window, not per request.
-      const rse = (await getCachedJson(RSE_KEY, false, 5_000)) as ConflictArchiveItem[] | null;
+      //
+      // strict=true: a read FAILURE throws rather than returning null. Without
+      // this, a timeout would yield items:[] which cachedFetchJson then CACHES
+      // in Redis for 30 s — poisoning the feed for every reader in the window.
+      // On a throw, cachedFetchJson does not cache and the error propagates to
+      // the handler, which returns 503 so stale-if-error serves the last good
+      // feed. A genuine key-miss still returns null (handled as empty below).
+      const rse = (await getCachedJson(RSE_KEY, false, 5_000, true)) as ConflictArchiveItem[] | null;
 
       const merged = new Map<string, ConflictArchiveItem>();
       // Dedup by article link — the stable cross-refresh identifier.

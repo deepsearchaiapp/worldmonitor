@@ -63,7 +63,14 @@ const CONFLICT_ARCHIVE_GDELT_KEY = 'conflict:archive:v1:gdelt';
 // fills summary/region/country/locationName/lat/lng so iOS can pin
 // these on the map alongside the GDELT-sourced conflict items.
 const CONFLICT_ARCHIVE_WN_KEY = 'conflict:archive:wn:v1';
-const CONFLICT_ARCHIVE_TTL_S = 3 * 24 * 60 * 60; // 3-day project max
+const CONFLICT_ARCHIVE_TTL_S = 3 * 24 * 60 * 60; // Redis key TTL — 3-day safety net
+// Visibility/retention window: only conflict items newer than this are kept
+// in the written archive blob. Decoupled from the key TTL so we shrink the
+// user-facing payload (the v5 archive was a ~2.2 MB blob — 929 items, mostly
+// old) without expiring the Redis keys early. 30h ≈ the live-news window
+// plus a small buffer; conflict events are sparser, so this still leaves a
+// healthy feed while cutting the blob (and Redis read bandwidth) ~2-3×.
+const CONFLICT_ARCHIVE_WINDOW_S = 30 * 60 * 60;
 
 // Live-news v3 (World News bucket) — populated by the search-news cron
 // at `/api/live-news/v3/refresh-worldnews`. Enrichment fills
@@ -1247,8 +1254,8 @@ async function runEnrichment(): Promise<EnrichResult> {
     for (const c of conflictItems) {
       byId.set(c.id, c);
     }
-    // 3-day retention (CONFLICT_ARCHIVE_TTL_S) + 1000-item cap.
-    const cutoff = Date.now() - CONFLICT_ARCHIVE_TTL_S * 1000;
+    // 30h visibility window (CONFLICT_ARCHIVE_WINDOW_S) + 1000-item cap.
+    const cutoff = Date.now() - CONFLICT_ARCHIVE_WINDOW_S * 1000;
     const merged = Array.from(byId.values())
       .filter((c) => typeof c.publishedAt === 'number' && c.publishedAt >= cutoff)
       .sort((a, b) => b.publishedAt - a.publishedAt)

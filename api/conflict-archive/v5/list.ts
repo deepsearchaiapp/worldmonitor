@@ -52,9 +52,13 @@ export default async function handler(req: Request): Promise<Response> {
       },
     });
   } catch (err) {
+    // A failed RSE read (strict mode throws) lands here. Return 503 + no-store
+    // so we never cache an empty archive: stale-if-error=300 then serves the
+    // last good cached response instead of a blank feed for the whole region.
     console.error('[conflict-archive:v5] handler failed:', err instanceof Error ? err.message : err);
-    return new Response(JSON.stringify({ error: 'Internal error' }), {
-      status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    return new Response(JSON.stringify({ error: 'Upstream unavailable' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...corsHeaders },
     });
   }
 }

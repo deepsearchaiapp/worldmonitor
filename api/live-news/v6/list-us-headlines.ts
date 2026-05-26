@@ -52,9 +52,14 @@ export default async function handler(req: Request): Promise<Response> {
       },
     });
   } catch (err) {
+    // A failed digest read (strict mode throws) lands here. Return 503 with
+    // no-store so we NEVER cache an empty feed: the CDN's stale-if-error=300
+    // then serves the last good cached response to users instead of a blank
+    // one. Caching an empty 200 here would blank an entire edge region.
     console.error('[live-news:v6] handler failed:', err instanceof Error ? err.message : err);
-    return new Response(JSON.stringify({ error: 'Internal error' }), {
-      status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    return new Response(JSON.stringify({ error: 'Upstream unavailable' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...corsHeaders },
     });
   }
 }

@@ -53,7 +53,15 @@ export function rssSourceCount(item: ClusteredItem): number {
 }
 
 export async function listUsHeadlinesV6(): Promise<ListUsHeadlinesV6Response> {
-  const stored = ((await getCachedJson(DIGEST_KEY)) as ClusteredItem[] | null) ?? [];
+  // strict=true: a Redis read FAILURE (timeout / network / non-2xx) THROWS
+  // instead of masquerading as an empty digest. A genuine key-miss still
+  // returns null. This lets the HTTP handler tell "Redis is laggy" apart
+  // from "the digest is legitimately empty" — critical because a swallowed
+  // timeout would return items:[] with a 200, which the CDN then caches
+  // (s-maxage=30, stale-if-error=300) and serves a BLANK feed to an entire
+  // edge region. On a throw the handler returns 503 so stale-if-error keeps
+  // serving the last good feed instead.
+  const stored = ((await getCachedJson(DIGEST_KEY, false, undefined, true)) as ClusteredItem[] | null) ?? [];
 
   const min = minSources();
   const items = min <= 1
