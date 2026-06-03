@@ -69,6 +69,24 @@ function filterFlightsToBounds(
 const ADSBX_HOST = 'adsbexchange-com1.p.rapidapi.com';
 const ADSBX_MIL_URL = `https://${ADSBX_HOST}/v2/mil/`;
 
+// "All aircraft within radius" endpoint — layers civilian traffic on top of the
+// military feed for visual density (product request). dist is in nautical miles
+// (ADSBX caps at 250).
+const adsbxRadiusUrl = (lat: number, lon: number, distNm: number) =>
+  `https://${ADSBX_HOST}/v2/lat/${lat}/lon/${lon}/dist/${distNm}/`;
+
+// ~6 high-traffic regions sampled for civilian aircraft. Kept intentionally
+// small ("light") to bound RapidAPI quota: one military call + these per cache
+// miss, shared across all clients via the REDIS_CACHE_TTL window.
+const CIVILIAN_REGIONS: Array<{ lat: number; lon: number; dist: number }> = [
+  { lat: 28, lon: 45, dist: 250 },    // Gulf / CENTCOM
+  { lat: 50, lon: 10, dist: 250 },    // Central Europe
+  { lat: 25, lon: 121, dist: 250 },   // Taiwan strait / East Asia
+  { lat: 34, lon: -118, dist: 250 },  // US West
+  { lat: 39, lon: -77, dist: 250 },   // US East
+  { lat: 1, lon: 104, dist: 250 },    // Singapore / SE Asia
+];
+
 /** ICAO type code → high-level category enum string (subset of common military types). */
 const ICAO_TYPE_TO_ENUM: Record<string, MilitaryAircraftType> = {
   // Tankers
@@ -304,6 +322,104 @@ async function fetchADSBExchangeFlights(): Promise<ListMilitaryFlightsResponse['
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Civilian traffic — sampled from ADSBX's "all aircraft in radius" endpoint
+// over a small set of busy regions. Aircraft ADSBX itself tags military
+// (dbFlags bit 1) are skipped here and left to the authoritative /v2/mil/ feed.
+// Tagged note: "Civilian" so the detail sheet can distinguish them.
+// ──────────────────────────────────────────────────────────────────────────
+
+async function fetchADSBExchangeCivilianFlights(): Promise<ListMilitaryFlightsResponse['flights']> {
+  const key = process.env.RAPIDAPI_KEY || process.env.ADSBX_API_KEY;
+  if (!key) return [];
+
+  const now = Date.now();
+  const byHex = new Map<string, ListMilitaryFlightsResponse['flights'][number]>();
+
+  const results = await Promise.allSettled(
+    CIVILIAN_REGIONS.map(async (region) => {
+      const resp = await fetch(adsbxRadiusUrl(region.lat, region.lon, region.dist), {
+        headers: {
+          'x-rapidapi-host': ADSBX_HOST,
+          'x-rapidapi-key': key,
+          Accept: 'application/json',
+          'User-Agent': CHROME_UA,
+        },
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      });
+      if (!resp.ok) throw new Error(`ADSBX radius HTTP ${resp.status}`);
+      return (await resp.json()) as ADSBXResponse;
+    }),
+  );
+
+  for (const r of results) {
+    if (r.status !== 'fulfilled') {
+      console.warn('[military-flights] civilian region failed:', (r.reason as Error)?.message);
+      continue;
+    }
+    const acs = Array.isArray(r.value?.ac) ? r.value.ac : [];
+    for (const ac of acs) {
+      const hex = String(ac.hex || '').toLowerCase();
+      if (!hex || byHex.has(hex)) continue;
+
+      // Leave ADSBX-flagged military aircraft to the authoritative /v2/mil/ feed.
+      if (typeof ac.dbFlags === 'number' && (ac.dbFlags & 1) === 1) continue;
+
+      const lat = typeof ac.lat === 'number' ? ac.lat : null;
+      const lon = typeof ac.lon === 'number' ? ac.lon : null;
+      if (lat == null || lon == null) continue;
+
+      const callsign = String(ac.flight || '').trim();
+      const registration = String(ac.r || '').trim();
+      const typeCode = String(ac.t || '').trim().toUpperCase();
+
+      const altRaw = ac.alt_baro;
+      const onGround = altRaw === 'ground';
+      const altitude = onGround ? 0 : (typeof altRaw === 'number' ? altRaw : 0);
+      const speed = typeof ac.gs === 'number' ? Math.round(ac.gs) : 0;
+      const heading = typeof ac.track === 'number' ? ac.track : 0;
+      const verticalRate = typeof ac.baro_rate === 'number'
+        ? Math.round(ac.baro_rate)
+        : (typeof ac.geom_rate === 'number' ? Math.round(ac.geom_rate) : 0);
+      const squawk = String(ac.squawk || '');
+      const seenSec = typeof ac.seen === 'number' ? ac.seen : 0;
+      const lastSeenAt = Math.floor((now - Math.round(seenSec * 1000)) / 1000);
+
+      const { operator, country } = lookupHexOperator(hex);
+
+      byHex.set(hex, {
+        id: `adsbx-${hex}`,
+        callsign: callsign || `CIV-${hex.substring(0, 4).toUpperCase()}`,
+        hexCode: hex.toUpperCase(),
+        registration,
+        aircraftType: classifyAircraftType(typeCode, callsign),
+        aircraftModel: typeCode,
+        operator,
+        operatorCountry: country,
+        location: { latitude: lat, longitude: lon },
+        altitude,
+        heading,
+        speed,
+        verticalRate,
+        onGround,
+        squawk,
+        origin: '',
+        destination: '',
+        lastSeenAt,
+        firstSeenAt: 0,
+        confidence: 'MILITARY_CONFIDENCE_LOW' as MilitaryConfidence,
+        isInteresting: false,
+        note: 'Civilian',
+        enrichment: undefined,
+      });
+    }
+  }
+
+  const flights = Array.from(byHex.values());
+  console.log(`[military-flights] civilian layer: ${flights.length} aircraft from ${CIVILIAN_REGIONS.length} regions`);
+  return flights;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Main handler
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -334,9 +450,18 @@ export async function listMilitaryFlights(
       REDIS_CACHE_TTL,
       async () => {
         // ① Primary — ADSBExchange (RapidAPI). Authoritative military feed, rich metadata.
-        const adsbxFlights = await fetchADSBExchangeFlights();
-        if (adsbxFlights && adsbxFlights.length > 0) {
-          return { flights: adsbxFlights, clusters: [], pagination: undefined };
+        // ①b — civilian traffic layered in for visual density (product request).
+        //      Fetched in parallel; military hexes win on dedup so the
+        //      authoritative feed is never overwritten by a civilian sample.
+        const [adsbxFlights, civilianFlights] = await Promise.all([
+          fetchADSBExchangeFlights(),
+          fetchADSBExchangeCivilianFlights(),
+        ]);
+        if ((adsbxFlights && adsbxFlights.length > 0) || civilianFlights.length > 0) {
+          const byHex = new Map<string, ListMilitaryFlightsResponse['flights'][number]>();
+          for (const f of civilianFlights) byHex.set(f.hexCode.toUpperCase(), f);
+          for (const f of adsbxFlights ?? []) byHex.set(f.hexCode.toUpperCase(), f);
+          return { flights: Array.from(byHex.values()), clusters: [], pagination: undefined };
         }
 
         // ② Fallback — OpenSky relay. Hex/callsign-classified, free but coverage gaps.

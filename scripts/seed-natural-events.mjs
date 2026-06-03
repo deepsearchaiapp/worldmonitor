@@ -10,8 +10,8 @@ const NHC_BASE = 'https://mapservices.weather.noaa.gov/tropical/rest/services/tr
 const CANONICAL_KEY = 'natural:events:v1';
 const CACHE_TTL = 21600; // 6h — comfortably longer than the hourly seed cron so a late run can't empty the feed
 
-const DAYS = 30;
-const WILDFIRE_MIN_ACRES = 7_000;
+const DAYS = 90;
+const WILDFIRE_MIN_ACRES = 1_000;
 
 const GDACS_TO_CATEGORY = {
   EQ: 'earthquakes',
@@ -173,8 +173,8 @@ async function fetchGdacs() {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    if (props.alertlevel === 'Green') continue;
-
+    // Green-level alerts are kept (was previously dropped) so minor floods,
+    // volcanic activity and storms still populate the map — denser coverage.
     const category = GDACS_TO_CATEGORY[props.eventtype] || 'manmade';
     const alertPrefix = props.alertlevel === 'Red' ? '\u{1F534} ' : props.alertlevel === 'Orange' ? '\u{1F7E0} ' : '';
     const description = props.description || EVENT_TYPE_NAMES[props.eventtype] || props.eventtype;
@@ -203,7 +203,7 @@ async function fetchGdacs() {
     });
   }
 
-  return events.slice(0, 100);
+  return events.slice(0, 400);
 }
 
 // NHC ArcGIS layer IDs per storm slot (5 slots per basin)

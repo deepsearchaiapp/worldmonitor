@@ -16,7 +16,7 @@ import { cachedFetchJson, getCachedJson } from '../../../_shared/redis';
 import { CHROME_UA } from '../../../_shared/constants';
 
 const USGS_FEED_URL =
-  'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson';
+  'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_month.geojson';
 const CACHE_KEY = 'seismology:earthquakes:v1';
 const CACHE_TTL = 1800; // 30 minutes
 const SEED_FRESHNESS_MS = 45 * 60 * 1000; // 45 minutes
