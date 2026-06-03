@@ -396,9 +396,16 @@ export interface ClusteredItem {
  * The conflict + live-news feeds run their own (stricter, RSS-only) gates
  * via separate endpoints and are unaffected by this one.
  */
+const SINGLE_RSS_CATEGORY_TOPICS = new Set(['cyber', 'maritime', 'nuclear', 'sanctions']);
+
 export function isCategoryCorroborated(c: ClusteredItem): boolean {
   const sources = Array.isArray(c.sources) ? c.sources : [];
-  return sources.length >= 2 && sources.some((s) => s.origin === 'rss');
+  const hasRss = sources.some((s) => s.origin === 'rss');
+  if (!hasRss) return false;
+  if (sources.length >= 2) return true;
+
+  const topics = Array.isArray(c.topics) ? c.topics : [];
+  return topics.some((topic) => SINGLE_RSS_CATEGORY_TOPICS.has(topic));
 }
 
 /**
