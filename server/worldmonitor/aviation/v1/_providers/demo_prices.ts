@@ -16,6 +16,7 @@ const AIRPORT_COORDS: Record<string, [number, number]> = {
     NRT: [35.764, 140.386], PEK: [40.079, 116.603], SYD: [-33.946, 151.177],
     TLV: [32.011, 34.886], CAI: [30.121, 31.406], ATH: [37.936, 23.944],
     VIE: [48.110, 16.570], FCO: [41.800, 12.239], ZRH: [47.464, 8.549],
+    PRG: [50.101, 14.260], WAW: [52.166, 20.967],
 };
 
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
