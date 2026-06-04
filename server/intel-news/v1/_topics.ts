@@ -52,7 +52,8 @@ export const INTEL_TOPICS: IntelTopic[] = [
       '"data breach" OR "security breach" OR "data leak" OR phishing OR malware OR ' +
       '"zero-day" OR DDoS OR APT OR "supply chain attack" OR "denial of service" OR ' +
       '"hacked" OR "exploit" OR infosec OR CVE OR vulnerability OR state-sponsored OR ' +
-      '"critical infrastructure" OR "cyber espionage" OR botnet OR LockBit OR "cyber gang") ' +
+      '"critical infrastructure" OR "cyber espionage" OR botnet OR LockBit OR "cyber gang" OR ' +
+      'hackers OR exploited OR spyware OR "credential theft") ' +
       'sourcelang:eng',
   },
   {
@@ -87,7 +88,7 @@ export const INTEL_TOPICS: IntelTopic[] = [
       '"trade restriction" OR "economic pressure" OR "secondary sanctions" OR ' +
       '"sanctions package" OR "sanctions list" OR "designated entity" OR "export ban" OR ' +
       'Magnitsky OR "entity list" OR "SWIFT ban" OR "asset seizure" OR "trade blacklist" OR ' +
-      '"financial sanction") sourcelang:eng',
+      '"financial sanction" OR "import ban") sourcelang:eng',
   },
   {
     id: 'intelligence',
@@ -110,7 +111,8 @@ export const INTEL_TOPICS: IntelTopic[] = [
       '"Bab al-Mandeb" OR "Red Sea attack" OR "naval patrol" OR ' +
       '"freedom of navigation" OR "maritime security" OR "container ship" OR "cargo ship" OR ' +
       '"port strike" OR "Panama Canal" OR "carrier strike group" OR "maritime chokepoint" OR ' +
-      '"Red Sea shipping" OR "maritime incident" OR "naval fleet") sourcelang:eng',
+      '"Red Sea shipping" OR "maritime incident" OR "naval fleet" OR "aircraft carrier" OR ' +
+      'destroyer) sourcelang:eng',
   },
 
   // ────────────────────────────────────────────────────────────────────

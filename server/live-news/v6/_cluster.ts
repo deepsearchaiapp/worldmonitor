@@ -384,9 +384,12 @@ export interface ClusteredItem {
 
 /**
  * Corroboration gate for the GDELT-category feeds (cyber / military /
- * nuclear / …). A category cluster surfaces only when ≥2 distinct outlets
- * carry the story and at least one is a trusted RSS feed — a lone RSS
- * outlet with no corroboration is withheld.
+ * nuclear / …). Default rule: a category cluster surfaces when ≥2 distinct
+ * outlets carry the story and at least one is a trusted RSS feed.
+ *
+ * Exception for sparse categories: `cyber`, `maritime`, `nuclear`,
+ * `sanctions` may pass with a single RSS source so region-split category
+ * briefs do not go empty while inflow is still growing.
  *
  * The RSS-presence half is structurally always true (GDELT-only clusters
  * are dropped at cluster time, so every cluster has ≥1 RSS member); it's

@@ -95,11 +95,12 @@ const INTEL_TOPICS: IntelTopic[] = [
     label: 'CYBER',
     titlePattern: buildPattern([
       'cyberattack', 'cyber attack', 'cybersecurity', 'ransomware', 'hacking',
-      'hacker', 'data breach', 'security breach', 'data leak', 'phishing',
+      'hacker', 'hackers', 'data breach', 'security breach', 'data leak', 'phishing',
       'malware', 'zero-day', 'DDoS', 'APT', 'supply chain attack',
       'denial of service', 'hacked', 'exploit', 'infosec', 'CVE',
       'vulnerability', 'state-sponsored', 'critical infrastructure',
-      'cyber espionage', 'botnet', 'LockBit', 'cyber gang',
+      'cyber espionage', 'botnet', 'LockBit', 'cyber gang', 'exploited',
+      'spyware', 'credential theft'
     ]),
   },
   {
@@ -136,6 +137,7 @@ const INTEL_TOPICS: IntelTopic[] = [
       'secondary sanctions', 'sanctions package', 'sanctions list',
       'designated entity', 'export ban', 'Magnitsky', 'entity list',
       'SWIFT ban', 'asset seizure', 'trade blacklist', 'financial sanction',
+      'import ban', 
     ]),
   },
   {
@@ -160,7 +162,7 @@ const INTEL_TOPICS: IntelTopic[] = [
       'freedom of navigation', 'maritime security', 'container ship',
       'cargo ship', 'port strike', 'Panama Canal', 'carrier strike group',
       'maritime chokepoint', 'Red Sea shipping', 'maritime incident',
-      'naval fleet',
+      'naval fleet', 'aircraft carrier', 'destroyer'
     ]),
   },
   {

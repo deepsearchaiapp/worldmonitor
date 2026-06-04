@@ -404,12 +404,17 @@ export const V6_NEWS_SOURCES: readonly NewsSource[] = [
   { name: 'Schneier on Security',     url: 'https://www.schneier.com/feed/',                                    priority: 4 },
   { name: 'CISA Advisories',          url: 'https://www.cisa.gov/cybersecurity-advisories/all.xml',              priority: 4 },
   { name: 'Ransomware.live',          url: 'https://www.ransomware.live/rss.xml',                               priority: 4 },
+  { name: 'BleepingComputer',         url: 'https://www.bleepingcomputer.com/feed/',                            priority: 4 },
+  { name: 'The Record',               url: 'https://therecord.media/feed/',                                     priority: 4 },
 
   // ── Maritime / naval ──
   { name: 'USNI News',                url: 'https://news.usni.org/feed',                                        priority: 4 },
   { name: 'gCaptain',                 url: 'https://gcaptain.com/feed/',                                        priority: 4 },
+  { name: 'Naval News',               url: 'https://www.navalnews.com/feed/',                                   priority: 4 },
+
 
   // ── Nuclear / arms control (site-scoped GN — direct NTI RSS 403s) ──
+  { name: 'IAEA Top News',            url: 'https://www.iaea.org/feeds/topnews',                                priority: 4 },
   { name: 'Nuclear Energy (GN)',      url: 'https://news.google.com/rss/search?q=(%22nuclear+energy%22+OR+%22nuclear+power%22+OR+uranium+OR+IAEA)+when:3d&hl=en-US&gl=US&ceid=US:en', priority: 4 },
   { name: 'Arms Control Assn (GN)',   url: 'https://news.google.com/rss/search?q=site:armscontrol.org+when:7d&hl=en-US&gl=US&ceid=US:en', priority: 4 },
   { name: 'Bulletin of Atomic Scientists (GN)', url: 'https://news.google.com/rss/search?q=site:thebulletin.org+when:7d&hl=en-US&gl=US&ceid=US:en', priority: 4 },
@@ -417,6 +422,9 @@ export const V6_NEWS_SOURCES: readonly NewsSource[] = [
   { name: 'NTI (GN)',                 url: 'https://news.google.com/rss/search?q=site:nti.org+when:30d&hl=en-US&gl=US&ceid=US:en', priority: 4 },
 
   // ── Sanctions / trade restrictions ──
+  { name: 'Baker McKenzie Sanctions', url: 'https://sanctionsnews.bakermckenzie.com/feed/',                    priority: 4 },
+  { name: 'WorldECR',                 url: 'https://www.worldecr.com/news/feed/',                              priority: 4 },
+  { name: 'Global Trade & Sanctions Law', url: 'https://www.globaltradeandsanctionslaw.com/feed/',             priority: 4 },
   { name: 'Trade & Tariffs (GN)',     url: 'https://news.google.com/rss/search?q=(tariff+OR+%22trade+war%22+OR+%22trade+deficit%22+OR+sanctions)+when:2d&hl=en-US&gl=US&ceid=US:en', priority: 4 },
   { name: 'Treasury Dept (GN)',       url: 'https://news.google.com/rss/search?q=site:treasury.gov+OR+%22Treasury+Department%22&hl=en-US&gl=US&ceid=US:en', priority: 4 },
 ];
