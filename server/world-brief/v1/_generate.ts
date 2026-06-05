@@ -26,10 +26,13 @@ import { isCategoryCorroborated, type ClusteredItem } from '../../live-news/v6/_
 const DIGEST_KEY = 'live-news:v6:digest';
 
 export const WORLD_BRIEF_KEY = 'news:world-brief:v1';
+export const WORLD_BRIEF_REGIONAL_KEY = 'news:world-brief-regional:v1';
 
 /** 25 h — long enough to survive ~a day of missed hourly crons. Staleness
  *  is surfaced to the user via `generatedAt` on the card. */
 const WORLD_BRIEF_TTL_S = 25 * 60 * 60;
+/** Regional refresh is sharded, so keep the matrix alive across missed runs. */
+const WORLD_BRIEF_REGIONAL_TTL_S = 49 * 60 * 60;
 
 /** Distinct-RSS-publisher gate for the live-news section — unchanged (≥3). */
 const MIN_RSS_SOURCES = Number(process.env.WM_V6_MIN_SOURCES) || 3;
@@ -54,6 +57,24 @@ export const CATEGORY_IDS = [
   'maritime', 'business', 'scitech', 'entertainment',
 ] as const;
 export type CategoryId = (typeof CATEGORY_IDS)[number];
+const REGIONAL_BRIEF_MODES = ['conflict', ...CATEGORY_IDS] as const;
+
+export const REGION_IDS = [
+  'us', 'canada', 'latin_america', 'europe', 'middle_east',
+  'africa', 'asia', 'oceania',
+] as const;
+export type RegionId = (typeof REGION_IDS)[number];
+
+const REGION_LABELS: Record<RegionId, string> = {
+  us: 'the United States',
+  canada: 'Canada',
+  latin_america: 'Latin America',
+  europe: 'Europe',
+  middle_east: 'the Middle East',
+  africa: 'Africa',
+  asia: 'Asia',
+  oceania: 'Oceania',
+};
 
 export type BriefThreatLevel = 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'MODERATE';
 const THREAT_ORDER: BriefThreatLevel[] = ['MODERATE', 'ELEVATED', 'HIGH', 'CRITICAL'];
@@ -104,6 +125,17 @@ export interface WorldBriefPayload {
    *  (LKG then restores the prior); an empty-clusters section means the
    *  category genuinely had nothing to brief this cycle. */
   categories: Record<string, WorldBriefSection | null>;
+}
+
+export interface WorldBriefRegionalRegionPayload {
+  generatedAt: number | null;
+  conflict: WorldBriefSection | null;
+  categories: Record<string, WorldBriefSection | null>;
+}
+
+export interface WorldBriefRegionalPayload {
+  generatedAt: number;
+  regions: Record<string, WorldBriefRegionalRegionPayload>;
 }
 
 type BriefMode = 'conflict' | 'live-news' | CategoryId;
@@ -179,10 +211,15 @@ function buildSourceRefs(c: ClusteredItem): WorldBriefSourceRef[] {
  * than one exact source URL with an already-picked cluster is the same
  * event (the embedder failed to merge it) and is skipped.
  */
-function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster[] {
+function pickClusters(
+  clusters: ClusteredItem[],
+  mode: BriefMode,
+  region?: RegionId,
+): PickedCluster[] {
   const ranked = clusters
     .filter((c) => {
       if (!c || !Array.isArray(c.sources)) return false;
+      if (region && c.region !== region) return false;
       if (mode === 'conflict') {
         return c.isConflict === true
           && rssSourceCount(c) >= CONFLICT_MIN_RSS
@@ -240,9 +277,14 @@ const DESK_LABEL: Record<BriefMode, string> = {
   'entertainment': 'an entertainment and culture desk',
 };
 
-function systemPrompt(mode: BriefMode): string {
+function sectionLogName(mode: BriefMode, region?: RegionId): string {
+  return region ? `${region}/${mode}` : mode;
+}
+
+function systemPrompt(mode: BriefMode, region?: RegionId): string {
   const desk = DESK_LABEL[mode];
-  return `You are the editor of ${desk}. You receive several news stories. Each story is a cluster of headlines from multiple independent outlets covering the SAME event, plus a short lede.
+  const regionScope = region ? ` focused on ${REGION_LABELS[region]}` : '';
+  return `You are the editor of ${desk}${regionScope}. You receive several news stories. Each story is a cluster of headlines from multiple independent outlets covering the SAME event, plus a short lede.
 
 For EACH story, write an original, neutral, factual brief. This is critical:
 - Do NOT copy or lightly reword any sentence from the supplied headlines or lede. Identify the underlying factual claims — who, what, when, where — and restate them entirely in your own words.
@@ -265,14 +307,15 @@ Respond with ONLY a JSON object of exactly this shape:
 The "index" must match the STORY number. Include exactly one entry per story.`;
 }
 
-function userPrompt(picked: PickedCluster[]): string {
+function userPrompt(picked: PickedCluster[], region?: RegionId): string {
   const today = new Date().toISOString().split('T')[0];
   const blocks = picked.map((p, i) => {
     const lede = (p.cluster.summary || '').trim() || '(no lede available)';
     const headlines = p.rssHeadlines.map((h) => `  - ${h}`).join('\n') || '  - (none)';
     return `STORY ${i + 1}:\nLede: ${lede}\nHeadlines from ${p.rssHeadlines.length} outlet(s):\n${headlines}`;
   });
-  return `Today is ${today}.\n\nHere are ${picked.length} news stories to brief:\n\n${blocks.join('\n\n')}`;
+  const scope = region ? ` These stories are associated with ${REGION_LABELS[region]}.` : '';
+  return `Today is ${today}.${scope}\n\nHere are ${picked.length} news stories to brief:\n\n${blocks.join('\n\n')}`;
 }
 
 // ── Parsing / sanitizing LLM output ──────────────────────────────────────────
@@ -349,16 +392,18 @@ function parseLlmResponse(content: string): LlmResponse | null {
 async function buildSection(
   clusters: ClusteredItem[],
   mode: BriefMode,
+  region?: RegionId,
 ): Promise<WorldBriefSection | null> {
-  const picked = pickClusters(clusters, mode);
+  const picked = pickClusters(clusters, mode, region);
+  const logName = sectionLogName(mode, region);
   if (picked.length === 0) {
-    console.warn(`[world-brief] mode=${mode} no clusters — empty section`);
+    console.warn(`[world-brief] mode=${logName} no clusters — empty section`);
     return { overview: '', threatLevel: 'MODERATE', clusters: [] };
   }
 
   const result = await callGemini({
-    system: systemPrompt(mode),
-    prompt: userPrompt(picked),
+    system: systemPrompt(mode, region),
+    prompt: userPrompt(picked, region),
     model: 'gemini-2.5-flash',
     jsonMode: true,
     // gemini-2.5-flash "thinking" draws down the output-token budget; left
@@ -378,14 +423,14 @@ async function buildSection(
   });
 
   if (!result) {
-    console.warn(`[world-brief] mode=${mode} Gemini call failed`);
+    console.warn(`[world-brief] mode=${logName} Gemini call failed`);
     return null;
   }
 
   const parsed = parseLlmResponse(result.content);
   if (!parsed) {
     console.warn(
-      `[world-brief] mode=${mode} unparseable LLM response ` +
+      `[world-brief] mode=${logName} unparseable LLM response ` +
         `(len=${result.content.length} tail=${JSON.stringify(result.content.slice(-120))})`,
     );
     return null;
@@ -503,6 +548,106 @@ export async function generateWorldBrief(): Promise<WorldBriefPayload> {
   return payload;
 }
 
+function emptyRegionalCategories(): Record<string, WorldBriefSection | null> {
+  return Object.fromEntries(CATEGORY_IDS.map((id) => [id, null]));
+}
+
+function normalizeRegionalPayload(prev: WorldBriefRegionalPayload | null): WorldBriefRegionalPayload {
+  const now = Date.now();
+  return {
+    generatedAt: prev?.generatedAt ?? now,
+    regions: Object.fromEntries(
+      REGION_IDS.map((region) => {
+        const prevRegion = prev?.regions?.[region];
+        return [
+          region,
+          {
+            generatedAt: prevRegion?.generatedAt ?? null,
+            conflict: prevRegion?.conflict ?? null,
+            categories: {
+              ...emptyRegionalCategories(),
+              ...(prevRegion?.categories ?? {}),
+            },
+          },
+        ];
+      }),
+    ),
+  };
+}
+
+export function isRegionId(value: string | null | undefined): value is RegionId {
+  return REGION_IDS.includes(value as RegionId);
+}
+
+/** Pick one region per half-hour cron slot; 8 regions complete in ~4 hours. */
+export function pickRegionalWorldBriefShard(now = new Date()): RegionId {
+  const halfHourSlot = Math.floor(now.getTime() / (30 * 60 * 1000));
+  return REGION_IDS[halfHourSlot % REGION_IDS.length]!;
+}
+
+export interface GenerateRegionalWorldBriefOptions {
+  region?: RegionId;
+}
+
+/**
+ * Generate the regional conflict section plus the 9 intel-category sections
+ * for one region and merge them into the cached regional matrix. A null cell
+ * means Gemini failed, so that exact cell keeps its previous value
+ * (last-known-good). Empty-cluster cells are written as valid empty sections.
+ */
+export async function generateRegionalWorldBrief(
+  options: GenerateRegionalWorldBriefOptions = {},
+): Promise<WorldBriefRegionalPayload> {
+  const region = options.region ?? pickRegionalWorldBriefShard();
+  const digest = (await getCachedJson(DIGEST_KEY, false, 5_000)) as ClusteredItem[] | null;
+  const clusters = Array.isArray(digest) ? digest : [];
+  console.log(`[world-brief:regional] digest clusters=${clusters.length} region=${region}`);
+
+  const built = await mapWithConcurrency(
+    [...REGIONAL_BRIEF_MODES],
+    SECTION_CONCURRENCY,
+    (mode) => buildSection(clusters, mode, region),
+  );
+
+  const prev = (await getCachedJson(
+    WORLD_BRIEF_REGIONAL_KEY,
+    false,
+    3_000,
+  )) as WorldBriefRegionalPayload | null;
+  const payload = normalizeRegionalPayload(prev);
+  payload.generatedAt = Date.now();
+
+  const regionPayload = payload.regions[region] ?? {
+    generatedAt: null,
+    conflict: null,
+    categories: emptyRegionalCategories(),
+  };
+
+  for (let i = 0; i < REGIONAL_BRIEF_MODES.length; i++) {
+    const mode = REGIONAL_BRIEF_MODES[i]!;
+    const section = built[i] ?? null;
+    if (mode === 'conflict') {
+      if (section) {
+        regionPayload.conflict = section;
+      } else if (regionPayload.conflict) {
+        console.log(`[world-brief:regional] ${region}/conflict preserved (LKG)`);
+      }
+      continue;
+    }
+    if (section) {
+      regionPayload.categories[mode] = section;
+      continue;
+    }
+    if (regionPayload.categories[mode]) {
+      console.log(`[world-brief:regional] ${region}/${mode} preserved (LKG)`);
+    }
+  }
+
+  regionPayload.generatedAt = Date.now();
+  payload.regions[region] = regionPayload;
+  return payload;
+}
+
 export interface RefreshWorldBriefResult {
   status: 'ok' | 'empty';
   conflictClusters: number;
@@ -537,5 +682,49 @@ export async function refreshWorldBrief(): Promise<RefreshWorldBriefResult> {
     liveNewsClusters,
     categoryClusters,
     generatedAt: new Date(payload.generatedAt).toISOString(),
+  };
+}
+
+export interface RefreshRegionalWorldBriefResult {
+  status: 'ok' | 'empty';
+  region: RegionId;
+  conflictClusters: number;
+  categoryClusters: number;
+  generatedAt: string;
+  regionGeneratedAt: string | null;
+}
+
+/** Cron entry point for the sharded regional matrix. */
+export async function refreshRegionalWorldBrief(
+  options: GenerateRegionalWorldBriefOptions = {},
+): Promise<RefreshRegionalWorldBriefResult> {
+  const startedAt = Date.now();
+  const region = options.region ?? pickRegionalWorldBriefShard();
+  const payload = await generateRegionalWorldBrief({ region });
+  await setCachedJson(WORLD_BRIEF_REGIONAL_KEY, payload, WORLD_BRIEF_REGIONAL_TTL_S, 10_000);
+
+  const regionPayload = payload.regions[region];
+  const conflictClusters = regionPayload?.conflict?.clusters.length ?? 0;
+  const categoryClusters = CATEGORY_IDS.reduce(
+    (sum, id) => sum + (regionPayload?.categories[id]?.clusters.length ?? 0),
+    0,
+  );
+  const perCategory = CATEGORY_IDS
+    .map((id) => `${id}=${regionPayload?.categories[id]?.clusters.length ?? 0}`)
+    .join(' ');
+  console.log(
+    `[world-brief:regional] DONE total=${Date.now() - startedAt}ms ` +
+      `region=${region} conflict=${conflictClusters} ${perCategory}`,
+  );
+
+  return {
+    status: conflictClusters + categoryClusters > 0 ? 'ok' : 'empty',
+    region,
+    conflictClusters,
+    categoryClusters,
+    generatedAt: new Date(payload.generatedAt).toISOString(),
+    regionGeneratedAt: regionPayload?.generatedAt
+      ? new Date(regionPayload.generatedAt).toISOString()
+      : null,
   };
 }
