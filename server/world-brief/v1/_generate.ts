@@ -21,11 +21,17 @@
 import { getCachedJson, setCachedJson } from '../../_shared/redis';
 import { callGemini } from '../../_shared/llm';
 import { isCategoryCorroborated, type ClusteredItem } from '../../live-news/v6/_cluster';
+import { resolveRegion, type RegionId } from '../../_shared/geo-regions';
 
 /** v6 digest key — see server/live-news/v6/refresh.ts (DIGEST_KEY). */
 const DIGEST_KEY = 'live-news:v6:digest';
 
 export const WORLD_BRIEF_KEY = 'news:world-brief:v1';
+
+/** Per-region brief Redis key — one payload per region, same shape as the
+ *  global brief. The regional dispatcher writes these on its schedule. */
+export const regionBriefKey = (regionId: RegionId): string =>
+  `news:world-brief:region:${regionId}:v1`;
 
 /** 25 h — long enough to survive ~a day of missed hourly crons. Staleness
  *  is surfaced to the user via `generatedAt` on the card. */
@@ -456,16 +462,23 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-/**
- * Generate all brief sections from the current v6 digest — conflict,
- * live-news, and one per intel category. On a per-section LLM failure the
- * previous section is carried forward (last-known-good).
- */
-export async function generateWorldBrief(): Promise<WorldBriefPayload> {
+/** Read the current v6 digest (empty array on miss/bad shape). */
+async function readDigest(): Promise<ClusteredItem[]> {
   const digest = (await getCachedJson(DIGEST_KEY, false, 5_000)) as ClusteredItem[] | null;
-  const clusters = Array.isArray(digest) ? digest : [];
-  console.log(`[world-brief] digest clusters=${clusters.length}`);
+  return Array.isArray(digest) ? digest : [];
+}
 
+/**
+ * Build a full brief payload (conflict + live-news + 9 categories) from a
+ * given cluster set, with per-section last-known-good fallback against
+ * `lkgKey`. Shared by the GLOBAL brief (all clusters) and each REGIONAL
+ * brief (clusters filtered to one region) so both run identical logic.
+ */
+async function buildBriefPayload(
+  clusters: ClusteredItem[],
+  lkgKey: string,
+  label: string,
+): Promise<WorldBriefPayload> {
   const modes: BriefMode[] = ['conflict', 'live-news', ...CATEGORY_IDS];
   const built = await mapWithConcurrency(
     modes,
@@ -488,27 +501,51 @@ export async function generateWorldBrief(): Promise<WorldBriefPayload> {
   const anyFailed = payload.conflict === null || payload.liveNews === null
     || CATEGORY_IDS.some((id) => payload.categories[id] === null);
   if (anyFailed) {
-    const prev = (await getCachedJson(WORLD_BRIEF_KEY, false, 3_000)) as WorldBriefPayload | null;
+    const prev = (await getCachedJson(lkgKey, false, 3_000)) as WorldBriefPayload | null;
     if (prev) {
       if (!payload.conflict && prev.conflict) {
         payload.conflict = prev.conflict;
-        console.log('[world-brief] conflict section preserved (LKG)');
+        console.log(`${label} conflict section preserved (LKG)`);
       }
       if (!payload.liveNews && prev.liveNews) {
         payload.liveNews = prev.liveNews;
-        console.log('[world-brief] liveNews section preserved (LKG)');
+        console.log(`${label} liveNews section preserved (LKG)`);
       }
       for (const id of CATEGORY_IDS) {
         const prevCat = prev.categories?.[id];
         if (!payload.categories[id] && prevCat) {
           payload.categories[id] = prevCat;
-          console.log(`[world-brief] ${id} section preserved (LKG)`);
+          console.log(`${label} ${id} section preserved (LKG)`);
         }
       }
     }
   }
 
   return payload;
+}
+
+/**
+ * Generate all GLOBAL brief sections from the current v6 digest — conflict,
+ * live-news, and one per intel category. On a per-section LLM failure the
+ * previous section is carried forward (last-known-good).
+ */
+export async function generateWorldBrief(): Promise<WorldBriefPayload> {
+  const clusters = await readDigest();
+  console.log(`[world-brief] digest clusters=${clusters.length}`);
+  return buildBriefPayload(clusters, WORLD_BRIEF_KEY, '[world-brief]');
+}
+
+/**
+ * Generate the same brief sections for ONE region — the digest filtered to
+ * clusters whose canonical country maps to `regionId` (resolveRegion). A
+ * cluster with no resolvable country appears only in the GLOBAL brief, never
+ * a regional one. Identical section logic to the global brief.
+ */
+export async function generateRegionalBrief(regionId: RegionId): Promise<WorldBriefPayload> {
+  const all = await readDigest();
+  const clusters = all.filter((c) => resolveRegion(c.country) === regionId);
+  console.log(`[world-brief:region:${regionId}] clusters=${clusters.length}/${all.length}`);
+  return buildBriefPayload(clusters, regionBriefKey(regionId), `[world-brief:region:${regionId}]`);
 }
 
 export interface RefreshWorldBriefResult {
@@ -537,6 +574,36 @@ export async function refreshWorldBrief(): Promise<RefreshWorldBriefResult> {
   console.log(
     `[world-brief] DONE total=${Date.now() - startedAt}ms ` +
       `conflict=${conflictClusters} liveNews=${liveNewsClusters} ${perCategory}`,
+  );
+
+  return {
+    status: conflictClusters + liveNewsClusters + categoryClusters > 0 ? 'ok' : 'empty',
+    conflictClusters,
+    liveNewsClusters,
+    categoryClusters,
+    generatedAt: new Date(payload.generatedAt).toISOString(),
+  };
+}
+
+/**
+ * Cron entry — generate ONE region's brief and write it to its Redis key.
+ * Called by the region-major dispatcher for whichever regions are due.
+ * Idempotent.
+ */
+export async function refreshRegionalBrief(regionId: RegionId): Promise<RefreshWorldBriefResult> {
+  const startedAt = Date.now();
+  const payload = await generateRegionalBrief(regionId);
+  await setCachedJson(regionBriefKey(regionId), payload, WORLD_BRIEF_TTL_S);
+
+  const conflictClusters = payload.conflict?.clusters.length ?? 0;
+  const liveNewsClusters = payload.liveNews?.clusters.length ?? 0;
+  const categoryClusters = CATEGORY_IDS.reduce(
+    (sum, id) => sum + (payload.categories[id]?.clusters.length ?? 0),
+    0,
+  );
+  console.log(
+    `[world-brief:region:${regionId}] DONE total=${Date.now() - startedAt}ms ` +
+      `conflict=${conflictClusters} liveNews=${liveNewsClusters} categories=${categoryClusters}`,
   );
 
   return {
