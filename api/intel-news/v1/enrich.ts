@@ -596,7 +596,7 @@ const VALID_TOPICS = new Set([
  *  enrichment cache key (cold cache → forces a re-LLM) and the per-cluster
  *  `enrichVersion` re-queue gate, so a prompt change re-classifies every
  *  v6 digest cluster instead of only newly-arriving ones. */
-const LOCATION_PROMPT_VERSION = 5;
+const LOCATION_PROMPT_VERSION = 6;
 
 const LOCATION_ONLY_CACHE_KEY = (link: string): string =>
   `enrichment-loc:v${LOCATION_PROMPT_VERSION}:${createHash('sha256').update(link).digest('hex')}`;
@@ -617,17 +617,17 @@ const LOCATION_ONLY_SYSTEM_PROMPT = `You classify a news article. Return ONE JSO
 
   - isConflict: boolean. True ONLY if the story is about armed conflict, military operations, terrorist attacks, civil unrest, or any kinetic event with a clear geographic incident location. False for everything else (business, sports, politics, entertainment, weather, etc).
 
-  - topics: an ARRAY of zero or more of these exact strings — ONLY the categories that are a PRIMARY subject of the story:
-      "cyber"         — cyberattacks, data breaches, ransomware, hacking, cyber-espionage
-      "military"      — armed forces, defense, weapons, military operations / exercises / deployments
-      "nuclear"       — nuclear weapons, nuclear energy / power, uranium, IAEA, proliferation
-      "sanctions"     — sanctions, embargoes, tariffs, trade restrictions, export controls
-      "intelligence"  — espionage, spy agencies, surveillance programs, classified leaks, covert operations
-      "maritime"      — central to naval forces, ships, ports, piracy, or a sea incident — NOT just because oil prices or shipping get a mention
+  - topics: an ARRAY of zero or more of these exact strings. Tag a category when the story CENTERS ON it — it is the main subject, or a dedicated and substantial part of the story — not a passing mention, background context, or a downstream consequence. Apply each category's specific rules below.
+      "cyber"         — INCLUDE: a cyberattack, data breach, ransomware, hacking campaign, malware / exploit / disclosed vulnerability, or cyber-espionage; a cyber-defense or cyber-policy action. EXCLUDE: a routine IT outage with no attacker, or ordinary tech-product news (that is "scitech").
+      "military"      — armed forces, defense, weapons, strikes, troop movements, or military operations / exercises / deployments. An armed conflict belongs HERE — a war is "military", NOT "nuclear" or "maritime", unless the story itself centers on the nuclear or naval dimension.
+      "nuclear"       — INCLUDE: a nuclear weapons program / test / arsenal, uranium or enrichment, a nuclear facility / reactor / power plant, fuel or waste, an IAEA action or inspection, a non-proliferation treaty or talks, or a radiation / nuclear-safety event. EXCLUDE: a broader armed conflict merely because a party possesses nuclear weapons; a stock, earnings, or market story whose company name merely contains "nuclear" or "uranium" (that is "business"); and uranium or other commodity price moves (also "business").
+      "sanctions"     — INCLUDE: imposing / lifting / expanding sanctions, embargoes, export controls, asset freezes or seizures, designations (OFAC / entity list / Magnitsky), or tariffs and financial restrictions (e.g. SWIFT) used as a trade-restriction measure. EXCLUDE: general diplomacy or conflict not centered on a sanctions measure; ordinary trade or business news with no restriction.
+      "intelligence"  — INCLUDE: espionage or spying, a spy-agency operation (CIA / MI6 / Mossad / FSB / etc.), surveillance programs, covert operations, classified-document leaks, or counterintelligence arrests. EXCLUDE: ordinary diplomacy, politics, or military operations that are not about intelligence activity.
+      "maritime"      — INCLUDE: naval forces or operations, a warship / submarine / carrier, a sea or strait incident (attack, seizure, collision, blockade), piracy, a port or shipping-lane disruption, or a freedom-of-navigation action. EXCLUDE: do NOT tag merely because a body of water or chokepoint is named (Red Sea, Strait of Hormuz, South China Sea, Suez, Panama Canal) — tag ONLY when a ship, naval force, port, or sea-based incident is the actual subject. An exchange of strikes, missiles, or shelling between forces is "military", NOT "maritime", even in a coastal or maritime region.
       "business"      — a company, a financial market, or an economic indicator is the LITERAL subject (earnings, IPOs, mergers, stock / bond markets, central-bank or monetary policy, corporate leadership)
       "scitech"       — science, technology, AI, space, medical research, innovation
       "entertainment" — film, TV, music, celebrities, gaming, awards, the sports business
-    Tag a category ONLY when it is a primary subject of the story. NEVER tag for background context, a passing mention, or a downstream consequence. Most stories have 0-2 topics; 3 or more should be rare.
+    A story may carry several topics when it genuinely spans them (e.g. a state-sponsored hack is "cyber" + "intelligence").
     Be especially strict with "business": NEVER tag it for elections, opinion polls, government budgets, fiscal-policy debates, diplomacy, legal trials, or political-personality stories — even when money or the economy comes up. "business" requires a company, a financial market, or an economic indicator as the literal subject.
     Return [] when none apply.
 
