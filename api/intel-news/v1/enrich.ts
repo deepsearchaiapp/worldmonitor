@@ -30,8 +30,11 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { createHash } from 'crypto';
 // Deterministic country canonicaliser — turns the LLM's country output
 // ("UK" / "USA" / "United States") into a clean ISO-2 ("GB" / "US" / "US").
-// Same import pattern as api/world-brief/v1/refresh.ts → server/_shared.
-import { canonicalIso } from '../../../server/_shared/geo-regions';
+// NOTE: this is the Node.js runtime (not edge), so relative imports are
+// resolved by Node's ESM loader at runtime ("type":"module") and MUST carry
+// the explicit .js extension — extensionless throws ERR_MODULE_NOT_FOUND in
+// prod. (Edge functions like refresh.ts get esbuild-bundled, so they don't.)
+import { canonicalIso } from '../../../server/_shared/geo-regions.js';
 
 export const config = {
   // Pro-plan ceiling. Cron normally only fires ~150 enrichments per call
