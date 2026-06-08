@@ -17,7 +17,7 @@
 
 import { cachedFetchJson, getCachedJson } from '../../_shared/redis';
 import type { ConflictArchiveItem } from '../v1/_store';
-import { feedMaxItemsForVersion } from '../../_shared/feed-limits';
+import { conflictMaxItemsForVersion } from '../../_shared/feed-limits';
 
 const DIGEST_KEY = 'conflict-archive:v5:digest';
 const TOP_LEVEL_TTL_S = 30;
@@ -144,7 +144,7 @@ export async function listConflictArchiveV5(av?: string | null): Promise<ListCon
 
   const full = cached ?? { items: [], generatedAt: new Date().toISOString() };
   // Per-app-version cap, applied after the shared cache read (see note above).
-  const cap = feedMaxItemsForVersion(av);
+  const cap = conflictMaxItemsForVersion(av);
   if (!Number.isFinite(cap)) return full;
   return { ...full, items: full.items.slice(0, cap) };
 }

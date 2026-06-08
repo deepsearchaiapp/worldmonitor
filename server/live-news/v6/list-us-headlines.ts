@@ -8,7 +8,7 @@
  */
 
 import { getCachedJson } from '../../_shared/redis';
-import { feedMaxItemsForVersion } from '../../_shared/feed-limits';
+import { liveNewsMaxItemsForVersion } from '../../_shared/feed-limits';
 import { DIGEST_KEY } from './refresh';
 import type { ClusteredItem } from './_cluster';
 
@@ -72,7 +72,7 @@ export async function listUsHeadlinesV6(av?: string | null): Promise<ListUsHeadl
   const filtered = min <= 1
     ? stored
     : stored.filter((it) => rssSourceCount(it) >= min);
-  const items = filtered.slice(0, feedMaxItemsForVersion(av));
+  const items = filtered.slice(0, liveNewsMaxItemsForVersion(av));
 
   const pendingEnrichment = items.filter((it) => it.location === null).length;
 
