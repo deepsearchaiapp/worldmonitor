@@ -52,6 +52,17 @@ function rssSourceCount(item: ConflictArchiveItem): number {
   return (item.sources ?? []).filter((s) => s.origin !== 'gdelt').length;
 }
 
+/** Global cap on items returned (newest-first). Env-tunable via
+ *  `WM_FEED_MAX_ITEMS`; unset → no cap (full feed). Set per-environment in
+ *  Vercel (e.g. Production=80, Preview unset) to lighten the client payload
+ *  without touching the visibility gates. Inert until the env var is set. */
+function feedMaxItems(): number {
+  const raw = process.env.WM_FEED_MAX_ITEMS;
+  if (!raw) return Infinity;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : Infinity;
+}
+
 export interface ListConflictArchiveV5Response {
   items: Array<{
     source: string;
@@ -109,6 +120,7 @@ export async function listConflictArchiveV5(): Promise<ListConflictArchiveV5Resp
       const items = Array.from(merged.values())
         .filter((it) => rssSourceCount(it) >= minRss && (it.sources?.length ?? 0) >= minTotal)
         .sort((a, b) => b.publishedAt - a.publishedAt)
+        .slice(0, feedMaxItems())
         .map((it) => ({
           source: it.source,
           title: it.title,

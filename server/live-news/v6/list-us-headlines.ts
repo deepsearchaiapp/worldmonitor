@@ -56,6 +56,17 @@ export function rssSourceCount(item: ClusteredItem): number {
   return (item.sources ?? []).filter((s) => s.origin !== 'gdelt').length;
 }
 
+/** Global cap on items returned (the digest is already newest-first, so this
+ *  keeps the newest N). Env-tunable via `WM_FEED_MAX_ITEMS`; unset → no cap.
+ *  Set per-environment in Vercel (Production=80, Preview unset) to lighten the
+ *  client payload without touching the gate. Inert until the env var is set. */
+function feedMaxItems(): number {
+  const raw = process.env.WM_FEED_MAX_ITEMS;
+  if (!raw) return Infinity;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : Infinity;
+}
+
 export async function listUsHeadlinesV6(): Promise<ListUsHeadlinesV6Response> {
   // strict=true: a Redis read FAILURE (timeout / network / non-2xx) THROWS
   // instead of masquerading as an empty digest. A genuine key-miss still
@@ -68,9 +79,10 @@ export async function listUsHeadlinesV6(): Promise<ListUsHeadlinesV6Response> {
   const stored = ((await getCachedJson(DIGEST_KEY, false, undefined, true)) as ClusteredItem[] | null) ?? [];
 
   const min = minSources();
-  const items = min <= 1
+  const filtered = min <= 1
     ? stored
     : stored.filter((it) => rssSourceCount(it) >= min);
+  const items = filtered.slice(0, feedMaxItems());
 
   const pendingEnrichment = items.filter((it) => it.location === null).length;
 

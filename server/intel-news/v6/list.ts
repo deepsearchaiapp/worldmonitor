@@ -66,6 +66,18 @@ function toItem(c: ClusteredItem): IntelNewsV6Item {
   };
 }
 
+/** Per-TOPIC cap on items returned. Unlike the single-feed cap, the category
+ *  endpoint mixes all 9 topics, so a flat cap would starve the thin security
+ *  topics. Instead we keep at most N newest clusters PER topic — each chip
+ *  stays bounded, thin categories keep all their items. Env-tunable via
+ *  `WM_CATEGORY_MAX_PER_TOPIC`; unset → no cap. Inert until the env var is set. */
+function categoryMaxPerTopic(): number {
+  const raw = process.env.WM_CATEGORY_MAX_PER_TOPIC;
+  if (!raw) return Infinity;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : Infinity;
+}
+
 /**
  * @param category  optional intel-topic id to filter to; null returns
  *                   every category-tagged cluster (each carries its own
@@ -75,7 +87,7 @@ export async function listIntelNewsV6(category: string | null): Promise<ListInte
   const digest = (await getCachedJson(DIGEST_KEY, false, 3_000)) as ClusteredItem[] | null;
   const all = Array.isArray(digest) ? digest : [];
 
-  const items = all
+  const filtered = all
     .filter(
       (c) =>
         c &&
@@ -84,11 +96,30 @@ export async function listIntelNewsV6(category: string | null): Promise<ListInte
         (!category || c.topics.includes(category)) &&
         isCategoryCorroborated(c),
     )
-    .sort((a, b) => b.publishedAt - a.publishedAt)
-    .map(toItem);
+    .sort((a, b) => b.publishedAt - a.publishedAt);
+
+  // Per-topic cap (newest-first). For each topic keep at most N clusters; the
+  // response is the union, so a cluster tagged with several topics is counted
+  // toward each. Thin topics (cyber/nuclear/…) keep all their items.
+  const perTopic = categoryMaxPerTopic();
+  let capped = filtered;
+  if (Number.isFinite(perTopic)) {
+    const topics = category ? [category] : [...new Set(filtered.flatMap((c) => c.topics ?? []))];
+    const keep = new Set<string>();
+    for (const t of topics) {
+      let n = 0;
+      for (const c of filtered) {
+        if (n >= perTopic) break;
+        if ((c.topics ?? []).includes(t)) { keep.add(c.id); n++; }
+      }
+    }
+    capped = filtered.filter((c) => keep.has(c.id));
+  }
+
+  const items = capped.map(toItem);
 
   console.log(
-    `[intel-news:v6:list] category=${category ?? 'all'} digest=${all.length} → ${items.length} items`,
+    `[intel-news:v6:list] category=${category ?? 'all'} digest=${all.length} → ${items.length} items (perTopicCap=${perTopic})`,
   );
 
   return { category, items, generatedAt: new Date().toISOString() };
