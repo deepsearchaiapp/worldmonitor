@@ -388,8 +388,9 @@ export interface ClusteredItem {
  * outlets carry the story and at least one is a trusted RSS feed.
  *
  * Exception for sparse categories: `cyber`, `maritime`, `nuclear`,
- * `sanctions` may pass with a single RSS source so region-split category
- * briefs do not go empty while inflow is still growing.
+ * `sanctions`, `intelligence` may pass with a single RSS source so
+ * region-split category briefs do not go empty while inflow is still
+ * growing. (`intelligence` is the most starved of all — included here too.)
  *
  * The RSS-presence half is structurally always true (GDELT-only clusters
  * are dropped at cluster time, so every cluster has ≥1 RSS member); it's
@@ -399,7 +400,7 @@ export interface ClusteredItem {
  * The conflict + live-news feeds run their own (stricter, RSS-only) gates
  * via separate endpoints and are unaffected by this one.
  */
-const SINGLE_RSS_CATEGORY_TOPICS = new Set(['cyber', 'maritime', 'nuclear', 'sanctions']);
+const SINGLE_RSS_CATEGORY_TOPICS = new Set(['cyber', 'maritime', 'nuclear', 'sanctions', 'intelligence']);
 
 export function isCategoryCorroborated(c: ClusteredItem): boolean {
   const sources = Array.isArray(c.sources) ? c.sources : [];
