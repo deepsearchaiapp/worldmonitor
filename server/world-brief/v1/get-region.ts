@@ -63,11 +63,15 @@ export async function getRegionBrief(regionId: RegionId): Promise<RegionBriefRes
 
 /**
  * Read the region brief snapshot for a specific time (a user's delivery hour).
- * Resolution: the latest snapshot at/​before `atMs` (nearest-before); if none
- * exists at/before it, the closest available snapshot overall. Falls back to
- * the latest brief when there's no snapshot index yet or the chosen snapshot
- * has expired.
+ * Resolution: prefer the latest snapshot at/​before `atMs` (nearest-before) if
+ * it's within MAX_SLOT_DISTANCE; otherwise the closest available snapshot
+ * within that window. If nothing is within the window the slot genuinely has
+ * no brief → `empty` (the app shows a quiet "no brief" row rather than a
+ * mismatched one). A still-fresh `latest` brief covers the pre-index window
+ * just after deploy.
  */
+const MAX_SLOT_DISTANCE_MS = 12 * 60 * 60 * 1000; // 12 h — "reasonably close"
+
 export async function getRegionBriefAt(regionId: RegionId, atMs: number): Promise<RegionBriefResult> {
   try {
     const index = (await getCachedJson(
@@ -77,39 +81,59 @@ export async function getRegionBriefAt(regionId: RegionId, atMs: number): Promis
       true,
     )) as string[] | null;
     const buckets = Array.isArray(index) ? index : [];
-    if (buckets.length === 0) return getRegionBrief(regionId); // no snapshots yet → latest
 
-    // Nearest-before: largest bucket with time ≤ atMs.
+    // Choose the best bucket: nearest-before within 12h, else closest within 12h.
     let chosen: string | null = null;
-    let bestBeforeMs = -Infinity;
-    for (const b of buckets) {
-      const t = hourBucketToMs(b);
-      if (t <= atMs && t > bestBeforeMs) {
-        bestBeforeMs = t;
-        chosen = b;
-      }
-    }
-    // Fallback: nothing at/before the delivery time → closest available overall.
-    if (!chosen) {
-      let bestDist = Infinity;
+    if (buckets.length > 0) {
+      let beforeBucket: string | null = null;
+      let beforeMs = -Infinity;
       for (const b of buckets) {
-        const dist = Math.abs(hourBucketToMs(b) - atMs);
-        if (dist < bestDist) {
-          bestDist = dist;
-          chosen = b;
+        const t = hourBucketToMs(b);
+        if (t <= atMs && t > beforeMs) {
+          beforeMs = t;
+          beforeBucket = b;
         }
       }
+      if (beforeBucket && atMs - beforeMs <= MAX_SLOT_DISTANCE_MS) {
+        chosen = beforeBucket;
+      } else {
+        let best: string | null = null;
+        let bestDist = Infinity;
+        for (const b of buckets) {
+          const dist = Math.abs(hourBucketToMs(b) - atMs);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = b;
+          }
+        }
+        if (best && bestDist <= MAX_SLOT_DISTANCE_MS) chosen = best;
+      }
     }
-    if (!chosen) return getRegionBrief(regionId);
 
-    const payload = (await getCachedJson(
-      regionBriefSnapshotKey(regionId, chosen),
+    if (chosen) {
+      const payload = (await getCachedJson(
+        regionBriefSnapshotKey(regionId, chosen),
+        false,
+        undefined,
+        true,
+      )) as WorldBriefPayload | null;
+      if (payload) return { status: 'ok', payload };
+      // expired race → fall through to the latest-within-window check
+    }
+
+    // No usable snapshot within 12h. Use `latest` only if it's itself within
+    // the window (covers the just-after-deploy gap before any index exists);
+    // otherwise this slot has no brief.
+    const latest = (await getCachedJson(
+      regionBriefKey(regionId),
       false,
       undefined,
       true,
     )) as WorldBriefPayload | null;
-    if (!payload) return getRegionBrief(regionId); // snapshot expired between index read and GET
-    return { status: 'ok', payload };
+    if (latest?.generatedAt && Math.abs(latest.generatedAt - atMs) <= MAX_SLOT_DISTANCE_MS) {
+      return { status: 'ok', payload: latest };
+    }
+    return { status: 'empty' };
   } catch (err) {
     console.error(
       `[world-brief:get-region:${regionId}:at=${atMs}] read failed:`,
