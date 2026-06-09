@@ -140,6 +140,18 @@ export const V6_NEWS_SOURCES: readonly NewsSource[] = [
   { name: 'The Diplomat',           url: 'https://thediplomat.com/feed/',                                     priority: 4 },
 
   // ────────────────────────────────────────────────────────────────────
+  // Central Asia + Caucasus — under-covered by the Western majors. Fills
+  // the central_asia region (Astana Times, Times of Central Asia) and adds
+  // genuinely-local Caucasus depth (OC Media, JAMnews → europe). All
+  // English-language; verified resolving.
+  // ────────────────────────────────────────────────────────────────────
+  { name: 'The Astana Times',       url: 'https://astanatimes.com/feed/',                                     priority: 4 },
+  { name: 'Times of Central Asia',  url: 'https://timesca.com/feed/',                                         priority: 4 },
+  { name: 'bne IntelliNews',        url: 'https://www.intellinews.com/feed/',                                 priority: 4 },
+  { name: 'OC Media',               url: 'https://oc-media.org/feed/',                                        priority: 4 },
+  { name: 'JAMnews',                url: 'https://jam-news.net/feed/',                                        priority: 4 },
+
+  // ────────────────────────────────────────────────────────────────────
   // United States — network broadcasters + national digital
   // ────────────────────────────────────────────────────────────────────
   { name: 'NBC News',               url: 'https://feeds.nbcnews.com/nbcnews/public/news',                     priority: 2 },
