@@ -516,6 +516,39 @@ async function readDigest(): Promise<ClusteredItem[]> {
 }
 
 /**
+ * One-shot diagnostic (logged once per global-brief cron): how the digest's
+ * `country` field resolves, to decide the regional-coverage fix —
+ *   • null            → no country at all (→ LLM backfill target)
+ *   • unresolvedNonNull→ country set but not in geo-regions (→ alias-table gap)
+ *   • resolved        → maps to a region
+ * The country histogram surfaces mis-tagging: if US/GB dominate while the
+ * active conflict theatres (UA/RU/IL/PS) are tiny, cross-border stories are
+ * likely tagged to one (wrong) country (→ multi-country fix).
+ */
+function logDigestCountryStats(clusters: ClusteredItem[]): void {
+  let nullCountry = 0;
+  let resolved = 0;
+  let unresolvedNonNull = 0;
+  const byCountry = new Map<string, number>();
+  for (const c of clusters) {
+    const country = c.country?.trim();
+    if (!country) { nullCountry++; continue; }
+    byCountry.set(country, (byCountry.get(country) ?? 0) + 1);
+    if (resolveRegion(country)) resolved++;
+    else unresolvedNonNull++;
+  }
+  const top = [...byCountry.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([c, n]) => `${c}:${n}`)
+    .join(' ');
+  console.log(
+    `[world-brief:country-stats] total=${clusters.length} null=${nullCountry} ` +
+      `resolved=${resolved} unresolvedNonNull=${unresolvedNonNull} | top: ${top}`,
+  );
+}
+
+/**
  * Build a full brief payload (conflict + live-news + 9 categories) from a
  * given cluster set, with per-section last-known-good fallback against
  * `lkgKey`. Shared by the GLOBAL brief (all clusters) and each REGIONAL
@@ -579,6 +612,7 @@ async function buildBriefPayload(
 export async function generateWorldBrief(): Promise<WorldBriefPayload> {
   const clusters = await readDigest();
   console.log(`[world-brief] digest clusters=${clusters.length}`);
+  logDigestCountryStats(clusters);
   return buildBriefPayload(clusters, WORLD_BRIEF_KEY, '[world-brief]');
 }
 
