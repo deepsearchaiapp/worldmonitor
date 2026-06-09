@@ -20,7 +20,7 @@
 
 import { getCachedJson, setCachedJson } from '../../_shared/redis';
 import { callGemini } from '../../_shared/llm';
-import { isCategoryCorroborated, type ClusteredItem } from '../../live-news/v6/_cluster';
+import { type ClusteredItem } from '../../live-news/v6/_cluster';
 import { resolveRegion, type RegionId } from '../../_shared/geo-regions';
 
 /** v6 digest key — see server/live-news/v6/refresh.ts (DIGEST_KEY). */
@@ -82,19 +82,15 @@ async function updateRegionSnapshotIndex(regionId: RegionId, bucket: string): Pr
   await setCachedJson(regionBriefIndexKey(regionId), pruned, REGION_SNAPSHOT_TTL_S + 3600);
 }
 
-/** Distinct-RSS-publisher gate for the live-news section — unchanged (≥3). */
-const MIN_RSS_SOURCES = Number(process.env.WM_V6_MIN_SOURCES) || 3;
+// Brief corroboration floors — all measured on TOTAL sources (RSS + GDELT).
+// No distinct-RSS requirement: we AI-summarize any sufficiently multi-outlet
+// story (the copyright rule cares about outlet count, not RSS-vs-GDELT).
 
-/** Conflict gate — looser than live-news: ≥1 RSS anchor + ≥3 total sources
- *  (RSS + GDELT). Mirrors the conflict-archive read gate; env-tunable. */
-const CONFLICT_MIN_RSS = Number(process.env.WM_CONFLICT_MIN_RSS_SOURCES) || 1;
+/** Live-news brief floor — ≥ this many total sources. */
+const LIVE_NEWS_MIN_TOTAL = Number(process.env.WM_LIVENEWS_BRIEF_MIN_TOTAL) || 3;
+/** Conflict brief floor — ≥ this many total sources. */
 const CONFLICT_MIN_TOTAL = Number(process.env.WM_CONFLICT_MIN_TOTAL_SOURCES) || 3;
-
-/** Category BRIEF corroboration floor — DECOUPLED from the category FEED gate
- *  (`isCategoryCorroborated`, which now allows single-RSS for sparse topics).
- *  The AI only writes a category brief for stories carried by ≥2 outlets, per
- *  the copyright rule (source count gates AI summaries). So a sparse single-
- *  source story shows in the FEED but is withheld from the AI BRIEF. */
+/** Category brief floor — ≥ this many total sources (copyright corroboration). */
 const CATEGORY_BRIEF_MIN_TOTAL = Number(process.env.WM_CATEGORY_BRIEF_MIN_TOTAL) || 2;
 
 const TOP_N = 8;
@@ -176,8 +172,18 @@ interface PickedCluster {
 
 // ── Ranking ────────────────────────────────────────────────────────────────
 
-function rssSourceCount(c: ClusteredItem): number {
-  return c.sources.filter((s) => s.origin === 'rss').length;
+/** Up to MAX_MEMBER_HEADLINES member titles for the LLM — RSS members first;
+ *  if the cluster has no usable RSS titles, fall back to any (GDELT) source
+ *  titles so RSS-light clusters still get real input to summarize. */
+function memberHeadlines(c: ClusteredItem): string[] {
+  const pick = (rssOnly: boolean) =>
+    c.sources
+      .filter((s) => !rssOnly || s.origin === 'rss')
+      .map((s) => s.title)
+      .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+      .slice(0, MAX_MEMBER_HEADLINES);
+  const rss = pick(true);
+  return rss.length > 0 ? rss : pick(false);
 }
 
 /** Light URL normalisation for exact-duplicate detection — drops the
@@ -242,23 +248,23 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
     .filter((c) => {
       if (!c || !Array.isArray(c.sources)) return false;
       if (mode === 'conflict') {
-        return c.isConflict === true
-          && rssSourceCount(c) >= CONFLICT_MIN_RSS
-          && c.sources.length >= CONFLICT_MIN_TOTAL;
+        return c.isConflict === true && c.sources.length >= CONFLICT_MIN_TOTAL;
       }
       if (mode === 'live-news') {
-        return rssSourceCount(c) >= MIN_RSS_SOURCES;
+        return c.sources.length >= LIVE_NEWS_MIN_TOTAL;
       }
-      return (
-        Array.isArray(c.topics) && c.topics.includes(mode) && isCategoryCorroborated(c)
-        && c.sources.length >= CATEGORY_BRIEF_MIN_TOTAL
-      );
+      // Category: match the enrich LLM `topics` OR the GDELT-keyword
+      // `categories` (a cluster's GDELT category may not be in topics —
+      // counting both lifts recall). Same keys on both sides (cyber … scitech).
+      const inCategory =
+        (Array.isArray(c.topics) && c.topics.includes(mode)) ||
+        (Array.isArray(c.categories) && c.categories.includes(mode));
+      return inCategory && c.sources.length >= CATEGORY_BRIEF_MIN_TOTAL;
     })
     .map((c) => ({
       cluster: c,
-      // live-news ranks by distinct RSS publishers; conflict + categories
-      // rank by total source count (RSS + GDELT corroboration).
-      score: mode === 'live-news' ? rssSourceCount(c) : c.sources.length,
+      // Rank every section by total source count — "most sourced" first.
+      score: c.sources.length,
       urls: clusterUrlSet(c),
     }))
     .sort((a, b) => b.score - a.score || b.cluster.publishedAt - a.cluster.publishedAt);
@@ -270,11 +276,7 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
     picked.push({
       cluster: r.cluster,
       score: r.score,
-      rssHeadlines: r.cluster.sources
-        .filter((s) => s.origin === 'rss')
-        .slice(0, MAX_MEMBER_HEADLINES)
-        .map((s) => s.title)
-        .filter((t): t is string => typeof t === 'string' && t.trim().length > 0),
+      rssHeadlines: memberHeadlines(r.cluster),
     });
     pickedUrlSets.push(r.urls);
     if (picked.length >= TOP_N) break;

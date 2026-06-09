@@ -177,7 +177,11 @@ async function loadCategoryCandidates(): Promise<RawRssItem[]> {
 
 const DIGEST_TTL_S = 3 * 24 * 60 * 60; // 3-day project max
 const ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000;
-const MAX_ITEMS = 500;
+/** High safety bound (not a product cap): the AI briefs want the full 24h
+ *  window, so this is set well above real volume (a few hundred–~1.5k clusters)
+ *  purely to guard against a pathological blob. The pre-cap log below reports
+ *  whether it ever bites; if it does, raise it or remove it. */
+const MAX_ITEMS = 5000;
 /**
  * Wall-clock cap on the parallel fan-out. With 159 feeds the slowest
  * 5-10 % (WashPost, CBC, ITV — large XML payloads + sometimes
@@ -231,10 +235,17 @@ function mergeItems(existing: ClusteredItem[], fresh: ClusteredItem[]): Clustere
   }
   // Drop items past the rolling window, sort newest-first, cap.
   const cutoff = Date.now() - ROLLING_WINDOW_MS;
-  return Array.from(byId.values())
+  const inWindow = Array.from(byId.values())
     .filter((it) => it.publishedAt >= cutoff)
-    .sort((a, b) => b.publishedAt - a.publishedAt)
-    .slice(0, MAX_ITEMS);
+    .sort((a, b) => b.publishedAt - a.publishedAt);
+  // Visibility: is the cap biting (i.e. are we losing the oldest part of the
+  // 24h window)? If this ever warns, the briefs aren't seeing the full day.
+  if (inWindow.length > MAX_ITEMS) {
+    console.warn(`[live-news:v6] clustersInWindow=${inWindow.length} EXCEEDS cap=${MAX_ITEMS} — dropping oldest ${inWindow.length - MAX_ITEMS}`);
+  } else {
+    console.log(`[live-news:v6] clustersInWindow=${inWindow.length} (cap=${MAX_ITEMS}, full 24h)`);
+  }
+  return inWindow.slice(0, MAX_ITEMS);
 }
 
 /** Cron entry point. Idempotent — safe to invoke any number of times. */
