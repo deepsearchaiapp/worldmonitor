@@ -624,7 +624,13 @@ export async function generateWorldBrief(): Promise<WorldBriefPayload> {
  */
 export async function generateRegionalBrief(regionId: RegionId): Promise<WorldBriefPayload> {
   const all = await readDigest();
-  const clusters = all.filter((c) => resolveRegion(c.country) === regionId);
+  const clusters = all.filter((c) => {
+    // Multi-country: a cross-border story reaches every region any of its
+    // involved countries map to. Fall back to the single `country` for
+    // clusters not yet re-enriched with `countries`.
+    const countries = c.countries?.length ? c.countries : (c.country ? [c.country] : []);
+    return countries.some((co) => resolveRegion(co) === regionId);
+  });
   console.log(`[world-brief:region:${regionId}] clusters=${clusters.length}/${all.length}`);
   return buildBriefPayload(clusters, regionBriefKey(regionId), `[world-brief:region:${regionId}]`);
 }

@@ -397,6 +397,10 @@ export interface ClusteredItem {
   location: { latitude: number; longitude: number } | null;
   locationName: string | null;
   country: string | null;
+  /** Up to 3 materially-involved countries (primary first), enrich-set —
+   *  a cross-border story is reachable from each involved region's brief.
+   *  Starts undefined; the regional-brief filter falls back to `country`. */
+  countries?: string[];
   region?: string;
   isConflict: boolean | null;
   /** GDELT-keyword recall hint — the union of every GDELT category member's

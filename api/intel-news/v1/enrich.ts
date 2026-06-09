@@ -588,6 +588,9 @@ interface LocationOnlyPayload {
    *  (cyber / military / …). Empty array when none apply. */
   topics: string[];
   country?: string;
+  /** Up to 3 materially-involved countries (primary first) — makes a
+   *  cross-border story reachable from each involved region's brief. */
+  countries?: string[];
   locationName?: string;
   lat?: number;
   lng?: number;
@@ -604,7 +607,7 @@ const VALID_TOPICS = new Set([
  *  enrichment cache key (cold cache → forces a re-LLM) and the per-cluster
  *  `enrichVersion` re-queue gate, so a prompt change re-classifies every
  *  v6 digest cluster instead of only newly-arriving ones. */
-const LOCATION_PROMPT_VERSION = 7;
+const LOCATION_PROMPT_VERSION = 8;
 
 const LOCATION_ONLY_CACHE_KEY = (link: string): string =>
   `enrichment-loc:v${LOCATION_PROMPT_VERSION}:${createHash('sha256').update(link).digest('hex')}`;
@@ -640,6 +643,8 @@ const LOCATION_ONLY_SYSTEM_PROMPT = `You classify a news article. Return ONE JSO
     Return [] when none apply.
 
   - country: ISO 3166-1 alpha-2 code of the primary country the story is about (its dateline / main location). Include this for ANY story with a clear country focus — NOT just conflict (e.g. a US company → "US", German politics → "DE", a Tokyo event → "JP"). OMIT only when the story is genuinely global or has no single country (e.g. an opinion piece on AI, or a multi-country summit with no clear host).
+
+  - countries: an ARRAY of up to 3 ISO 3166-1 alpha-2 codes for the countries MATERIALLY involved — the primary country (same as "country") PLUS any others that are central actors or locations, primary first. The point is to make a cross-border story reachable from EACH involved country's regional brief: "US arms shipment to Ukraine" → ["UA","US"]; "Iran–Israel strikes" → ["IR","IL"]; "US sanctions on Russia" → ["RU","US"]; "China–Taiwan tensions" → ["TW","CN"]. For a single-country story return just that one country. Return [] only for genuinely global stories with no country.
 
   - locationName: short human-readable place name shown as the row header in the feed UI — typically a city ("Tel Aviv", "Kharkiv"), a region/oblast ("Donetsk Oblast", "Sinai"), or a country if no narrower place is named ("Sudan"). Title Case. ONLY include when isConflict=true. OMIT otherwise.
 
@@ -678,6 +683,20 @@ function parseLocationOnlyJSON(raw: string | null): LocationOnlyPayload | null {
   if (typeof obj.country === 'string') {
     const c = canonicalIso(obj.country);
     if (c) result.country = c;
+  }
+
+  // Multi-country reachability — canonicalise + dedupe, cap at 3, primary
+  // first. The regional briefs match a story to a region if ANY of these
+  // resolve to it (so a cross-border story reaches each involved region).
+  if (Array.isArray(obj.countries)) {
+    const seen = new Set<string>();
+    for (const raw of obj.countries as unknown[]) {
+      if (typeof raw !== 'string') continue;
+      const c = canonicalIso(raw);
+      if (c) seen.add(c);
+      if (seen.size >= 3) break;
+    }
+    if (seen.size > 0) result.countries = [...seen];
   }
 
   if (typeof obj.locationName === 'string') {
@@ -1151,6 +1170,11 @@ async function runEnrichment(): Promise<EnrichResult> {
               if (payload.lat != null && payload.lng != null) {
                 ci.location = { latitude: payload.lat, longitude: payload.lng };
               }
+            }
+            // Multi-country reachability — set regardless of the map-pin guard
+            // above (it drives the regional-brief region filter, not the pin).
+            if (payload.countries) {
+              (item as { countries?: string[] }).countries = payload.countries;
             }
             // Title-only summary: only writes when this bucket's
             // generateTitleSummary flag is set (and the API didn't
