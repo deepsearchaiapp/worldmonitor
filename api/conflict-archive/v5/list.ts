@@ -59,7 +59,7 @@ export default async function handler(req: Request): Promise<Response> {
         // window so a primed region never goes blank through a Redis outage.
         'Cache-Control': count === 0
           ? 'no-store'
-          : 'public, s-maxage=60, stale-while-revalidate=600, stale-if-error=86400',
+          : 'public, s-maxage=300, stale-while-revalidate=600, stale-if-error=86400',
       },
     });
   } catch (err) {

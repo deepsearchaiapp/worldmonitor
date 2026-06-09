@@ -49,12 +49,20 @@ export default async function handler(req: Request): Promise<Response> {
     // per-topic cap. Part of the URL, so the CDN caches each version separately.
     const av = url.searchParams.get('av');
     const body = await listIntelNewsV6(category, av);
+    const count = body.items?.length ?? 0;
+    console.log(`[intel-news:v6] served items=${count}${count === 0 ? ' (EMPTY — not caching)' : ''}`);
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: {
         ...corsHeaders,
         'Content-Type': 'application/json',
-        'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60, stale-if-error=300',
+        // Never cache an empty response (feedback_never_cache_null_empty): a
+        // zero-item 200 gets no-store so the CDN keeps serving its last good
+        // copy. A populated response gets a 5-min CDN cache + long stale
+        // windows (data only changes on the ~15-min digest refresh anyway).
+        'Cache-Control': count === 0
+          ? 'no-store'
+          : 'public, s-maxage=300, stale-while-revalidate=600, stale-if-error=86400',
       },
     });
   } catch (err) {
