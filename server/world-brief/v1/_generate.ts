@@ -96,8 +96,6 @@ const CATEGORY_BRIEF_MIN_TOTAL = Number(process.env.WM_CATEGORY_BRIEF_MIN_TOTAL)
 const TOP_N = 8;
 const MAX_MEMBER_HEADLINES = 10;
 const MAX_TEXT_LEN = 850;
-/** Cap on the per-cluster "all sources" list surfaced to the reader. */
-const MAX_SOURCE_REFS = 30;
 /** Parallel section builds — 11 sections, one Gemini call each. Capped so
  *  the burst stays within Gemini rate limits. */
 const SECTION_CONCURRENCY = 4;
@@ -222,7 +220,8 @@ function buildSourceRefs(c: ClusteredItem): WorldBriefSourceRef[] {
     if (seen.has(key)) continue;
     seen.add(key);
     refs.push({ name: (src.source || '').trim() || 'Source', url: src.link });
-    if (refs.length >= MAX_SOURCE_REFS) break;
+    // No cap — surface every distinct outlet (the cluster's own source list is
+    // the natural bound; readers asked to see all of them).
   }
   return refs;
 }
