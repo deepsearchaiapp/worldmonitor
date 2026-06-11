@@ -1,4 +1,4 @@
-# World Monitor 3
+# World Monitor 4
 
 **Real-time global intelligence dashboard** — AI-powered news aggregation, geopolitical monitoring, and infrastructure tracking in a unified situational awareness interface.
 s
