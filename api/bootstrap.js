@@ -1,6 +1,9 @@
 import { getCorsHeaders, isDisallowedOrigin } from './_cors.js';
 import { validateApiKey } from './_api-key.js';
-import { notifySlack, announceOriginMonitorOnce } from './_slack.js';
+// Bootstrap anomalies are reported by the 🛰️ US Edge Probe (it sees the
+// no-store/503 from US vantage every 15 min) — the Origin Monitor stays
+// quiet for bootstrap and only sends its one-time introduction from here.
+import { announceOriginMonitorOnce } from './_slack.js';
 
 export const config = { runtime: 'edge' };
 
@@ -392,16 +395,6 @@ export default async function handler(req) {
       (criticalMissing.length ? ` (critical: ${criticalMissing.join(',')})` : '') +
       `; returning 503 so the CDN serves last known-good [mobile: ${mobileMissing.join(',')}] [other: ${otherMissing.join(',')}]`,
     );
-    await notifySlack(
-      `bootstrap-${tier}-hard`,
-      `🔴 *bootstrap/${tier} → HARD DOWN (503)*\n` +
-      `*What:* ${mobileMissing.length}/${mobileNames.length} mobile-relevant keys missing` +
-      (criticalMissing.length ? ` — includes CRITICAL: \`${criticalMissing.join('`, `')}\`` : '') + '\n' +
-      `*Mobile missing:* ${mobileMissing.join(', ') || '-'}\n` +
-      (otherMissing.length ? `*Web-only also missing (not gating):* ${otherMissing.join(', ')}\n` : '') +
-      '*Users:* CDN serving last known-good full bootstrap (stale-if-error, up to 24h)\n' +
-      '*Check:* Upstash up? · seed workflows · upstream backfill (watch for 401s in logs)',
-    );
     return new Response(JSON.stringify({ error: 'Bootstrap temporarily degraded', missing }), {
       status: 503,
       headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
@@ -423,22 +416,8 @@ export default async function handler(req) {
       `[mobile: ${mobileMissing.join(',')}] [other: ${otherMissing.join(',')}]`,
     );
     // Partial = served live but NOT cacheable, so the CDN's last-known-good
-    // copy stops refreshing while this persists. Slack from 3+ missing
-    // MOBILE keys — a single mobile seed lagging a cycle is routine
-    // flapping, not pageworthy (a missing CRITICAL key never lands here;
-    // it takes the hard-down 503 path above). Web-only keys never alert.
-    // 30-min throttle: a stuck seed shouldn't page more than twice an hour.
-    if (mobileMissing.length >= 3) {
-      await notifySlack(
-        `bootstrap-${tier}-partial`,
-        `🟠 *bootstrap/${tier} → PARTIAL (200 no-store)*\n` +
-        `*Mobile missing (${mobileMissing.length}):* ${mobileMissing.join(', ')}\n` +
-        (otherMissing.length ? `*Web-only also missing (not gating):* ${otherMissing.join(', ')}\n` : '') +
-        '*Users:* app screens lose those sections; the CDN good copy stops refreshing while this persists (safety net erodes after ~24h)\n' +
-        '*Check:* the seed/cron that writes the missing key(s) — see api/seed-health.js for expected cadences',
-        1800,
-      );
-    }
+    // copy stops refreshing while this persists. No Slack from here — the
+    // US Edge Probe sees the no-store from US vantage and reports it.
   } else if (missing.length > 0) {
     console.log(`[bootstrap] web-only keys missing (cacheable, no alert): [${missing.join(',')}]`);
   }
