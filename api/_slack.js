@@ -99,6 +99,6 @@ export async function announceOriginMonitorOnce() {
     `• 🟠 \`200 no-store\` — bootstrap missing 5+ sections, or an empty feed; users get it live, but the cached good copy stops refreshing while it persists (1-4 missing bootstrap sections = routine seed flapping, logged but not posted)\n` +
     `Watching: \`bootstrap\` (fast+slow) · \`live-news/v6\` · \`intel-news/v6\` · \`conflict-archive/v5\` · \`world-brief/get-region\`\n` +
     `Throttle: max 1 message per condition per 15 min (partials: 30 min). No message = all responses cacheable and populated.\n` +
-    `My sibling 🛰️ *US Edge Probe* checks the same endpoints from US vantage points every 15 min and posts a daily report at 10:00 TRT.`,
+    `My sibling 🛰️ *US Edge Probe* checks the same endpoints from US vantage points every 15 min and posts a daily report at US prime time (21:00 ET / 04:00 TRT).`,
   );
 }
