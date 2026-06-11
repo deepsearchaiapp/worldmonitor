@@ -441,10 +441,13 @@ export default async function handler(req) {
 
   // Only MOBILE-relevant gaps make a response uncacheable; web-only gaps
   // cache normally (still listed in the response's `missing` for clients).
-  // LKG-filled sections are stale data: serve them, but with a SHORT CDN
-  // window so old data never enters the long cache and recovery is fast.
+  // LKG-filled MOBILE sections are stale data the app renders: serve them,
+  // but with a SHORT CDN window + the X-WM-Data-Source header so the probe
+  // alerts. LKG fills of web-only keys are out of scope — normal headers,
+  // no header, no alert (the `stale` list in the body still records them).
   const degraded = mobileMissing.length > 0;
-  const lkgServed = lkgFilled.length > 0;
+  const mobileLkgFilled = lkgFilled.filter((n) => MOBILE_KEYS.has(n));
+  const lkgServed = mobileLkgFilled.length > 0;
   const cacheControl = degraded
     ? 'no-store'
     : lkgServed
@@ -468,8 +471,9 @@ export default async function handler(req) {
   }
 
   // `stale` lists LKG-restored sections (iOS Codable ignores unknown keys;
-  // web can surface a "data may be delayed" hint from it later).
-  const body = lkgServed ? { data, missing, stale: lkgFilled } : { data, missing };
+  // web can surface a "data may be delayed" hint from it later). Included
+  // for ANY fill — even web-only ones that don't set the header.
+  const body = lkgFilled.length > 0 ? { data, missing, stale: lkgFilled } : { data, missing };
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: {
