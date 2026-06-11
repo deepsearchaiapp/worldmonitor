@@ -96,7 +96,7 @@ export async function announceOriginMonitorOnce() {
     `${SENDER} is now live. 👋\n` +
     `I run inside the API itself and post here the moment a conversion-critical endpoint emits a response that can NOT refresh the CDN's safety copy:\n` +
     `• 🔴 \`503\` — Redis failure or missing/empty data; the CDN is serving the last known-good copy (stale-if-error, up to 24h)\n` +
-    `• 🟠 \`200 no-store\` — bootstrap missing 5+ sections, or an empty feed; users get it live, but the cached good copy stops refreshing while it persists (1-4 missing bootstrap sections = routine seed flapping, logged but not posted)\n` +
+    `• 🟠 \`200 no-store\` — bootstrap missing 3+ MOBILE-relevant sections, or an empty feed; users get it live, but the cached good copy stops refreshing while it persists. Web-only keys (predictions, weather alerts, BIS, …) never gate caching and never alert.\n` +
     `Watching: \`bootstrap\` (fast+slow) · \`live-news/v6\` · \`intel-news/v6\` · \`conflict-archive/v5\` · \`world-brief/get-region\`\n` +
     `Throttle: max 1 message per condition per 15 min (partials: 30 min). No message = all responses cacheable and populated.\n` +
     `My sibling 🛰️ *US Edge Probe* checks the same endpoints from US vantage points every 15 min and posts a daily report at 13:00 ET / 10:00 PT (= 20:00 TRT).`,

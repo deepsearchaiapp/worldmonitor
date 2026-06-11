@@ -90,7 +90,6 @@ async function directCheck(t) {
     const servedBy = (resp.headers.get('x-vercel-id') || '-').split('::')[0];
     let detail = '';
     let ok = resp.ok;
-    let bootstrapMissing = 0;
     if (resp.ok) {
       const body = await resp.json().catch(() => null);
       if (body?.items) {
@@ -100,25 +99,21 @@ async function directCheck(t) {
         const present = Object.keys(body.data).length;
         const missing = body.missing || [];
         detail = `${present}/${present + missing.length} sections${missing.length ? ` — missing: ${missing.join(', ')}` : ''}`;
-        // 1-4 missing non-critical sections is routine seed flapping — shown
-        // in the summary (🟠) but not alert-worthy. 5+ matches the Origin
-        // Monitor's partial-alert threshold. (A missing CRITICAL key never
-        // appears here — bootstrap 503s for those, which alerts as 5xx.)
-        if (missing.length > 0) ok = false;
-        if (missing.length >= 5) problems.push(`${t.label}: partial — missing ${missing.length} sections: ${missing.join(', ')}`);
-        bootstrapMissing = missing.length;
+        // The origin is the single source of truth on which keys matter to
+        // mobile: it returns no-store ONLY when mobile-relevant keys are
+        // missing (web-only gaps stay cacheable). So bootstrap health is
+        // judged by Cache-Control below; the missing list here is info.
       } else if (body?.generatedAt) {
         const ageMin = Math.round((Date.now() - body.generatedAt) / 60_000);
         detail = `brief ${ageMin} min old`;
         if (ageMin > 180) { problems.push(`${t.label}: brief is ${ageMin} min old (cron stalled?)`); ok = false; }
       }
-      // no-store on a FEED is always alert-worthy; on bootstrap it just
-      // mirrors the partial state, so it follows the same 5+ threshold.
+      // no-store is always alert-worthy: on a feed it means empty/failed,
+      // on bootstrap the origin only emits it for MOBILE-relevant gaps
+      // (web-only gaps stay cacheable and never reach this branch).
       if (cc.includes('no-store')) {
         ok = false;
-        if (bootstrapMissing === 0 || bootstrapMissing >= 5) {
-          problems.push(`${t.label}: 200 but no-store (CDN copy not refreshing)`);
-        }
+        problems.push(`${t.label}: 200 but no-store (mobile-relevant data missing; CDN copy not refreshing)`);
       }
     } else {
       problems.push(`${t.label}: HTTP ${resp.status}${resp.status === 401 ? ' — BUNDLED KEY INVALID?' : ''}`);

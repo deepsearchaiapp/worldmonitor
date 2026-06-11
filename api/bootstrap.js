@@ -93,6 +93,23 @@ const TIER_CDN_CACHE = {
 
 const NEG_SENTINEL = '__WM_NEG__';
 
+// ── Mobile-relevant keys ───────────────────────────────────────────
+// The iOS app is the revenue surface, and it renders ONLY these keys
+// (verified against the app's Feature screens 2026-06-11; chokepoints
+// excluded — the map falls back to its static dataset). Cacheability,
+// the hard-down 503, and Slack alerts are all gated on THESE: a response
+// missing only web-only keys (BIS, predictions, weather alerts, …) is
+// healthy for mobile, so it caches normally and stays silent.
+// Trade-off (accepted): such a response pins a degraded WEB dashboard
+// for up to s-maxage — mobile correctness is worth more.
+const MOBILE_KEYS = new Set([
+  // fast tier
+  'earthquakes', 'outages', 'serviceStatuses', 'marketQuotes', 'commodityQuotes',
+  'macroSignals', 'riskScores', 'theaterPosture', 'insights', 'worldBrief', 'iranEvents',
+  // slow tier
+  'sectors', 'cryptoQuotes', 'ucdpEvents', 'wildfires', 'naturalEvents', 'cyberThreats',
+]);
+
 // ── Value decompression ────────────────────────────────────────────
 // Large Redis values are gzip-compressed by server/_shared/redis.ts when
 // WM_REDIS_COMPRESSION=1, stored as a self-describing envelope:
@@ -348,33 +365,40 @@ export default async function handler(req) {
   // world-brief blobs time out) AND the upstream backfill can't fill them (it has
   // been returning 401). Caching such a response pins a blank/partial app across
   // an entire edge region for the TTL — the conversion killer. So:
-  //   • Broadly degraded (Redis effectively down, ≥half the keys missing) → 503,
-  //     so the CDN's stale-if-error serves the last KNOWN-GOOD full bootstrap.
+  // All judged against MOBILE-relevant keys only (web-only keys never gate):
+  //   • Broadly degraded (≥half the tier's MOBILE keys missing → the app's
+  //     screens would be largely empty) → 503, so the CDN's stale-if-error
+  //     serves the last KNOWN-GOOD full bootstrap.
   //   • CRITICAL key missing (worldBrief — the premium hook the paywall sells)
   //     → also 503, even when everything else is present. A brief-less 200
   //     no-store would be served to users indefinitely with no stale rescue
   //     (stale-if-error only fires on 5xx); a 503 keeps the last full
   //     bootstrap flowing for up to 24h instead.
-  //   • Partially degraded (a non-critical section absent) → 200 but no-store,
+  //   • Some mobile keys absent (below the half threshold) → 200 but no-store,
   //     so we never overwrite the cached good copy with a partial one.
-  //   • Healthy (nothing missing) → cache with the long stale-if-error window.
+  //   • Only web-only keys absent, or nothing missing → healthy: cache with
+  //     the long stale-if-error window.
   const CRITICAL_KEYS = ['worldBrief'];
   const isTier = tier === 'fast' || tier === 'slow';
+  const mobileNames = names.filter((n) => MOBILE_KEYS.has(n));
+  const mobileMissing = missing.filter((n) => MOBILE_KEYS.has(n));
+  const otherMissing = missing.filter((n) => !MOBILE_KEYS.has(n));
   const criticalMissing = missing.filter((n) => CRITICAL_KEYS.includes(n));
-  const hardDown = isTier
-    && (missing.length >= Math.ceil(names.length / 2) || criticalMissing.length > 0);
+  const hardDown = isTier && mobileNames.length > 0
+    && (mobileMissing.length >= Math.ceil(mobileNames.length / 2) || criticalMissing.length > 0);
   if (hardDown) {
     console.error(
-      `[bootstrap] DEGRADED hard — ${missing.length}/${names.length} keys missing` +
+      `[bootstrap] DEGRADED hard — ${mobileMissing.length}/${mobileNames.length} mobile keys missing` +
       (criticalMissing.length ? ` (critical: ${criticalMissing.join(',')})` : '') +
-      `; returning 503 so the CDN serves last known-good [${missing.join(',')}]`,
+      `; returning 503 so the CDN serves last known-good [mobile: ${mobileMissing.join(',')}] [other: ${otherMissing.join(',')}]`,
     );
     await notifySlack(
       `bootstrap-${tier}-hard`,
       `🔴 *bootstrap/${tier} → HARD DOWN (503)*\n` +
-      `*What:* ${missing.length}/${names.length} keys missing` +
+      `*What:* ${mobileMissing.length}/${mobileNames.length} mobile-relevant keys missing` +
       (criticalMissing.length ? ` — includes CRITICAL: \`${criticalMissing.join('`, `')}\`` : '') + '\n' +
-      `*Missing:* ${missing.join(', ')}\n` +
+      `*Mobile missing:* ${mobileMissing.join(', ') || '-'}\n` +
+      (otherMissing.length ? `*Web-only also missing (not gating):* ${otherMissing.join(', ')}\n` : '') +
       '*Users:* CDN serving last known-good full bootstrap (stale-if-error, up to 24h)\n' +
       '*Check:* Upstash up? · seed workflows · upstream backfill (watch for 401s in logs)',
     );
@@ -384,7 +408,9 @@ export default async function handler(req) {
     });
   }
 
-  const degraded = missing.length > 0;
+  // Only MOBILE-relevant gaps make a response uncacheable; web-only gaps
+  // cache normally (still listed in the response's `missing` for clients).
+  const degraded = mobileMissing.length > 0;
   const cacheControl = degraded
     ? 'no-store'
     : (tier && TIER_CACHE[tier]) || 'public, s-maxage=600, stale-while-revalidate=120, stale-if-error=86400';
@@ -392,23 +418,29 @@ export default async function handler(req) {
     ? 'no-store'
     : (tier && TIER_CDN_CACHE[tier]) || TIER_CDN_CACHE.fast;
   if (degraded) {
-    console.warn(`[bootstrap] partial — ${missing.length} keys missing, no-store [${missing.join(',')}]`);
+    console.warn(
+      `[bootstrap] partial — ${mobileMissing.length} mobile keys missing, no-store ` +
+      `[mobile: ${mobileMissing.join(',')}] [other: ${otherMissing.join(',')}]`,
+    );
     // Partial = served live but NOT cacheable, so the CDN's last-known-good
-    // copy stops refreshing while this persists. Slack only from 5+ missing
-    // keys — a seed lagging by 1-4 non-critical sections is routine flapping,
-    // not pageworthy (a missing CRITICAL key never lands here; it takes the
-    // hard-down 503 path above). The no-store behavior applies regardless.
+    // copy stops refreshing while this persists. Slack from 3+ missing
+    // MOBILE keys — a single mobile seed lagging a cycle is routine
+    // flapping, not pageworthy (a missing CRITICAL key never lands here;
+    // it takes the hard-down 503 path above). Web-only keys never alert.
     // 30-min throttle: a stuck seed shouldn't page more than twice an hour.
-    if (missing.length >= 5) {
+    if (mobileMissing.length >= 3) {
       await notifySlack(
         `bootstrap-${tier}-partial`,
         `🟠 *bootstrap/${tier} → PARTIAL (200 no-store)*\n` +
-        `*Missing (${missing.length}):* ${missing.join(', ')}\n` +
-        '*Users:* get the response live minus those sections; the CDN good copy stops refreshing while this persists (safety net erodes after ~24h)\n' +
+        `*Mobile missing (${mobileMissing.length}):* ${mobileMissing.join(', ')}\n` +
+        (otherMissing.length ? `*Web-only also missing (not gating):* ${otherMissing.join(', ')}\n` : '') +
+        '*Users:* app screens lose those sections; the CDN good copy stops refreshing while this persists (safety net erodes after ~24h)\n' +
         '*Check:* the seed/cron that writes the missing key(s) — see api/seed-health.js for expected cadences',
         1800,
       );
     }
+  } else if (missing.length > 0) {
+    console.log(`[bootstrap] web-only keys missing (cacheable, no alert): [${missing.join(',')}]`);
   }
 
   return new Response(JSON.stringify({ data, missing }), {
