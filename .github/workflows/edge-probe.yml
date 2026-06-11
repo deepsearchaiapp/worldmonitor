@@ -3,10 +3,11 @@
 # Two schedules, one script (scripts/probe-us-edge.mjs):
 #   • every 15 min — alert mode: Slack message ONLY if something is wrong
 #     (5xx / 401 / EMPTY items / no-store partial), job goes red.
-#   • 01:00 UTC — summary mode: posts the full live-situation report even
-#     when everything is healthy. Timed for US PRIME TIME (21:00 ET /
-#     18:00 PT in summer) so the snapshot reflects what peak US traffic
-#     is actually being served; lands at 04:00 TRT, read next morning.
+#   • 17:00 UTC — summary mode: posts the full live-situation report even
+#     when everything is healthy. The US-evening prime (20:00-23:00 ET)
+#     falls at 03:00-06:00 TRT — unreadable hours — so this is the best
+#     joint slot: 13:00 ET / 10:00 PT (both coasts awake and active for a
+#     news app) = 20:00 TRT (comfortable evening read).
 #
 # Required repo secrets:
 #   WM_PROBE_KEY             — the iOS-bundled API key (APIConfig.swift)
@@ -22,7 +23,7 @@ name: edge-probe
 on:
   schedule:
     - cron: '*/15 * * * *'  # alert mode
-    - cron: '0 1 * * *'     # daily summary — US prime time (21:00 ET / 04:00 TRT)
+    - cron: '0 17 * * *'    # daily summary — 13:00 ET / 10:00 PT / 20:00 TRT
   workflow_dispatch:
     inputs:
       mode:
@@ -52,7 +53,7 @@ jobs:
       - name: Decide mode
         id: mode
         run: |
-          if [ "${{ github.event.schedule }}" = "0 1 * * *" ] || [ "${{ inputs.mode }}" = "summary" ]; then
+          if [ "${{ github.event.schedule }}" = "0 17 * * *" ] || [ "${{ inputs.mode }}" = "summary" ]; then
             echo "flag=--summary" >> "$GITHUB_OUTPUT"
           else
             echo "flag=" >> "$GITHUB_OUTPUT"

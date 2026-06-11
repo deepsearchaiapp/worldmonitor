@@ -29,8 +29,8 @@
  *                (5xx, 401/403, EMPTY items, no-store partial, US coverage
  *                not assured) and exits 1.
  *   --summary  — posts the full live-situation report to Slack regardless
- *                (the daily heartbeat, scheduled at US prime time:
- *                01:00 UTC = 21:00 ET / 04:00 TRT).
+ *                (the daily heartbeat, scheduled at 17:00 UTC =
+ *                13:00 ET / 10:00 PT — busy US daytime — = 20:00 TRT).
  *
  * Env:
  *   WM_PROBE_KEY               required — the iOS-bundled key (APIConfig.swift)
@@ -240,7 +240,7 @@ async function introduceOnce() {
     `${SENDER} is now live. 👋\n` +
     `I run from GitHub Actions every 15 min and check the app's backbone endpoints *from real US vantage points* (Ashburn, San Francisco, Dallas via Globalping) — replicating an iOS user byte-for-byte, bundled key included.\n` +
     `• Alert mode (every 15 min): I post here ONLY when something is wrong — 5xx, 401, empty items, partial \`no-store\` bootstrap, or when I can't verify US coverage.\n` +
-    `• Summary mode (daily at US prime time — 21:00 ET / 04:00 TRT): full live-situation report even when everything is green, capturing what peak US traffic is being served.\n` +
+    `• Summary mode (daily at 13:00 ET / 10:00 PT = 20:00 TRT): full live-situation report even when everything is green, captured while both US coasts are active.\n` +
     `Every result is *US-verified* only when the probe is geo-located in the US AND the response came from a US Vercel PoP (iad1/cle1/sfo1/pdx1) — check the 🇺🇸 marks.\n` +
     `My sibling ⚡ *Origin Monitor* watches the same endpoints from inside the API and fires the instant a non-cacheable response is emitted.`,
   );
