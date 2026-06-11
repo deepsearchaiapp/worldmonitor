@@ -22,8 +22,11 @@ name: edge-probe
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # alert mode
-    - cron: '0 17 * * *'    # daily summary — 13:00 ET / 10:00 PT / 20:00 TRT
+    # GitHub cron is best-effort: runs queue at low priority and get DROPPED
+    # under load, worst at popular minute marks (:00/:15/:30/:45). Off-peak
+    # minutes fire far more reliably — observed */15 firing ~2x in 8h.
+    - cron: '4,19,34,49 * * * *'  # alert mode
+    - cron: '7 17 * * *'          # daily summary — ~13:07 ET / 10:07 PT / 20:07 TRT
   workflow_dispatch:
     inputs:
       mode:
@@ -53,7 +56,7 @@ jobs:
       - name: Decide mode
         id: mode
         run: |
-          if [ "${{ github.event.schedule }}" = "0 17 * * *" ] || [ "${{ inputs.mode }}" = "summary" ]; then
+          if [ "${{ github.event.schedule }}" = "7 17 * * *" ] || [ "${{ inputs.mode }}" = "summary" ]; then
             echo "flag=--summary" >> "$GITHUB_OUTPUT"
           else
             echo "flag=" >> "$GITHUB_OUTPUT"
