@@ -5,6 +5,7 @@
 **Audience:** Engineers continuing development in future coding sessions
 
 This document captures the full implementation of the two flagship "live" features:
+
 - **Live Sports** — real-time US sports events from ESPN.
 - **Live News** — international news with LLM-enriched location + AI summaries + semantic dedup.
 
@@ -36,12 +37,14 @@ Both backend handlers follow a "**read cache → return immediately, fire enrich
 ## 2. Sports Events — Server Side
 
 ### Endpoint
+
 `GET https://www.worldmonitor.news/api/live-sports/v1/list-us-events`
 
 Auth: `X-WorldMonitor-Key` header (same as existing endpoints).
 Response cache: `Cache-Control: public, s-maxage=30, stale-while-revalidate=60, stale-if-error=300`.
 
 ### Files
+
 ```
 api/live-sports/v1/list-us-events.ts          // edge handler entry (CORS, auth, rate-limit)
 server/live-sports/v1/list-us-events.ts       // core handler logic
@@ -91,6 +94,7 @@ cachedFetchJson('live-sports:us:v2', ttl=30s)
 ### Filter windows
 
 ESPN reports each event with `state: 'pre' | 'in' | 'post'`. We include:
+
 - `state == 'in'`: always
 - `state == 'pre'`: starts within next **6 h** (and not >30 min in past as tolerance)
 - `state == 'post'`: finished within last **6 h**
@@ -162,6 +166,7 @@ NCAA football/basketball reach into smaller college towns (Tuscaloosa AL, Lawren
 ## 3. Sports Events — iOS Side
 
 ### Files
+
 ```
 Core/Networking/APIEndpoint.swift             // case listUsSportsEvents
 Core/Networking/LiveSportsService.swift       // SHARED SINGLETON
@@ -197,6 +202,7 @@ Both view-models observe `LiveSportsService.shared.$items`. When the service pub
 ### NewsItem reuse
 
 We deliberately decode sports events into the existing `NewsItem` Codable struct rather than introducing a parallel `SportEvent` type. This means:
+
 - Feed-row UI works without modification
 - Map detail sheet (`AnnotationDetailSheet`) works without modification
 - Sports-specific fields (`isLive`, `league`) are optional `let X: T?` in `NewsItem` (NOT `let X: T? = nil` — see iOS Codable gotcha section)
@@ -226,6 +232,7 @@ Both call into `LiveSportsService.fetch()`. The service's in-flight coalescing m
 ### Map detail sheet (AnnotationDetailSheet)
 
 For sports pins, the synthesizer in `IntelMapViewModel.buildSportsAnnotations`:
+
 - `title` includes `[LEAGUE]` prefix and live score / status
 - `descriptionText` is a friendly prompt (depends on state: live / upcoming / finished)
 - `quickStats` shows LEAGUE / TIME / STATUS|VENUE
@@ -243,12 +250,14 @@ Sports map layer is gated by the same `MapLayerControl.layerToggle` mechanism as
 ## 4. Live News — Server Side
 
 ### Endpoint
+
 `GET https://www.worldmonitor.news/api/live-news/v1/list-us-headlines`
 
 Auth: `X-WorldMonitor-Key`.
 Response cache: `Cache-Control: public, s-maxage=30, stale-while-revalidate=60, stale-if-error=300`.
 
 ### Files
+
 ```
 api/live-news/v1/list-us-headlines.ts          // edge handler entry
 server/live-news/v1/list-us-headlines.ts       // core handler — pipeline orchestration
@@ -320,6 +329,7 @@ Priority drives **dedup tie-breaks**: when two outlets cover the same story, the
 ### Title-fingerprint dedup (Layer 1)
 
 `normalizeTitle()` in `_normalize.ts`:
+
 1. Strip outlet branding suffix: `" - BBC News"`, `" | Reuters"` (regex anchored on uppercase entity names)
 2. Lowercase
 3. Strip prefixes: `BREAKING:`, `LIVE:`, `UPDATE:`, `WATCH:`, `EXCLUSIVE:`, `URGENT:`, `JUST IN:`, `DEVELOPING:`, `OPINION:`, `ANALYSIS:`
@@ -353,6 +363,7 @@ Misses: semantic duplicates (different wording, same event) — that's Layer 2's
 **TTL:** 30 days.
 
 **Cache version history:**
+
 - v1: original 2–3 sentence prompt
 - v2: bumped when we widened to paragraph-length prompt
 - v3: bumped during the body-based-SET fix (see Vercel gotcha section below)
@@ -370,6 +381,7 @@ Misses: semantic duplicates (different wording, same event) — that's Layer 2's
 **LLM:** Claude Haiku 4.5, billed against `ANTHROPIC_API_KEY_PARAPHRASE` (same key as paraphrase for combined billing).
 
 **Cache:** `live-news:dedup:v1:{titleHash}` → `{ canonical: string }`.
+
 - `canonical = self.titleHash` → item is unique
 - `canonical = otherHash` → item is duplicate of `otherHash`
 
@@ -447,6 +459,7 @@ Cost separation: `ANTHROPIC_API_KEY` for location, `ANTHROPIC_API_KEY_PARAPHRASE
 ## 5. Live News — iOS Side
 
 ### Files
+
 ```
 Core/Networking/APIEndpoint.swift             // case listUsHeadlines
 Core/Networking/LiveNewsService.swift         // SHARED SINGLETON
@@ -502,6 +515,7 @@ Toolbar has a `globe ↔ doc.text.fill` toggle to switch back to summary from we
 ### Map detail sheet (AnnotationDetailSheet)
 
 For Live News pins, `buildLiveNewsAnnotations`:
+
 - `title` is the RSS-original title (no LLM rewrite)
 - `descriptionText` is the LLM summary (rendered larger — `.body` size — for live news specifically, vs `.caption` for other layer types)
 - `quickStats` shows SOURCE / TIME / BREAKING|LOCATION
@@ -543,6 +557,7 @@ Same 30 s pattern as sports — both Feed-tab task and Map-view task call `LiveN
 **The fix:** `server/_shared/keep-alive.ts` exposes `keepAlive(promise, label)` which reads the Vercel request-context store from `globalThis[Symbol.for('@vercel/request-context')]` and registers the promise via `ctx.waitUntil()`. This tells Vercel "the response is ready, but please keep this isolate alive until this Promise resolves" — up to 5 minutes.
 
 **Used by:**
+
 - `enrichMissingLocations` (location LLM batches)
 - `paraphraseMissingSummaries` (paraphrase LLM batches)
 - `classifyUnknownsAsync` (dedup LLM call)
@@ -588,6 +603,7 @@ The two Anthropic keys can point at the same actual API key — separation is pu
 ### Deploy order
 
 After making backend changes:
+
 1. Push to `main` (or your branch).
 2. Vercel auto-deploys.
 3. **Wait 30+ seconds** for any cached responses to expire if you bumped a cache key version.
@@ -601,6 +617,7 @@ After making backend changes:
    ```
 
 After making iOS changes:
+
 1. Build & install on device.
 2. Pull-to-refresh in the Feed tab to bypass APIClient's 30 s cache.
 
@@ -662,11 +679,13 @@ When iOS shows fewer items than expected, work through these in order:
 ### Tuning dedup accuracy
 
 If duplicates start slipping through:
+
 - **First**: bump `summarySnippet` from 1 sentence to 2 sentences (in `_dedup.ts`). Almost certainly fixes it.
 - **Second**: adjust the system prompt in `_dedup.ts` to be more aggressive about merging (loosen "only mark as duplicate if same specific event" wording).
 - **Third**: bump cache version `live-news:dedup:v1` → `v2` so existing decisions get re-evaluated against the new prompt.
 
 If too many uniques get marked as duplicates:
+
 - Tighten the prompt (more conservative).
 - Bump cache version to flush bad decisions.
 

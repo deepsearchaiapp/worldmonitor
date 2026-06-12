@@ -10,6 +10,7 @@
 ## 1. Goals & non-goals
 
 ### Goals
+
 - Add two new categories to the iOS Feeds tab: **Live News** and **Sports**.
 - "Live" = freshest available, with 30 s auto-refresh while the tab is visible.
 - Sports = all major US leagues mixed into one bucket; live games surfaced first.
@@ -18,6 +19,7 @@
 - Operate independently of `api.worldmonitor.app`; this is fully our own backend.
 
 ### Non-goals (v1)
+
 - No push notifications (APNs).
 - No SSE / WebSocket streaming.
 - No subcategory filters under Sports (no league chips).
@@ -31,22 +33,26 @@
 ## 2. Architecture decision
 
 ### Runtime: Vercel Functions (Node runtime)
+
 - Same as the existing `list-feed-digest` handler.
 - Edge runtime would also work, but Node gives us the regex-RSS-parsing utilities already in use.
 
 ### Caching: three layers, all already wired
+
 1. **Vercel Edge CDN** — `Cache-Control: public, s-maxage=30, stale-while-revalidate=60` on the response.
 2. **Upstash Redis** — top-level digest keys with 30 s TTL.
 3. **Per-source Redis sub-cache** — each RSS feed and each ESPN league has its own key with 30–60 s TTL so partial upstream failures degrade gracefully.
 4. **In-memory last-good** — module-scope variable for total-Redis-down fallback.
 
 ### No new dependencies
+
 - Reuse `server/_shared/redis.ts` (`cachedFetchJson`, `setCachedJsonBatch`).
 - Reuse `server/_shared/rate-limit.ts`.
 - Reuse the regex RSS parser from `server/worldmonitor/news/v1/list-feed-digest.ts` (extract into `server/_shared/rss-parser.ts` while we're at it).
 - Reuse `server/worldmonitor/news/v1/_classifier.ts` for threat classification on news items.
 
 ### Rate-limit posture
+
 - No upstream `api.worldmonitor.app` calls — these endpoints don't touch the proxy budget.
 - ESPN unofficial API: cache aggressively, single fan-out per 30 s window across all users globally.
 - US RSS feeds: same pattern; reuse the existing relay fallback (`fetchViaRailway`) for any source that blocks Vercel IPs.
@@ -77,6 +83,7 @@ server/_shared/rss-parser.ts  # Extracted from list-feed-digest.ts (refactor)
 ### 3.2 Data sources
 
 #### Live US news — RSS feeds (`_sources.ts`)
+
 Curated list of top US national outlets. All must be added to `api/_rss-allowed-domains.js` if not already there.
 
 | Source | URL | Notes |
@@ -97,6 +104,7 @@ Curated list of top US national outlets. All must be added to `api/_rss-allowed-
 Per-feed cap: 8 items. Total cap after dedup: 40 items.
 
 #### Live US sports — ESPN scoreboards (`_leagues.ts`)
+
 ESPN's hidden public API. Pattern: `https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard`.
 
 | League | Path | Season window |
@@ -121,6 +129,7 @@ Off-season leagues simply return `events: []` from ESPN — no special handling.
 ### 3.3 Endpoint contracts
 
 #### `GET /api/live-news/v1/list-us-headlines`
+
 **Query params:** none (v1)
 **Auth:** `X-WorldMonitor-Key` header (same as existing endpoints)
 **Cache:** `public, s-maxage=30, stale-while-revalidate=60`
@@ -134,6 +143,7 @@ Off-season leagues simply return `events: []` from ESPN — no special handling.
 ```
 
 #### `GET /api/live-sports/v1/list-us-events`
+
 **Query params:** none (v1)
 **Auth:** `X-WorldMonitor-Key` header
 **Cache:** `public, s-maxage=30, stale-while-revalidate=60`
@@ -147,6 +157,7 @@ Off-season leagues simply return `events: []` from ESPN — no special handling.
 ```
 
 ### 3.4 Sports event filtering rules
+
 ESPN event states are `pre` / `in` / `post`.
 
 | State | Include if | Sort priority |
@@ -158,7 +169,9 @@ ESPN event states are `pre` / `in` / `post`.
 (Window widened from initial 2 h / 30 min based on user feedback.)
 
 ### 3.5 Sports event title format
+
 No subcategory chips, but league still visible in title:
+
 - **Live:** `[NFL] Chiefs 24 — 21 Bills · Q4 2:15`
 - **Upcoming:** `[NBA] Lakers vs Warriors · 7:30 PM ET`
 - **Final:** `[MLB] FINAL · Yankees 5 — 3 Red Sox`
@@ -166,13 +179,16 @@ No subcategory chips, but league still visible in title:
 `source = "ESPN"`, `link = espnGameUrl`, `category = "sports"`, `publishedAt = event.date`, `isAlert = false`, `isLive = (state === "in")` (new optional field).
 
 ### 3.6 Breaking-news detection (`_breaking.ts`)
+
 Item is flagged `isAlert: true` if:
+
 - `publishedAt` within last 30 minutes, AND
 - title matches `/\b(breaking|live|update|developing|just in|alert)\b/i`, OR
 - title is in ALL CAPS for >= 3 consecutive words, OR
 - threat classifier returns `level: 'critical'`
 
 ### 3.7 Pseudocode — `list-us-headlines.ts`
+
 ```ts
 export async function listUsHeadlines(): Promise<Response> {
   return cachedFetchJson('live-news:us:v1', 30, async () => {
@@ -194,6 +210,7 @@ export async function listUsHeadlines(): Promise<Response> {
 ```
 
 ### 3.8 Pseudocode — `list-us-events.ts`
+
 ```ts
 export async function listUsEvents(): Promise<Response> {
   return cachedFetchJson('live-sports:us:v1', 30, async () => {
@@ -217,25 +234,32 @@ export async function listUsEvents(): Promise<Response> {
 ## 4. iOS changes — `/Users/ozan/Developer/world-monitor-ios`
 
 ### Scope split — v1 (this implementation)
+
 - **Sports only.** Live News deferred until LLM-based location enrichment lands.
 - Adds `.sports` `FeedFilter` case + Feed-tab fetch + map layer.
 
 ### 4.1 Models
+
 - `Models/News/NewsModels.swift`: extend `NewsItem` with optional `isLive: Bool`.
 - New `ListSportsEventsResponse` type: `{ items: [NewsItem], leagueStatuses: [String: String]?, generatedAt: String? }`.
 
 ### 4.2 APIEndpoint
+
 - `Core/Networking/APIEndpoint.swift`: `case listUsSportsEvents` → `/api/live-sports/v1/list-us-events`, TTL 30 s.
 
 ### 4.3 FeedViewModel
+
 - `Features/Feed/FeedViewModel.swift`: `sportsItems: [NewsItem]`, `fetchSports()`, fold into `rebuildAllItems()` under `.sports`.
 
 ### 4.4 FeedView
+
 - `Features/Feed/FeedView.swift`: `FeedFilter.sports` case (label "SPORTS", icon "sportscourt", colour `.wmCyan`).
 - `.task(id:)` parallel timer on 30 s cadence calling `fetchSports()` (independent of news 60 s).
 
 ### 4.5 Map — new layer "Sports"
+
 **Files:**
+
 - `Features/Map/IntelMapViewModel.swift`:
   - Add `case sports` to `MapLayerType` enum.
   - Add `@Published var showSports = false`.
@@ -279,18 +303,21 @@ export async function listUsEvents(): Promise<Response> {
 ## 6. Testing plan
 
 ### Manual
+
 - `curl https://www.worldmonitor.news/api/live-news/v1/list-us-headlines -H "X-WorldMonitor-Key: ..."` → expect 40 items, mix of breaking and standard.
 - Same for sports during a Sunday NFL window → expect live games at top.
 - Force-disable Redis (env var) → endpoint should still return data, just slower.
 - Run during NFL off-season → sports response should still include MLB/NBA/etc.
 
 ### iOS
+
 - Open Feed tab → confirm "Live News" and "Sports" chips appear.
 - Select "Sports" during a live NBA game → confirm live games at top with score.
 - Leave tab open for 60 s → confirm auto-refresh fires twice (every 30 s).
 - Switch to "Conflict" chip → confirm refresh cadence drops back to 60 s.
 
 ### Load
+
 - Hit `/api/live-news/v1/list-us-headlines` 100x in 30 s → confirm only 1 upstream RSS fan-out per Redis log.
 - Same for sports endpoint.
 
@@ -299,9 +326,11 @@ export async function listUsEvents(): Promise<Response> {
 ## 7. Phasing
 
 ### v1 — this plan
+
 Two endpoints, three caching layers, iOS integration, no notifications.
 
 ### v2 candidates (separate plans, not in scope)
+
 - Dedicated score-card row UI for sports (team logos, big score, period clock).
 - APNs push for breaking-news + score-change events.
 - Per-league filter chips under Sports.
@@ -337,6 +366,7 @@ Two endpoints, three caching layers, iOS integration, no notifications.
 ## 10. File-change summary
 
 **Backend (new):**
+
 - `server/live-news/v1/list-us-headlines.ts`
 - `server/live-news/v1/_sources.ts`
 - `server/live-news/v1/_breaking.ts`
@@ -347,14 +377,17 @@ Two endpoints, three caching layers, iOS integration, no notifications.
 - `api/live-sports/v1/[rpc].ts`
 
 **Backend (modified):**
+
 - `server/_shared/rss-parser.ts` (extracted from `list-feed-digest.ts`)
 - `api/_rss-allowed-domains.js` (add any missing US sources)
 - `server/gateway.ts` (register new RPC handlers if gateway is registry-driven)
 
 **iOS (new):**
+
 - (none — extend existing files)
 
 **iOS (modified):**
+
 - `world-monitor-ios/Models/News/NewsModels.swift` (add `isLive`)
 - `world-monitor-ios/Networking/APIEndpoint.swift` (add 2 cases)
 - `world-monitor-ios/Features/Feed/FeedViewModel.swift` (add fetchers + slots)
