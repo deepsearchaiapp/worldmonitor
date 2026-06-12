@@ -374,6 +374,17 @@ function clampText(value: unknown, fallback = ''): string {
   return (s || fallback).slice(0, MAX_TEXT_LEN);
 }
 
+/** LLM refusal / non-answer detector. The model occasionally emits text like
+ *  "No Factual Content Provided" instead of a brief (observed shipping as a
+ *  live headline, June 2026). Treat such strings as missing so the
+ *  cluster-title / lede fallbacks kick in instead. */
+const REFUSAL_RE = /\b(?:no (?:factual |verifiable )?(?:content|information)|not provided|cannot (?:be )?(?:summariz|verif|provid)|unable to (?:summariz|verif|provid)|insufficient (?:information|content))/i;
+
+function dropRefusal(value: unknown): string | undefined {
+  const s = typeof value === 'string' ? value.trim() : '';
+  return !s || REFUSAL_RE.test(s) ? undefined : s;
+}
+
 function sanitizeTags(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -466,9 +477,9 @@ async function buildSection(
     const story = storyByIndex.get(i + 1);
     return {
       id: p.cluster.id,
-      headline: clampText(story?.headline, p.cluster.title),
-      whatHappened: clampText(story?.whatHappened, p.cluster.summary || ''),
-      whyItMatters: clampText(story?.whyItMatters),
+      headline: clampText(dropRefusal(story?.headline), p.cluster.title),
+      whatHappened: clampText(dropRefusal(story?.whatHappened), p.cluster.summary || ''),
+      whyItMatters: clampText(dropRefusal(story?.whyItMatters)),
       tags: sanitizeTags(story?.tags),
       threatLevel: normalizeThreat(story?.threatLevel),
       sourceCount: p.score,
@@ -485,7 +496,7 @@ async function buildSection(
     : maxThreat(briefClusters.map((c) => c.threatLevel));
 
   return {
-    overview: clampText(parsed.overview),
+    overview: clampText(dropRefusal(parsed.overview)),
     threatLevel: sectionThreat,
     clusters: briefClusters,
   };
