@@ -104,12 +104,26 @@ const MAX_TEXT_LEN = 850;
  *  the burst stays within Gemini rate limits. */
 const SECTION_CONCURRENCY = 4;
 
-/** The 9 GDELT intel categories — kept in sync with enrich.ts VALID_TOPICS. */
+/**
+ * Brief payload section keys. The first 9 mirror the enrich-LLM topic
+ * vocabulary (enrich.ts VALID_TOPICS); 'security' is the merged
+ * cyber ∪ intelligence section — Phase 2 of the category migration (see
+ * BRIEF_CATEGORY_MIGRATION.md in the iOS repo). Additive: old app builds
+ * decode `categories` as an open dictionary and ignore unknown keys. The
+ * legacy keys keep generating until iOS adoption is sufficient; Phase 3
+ * then alias-fills them from the merged sections.
+ */
 export const CATEGORY_IDS = [
   'cyber', 'military', 'nuclear', 'sanctions', 'intelligence',
-  'maritime', 'business', 'scitech', 'entertainment',
+  'maritime', 'business', 'scitech', 'entertainment', 'security',
 ] as const;
 export type CategoryId = (typeof CATEGORY_IDS)[number];
+
+/** Merged sections → the enrich-LLM topics they union. Every other
+ *  category id matches its own single topic. */
+export const MERGED_CATEGORY_TOPICS: Partial<Record<CategoryId, readonly string[]>> = {
+  security: ['cyber', 'intelligence'],
+};
 
 export type BriefThreatLevel = 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'MODERATE';
 const THREAT_ORDER: BriefThreatLevel[] = ['MODERATE', 'ELEVATED', 'HIGH', 'CRITICAL'];
@@ -262,7 +276,10 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
       // 70-source Iran cluster carried 6 keyword categories vs the LLM's 1)
       // — ~75% of miscategorized brief stories came from the keyword path.
       // Keywords remain what they were built for: GDELT candidate selection.
-      const inCategory = Array.isArray(c.topics) && c.topics.includes(mode);
+      // Merged sections (security) match the union of their topics.
+      const wantTopics = MERGED_CATEGORY_TOPICS[mode] ?? [mode];
+      const inCategory =
+        Array.isArray(c.topics) && c.topics.some((t) => wantTopics.includes(t));
       return inCategory && c.sources.length >= CATEGORY_BRIEF_MIN_TOTAL;
     })
     .map((c) => ({
@@ -303,6 +320,7 @@ const DESK_LABEL: Record<BriefMode, string> = {
   'business': 'a business and economics desk',
   'scitech': 'a science and technology desk',
   'entertainment': 'an entertainment and culture desk',
+  'security': 'a security desk covering cyber operations and espionage affairs',
 };
 
 function systemPrompt(mode: BriefMode): string {

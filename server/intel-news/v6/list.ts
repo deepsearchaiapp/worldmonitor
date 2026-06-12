@@ -90,13 +90,19 @@ export async function listIntelNewsV6(category: string | null, av?: string | nul
   }
   const all = digest;
 
+  // Merged categories (category-migration Phase 2): `security` is served as
+  // the union of the cyber + intelligence LLM topics. Legacy single-topic
+  // ids filter unchanged, so old app builds keep working.
+  const wantTopics: string[] | null =
+    category === 'security' ? ['cyber', 'intelligence'] : category ? [category] : null;
+
   const filtered = all
     .filter(
       (c) =>
         c &&
         Array.isArray(c.topics) &&
         c.topics.length > 0 &&
-        (!category || c.topics.includes(category)) &&
+        (!wantTopics || c.topics.some((t) => wantTopics.includes(t))) &&
         isCategoryCorroborated(c),
     )
     .sort((a, b) => b.publishedAt - a.publishedAt);
@@ -107,7 +113,7 @@ export async function listIntelNewsV6(category: string | null, av?: string | nul
   const perTopic = categoryMaxPerTopicForVersion(av);
   let capped = filtered;
   if (Number.isFinite(perTopic)) {
-    const topics = category ? [category] : [...new Set(filtered.flatMap((c) => c.topics ?? []))];
+    const topics = wantTopics ?? [...new Set(filtered.flatMap((c) => c.topics ?? []))];
     const keep = new Set<string>();
     for (const t of topics) {
       let n = 0;
