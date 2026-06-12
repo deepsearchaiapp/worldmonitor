@@ -266,7 +266,7 @@ export async function setCachedJson(
     }
     return true;
   } catch (err) {
-    console.warn('[redis] setCachedJson failed:', errMsg(err));
+    console.warn(`[redis] setCachedJson failed for "${finalKey}" (timeout=${timeoutMs}ms):`, errMsg(err));
     return false;
   }
 }

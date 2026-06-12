@@ -291,21 +291,44 @@ async function redisGet<T>(key: string): Promise<T | null> {
   }
 }
 
-async function redisSet(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+/**
+ * `compress` opt-in: gzip-envelope the value ({ __wmgz: 1, d: <base64> }),
+ * matching `setCachedJson` in server/_shared/redis.ts. ONLY enable it for
+ * keys whose every reader is envelope-aware — the shared redis.ts reader
+ * and this file's redisGet are; api/intel-news/v1/refresh.ts's redisGet is
+ * NOT (it reads the accumulators + GDELT conflict-archive keys, so those
+ * writebacks must stay raw). Without this, the v6 digest writeback stored
+ * the multi-MB blob uncompressed, flip-flopping the key between ~3.7 MB
+ * (refresh, compressed) and ~11 MB (enrich, raw) every cycle — 3× transfer
+ * for every digest reader in the raw window, the exact read-timeout
+ * precondition of the May 2026 empty-feed incident.
+ */
+async function redisSet(key: string, value: unknown, ttlSeconds: number, compress = false): Promise<void> {
   const creds = getRedisCreds();
   if (!creds) return;
   try {
+    let body = JSON.stringify(value);
+    if (compress && process.env.WM_REDIS_COMPRESSION === '1' && body.length >= 1024) {
+      try {
+        const stream = new Response(body).body!.pipeThrough(new CompressionStream('gzip'));
+        const bytes = Buffer.from(await new Response(stream).arrayBuffer());
+        body = JSON.stringify({ __wmgz: 1, d: bytes.toString('base64') });
+      } catch (err) {
+        // Compression failed — store raw rather than dropping the write.
+        console.warn(`[intel-news:enrich] gzip encode failed for "${key}", storing raw:`, (err as Error).message);
+      }
+    }
     const resp = await fetch(`${creds.url}/set/${encodeURIComponent(key)}?EX=${ttlSeconds}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${creds.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(value),
+      body,
     });
     if (!resp.ok) {
-      const body = await resp.text().catch(() => '');
-      console.warn(`[intel-news:enrich] redis SET failed for "${key}":`, body.slice(0, 150));
+      const errBody = await resp.text().catch(() => '');
+      console.warn(`[intel-news:enrich] redis SET failed for "${key}":`, errBody.slice(0, 150));
     }
   } catch (err) {
     console.warn(`[intel-news:enrich] redis SET threw for "${key}":`, (err as Error).message);
@@ -1325,11 +1348,13 @@ async function runEnrichment(): Promise<EnrichResult> {
     );
   }
 
-  // Write back buckets that gained any progress.
+  // Write back buckets that gained any progress. The v6 digest is the one
+  // multi-MB writeback whose readers are all envelope-aware — compress it
+  // (see redisSet); everything else stays raw.
   await Promise.all(buckets.map(async (bucket) => {
     const stats = perTopic[bucket.id];
     if (!stats || stats.succeeded === 0) return;
-    await redisSet(bucket.writebackKey, bucket.items, bucket.ttl);
+    await redisSet(bucket.writebackKey, bucket.items, bucket.ttl, bucket.writebackKey === LIVE_NEWS_RSE_KEY);
   }));
 
   const durationMs = Date.now() - start;
