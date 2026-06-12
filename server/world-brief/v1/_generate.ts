@@ -256,12 +256,13 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
       if (mode === 'live-news') {
         return c.sources.length >= LIVE_NEWS_MIN_TOTAL;
       }
-      // Category: match the enrich LLM `topics` OR the GDELT-keyword
-      // `categories` (a cluster's GDELT category may not be in topics —
-      // counting both lifts recall). Same keys on both sides (cyber … scitech).
-      const inCategory =
-        (Array.isArray(c.topics) && c.topics.includes(mode)) ||
-        (Array.isArray(c.categories) && c.categories.includes(mode));
+      // Category: enrich-LLM `topics` ONLY. The GDELT-keyword `categories`
+      // used to count too ("lifts recall"), but a June 2026 audit of the US
+      // brief showed it tags mega-clusters into nearly every section (the
+      // 70-source Iran cluster carried 6 keyword categories vs the LLM's 1)
+      // — ~75% of miscategorized brief stories came from the keyword path.
+      // Keywords remain what they were built for: GDELT candidate selection.
+      const inCategory = Array.isArray(c.topics) && c.topics.includes(mode);
       return inCategory && c.sources.length >= CATEGORY_BRIEF_MIN_TOTAL;
     })
     .map((c) => ({
