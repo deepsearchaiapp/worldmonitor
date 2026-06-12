@@ -418,28 +418,27 @@ export interface ClusteredItem {
 
 /**
  * Corroboration gate for the GDELT-category feeds (cyber / military /
- * nuclear / …): a category cluster surfaces when ≥2 distinct outlets carry
- * the story and at least one is a trusted RSS feed.
+ * nuclear / …): any cluster with ≥1 trusted RSS member qualifies — no
+ * multi-source floor. Product call (June 2026): the category feeds should
+ * read CROWDED; density beats corroboration here. The noise that a floor
+ * used to suppress is now handled upstream (first-2-topics membership,
+ * tightened rubric, near-duplicate title suppression in the list endpoint).
  *
- * There used to be a single-RSS exception for sparse categories (cyber /
- * maritime / nuclear / sanctions / intelligence), but a June 2026 quality
- * pass showed it was the feed's main noise source: the feed sorts by
- * recency, so a single-source cluster with one stretched LLM topic (a
- * sports-"sanctions" story, a uranium *stock* in nuclear) floats straight
- * to the top. Two independent outlets is the floor everywhere now.
+ * History: briefly required ≥2 sources everywhere (one June 2026 deploy);
+ * before that, ≥2 with single-RSS exceptions for sparse categories. The
+ * BRIEFS are unaffected by this gate — they enforce their own floors
+ * (CATEGORY_BRIEF_MIN_TOTAL et al. in world-brief/_generate.ts).
  *
- * The RSS-presence half is structurally always true (GDELT-only clusters
+ * The RSS-presence check is structurally always true (GDELT-only clusters
  * are dropped at cluster time, so every cluster has ≥1 RSS member); it's
- * checked explicitly anyway so the rule is self-evident and survives any
- * future change to that invariant.
+ * kept explicit so the copyright-relevant invariant is self-evident.
  *
  * The conflict + live-news feeds run their own (stricter, RSS-only) gates
  * via separate endpoints and are unaffected by this one.
  */
 export function isCategoryCorroborated(c: ClusteredItem): boolean {
   const sources = Array.isArray(c.sources) ? c.sources : [];
-  const hasRss = sources.some((s) => s.origin === 'rss');
-  return hasRss && sources.length >= 2;
+  return sources.some((s) => s.origin === 'rss');
 }
 
 /**
