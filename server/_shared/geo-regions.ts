@@ -155,7 +155,7 @@ export const COUNTRY_TO_REGION: Record<string, RegionId> = {
   MH: 'oceania', PW: 'oceania', NR: 'oceania', TV: 'oceania', TK: 'oceania',
 
   // ── Territories the enrich LLM emits as countries (June 2026 cron logs) ──
-  TC: 'latin_america',
+  TC: 'latin_america', CW: 'latin_america', PN: 'oceania',
 };
 
 /**
@@ -217,7 +217,7 @@ export const COUNTRY_NAMES: Record<string, string> = {
   SB: 'Solomon Islands', VU: 'Vanuatu', WS: 'Samoa', TO: 'Tonga',
   KI: 'Kiribati', FM: 'Micronesia', MH: 'Marshall Islands', PW: 'Palau',
   NR: 'Nauru', TV: 'Tuvalu', TK: 'Tokelau',
-  TC: 'Turks and Caicos Islands',
+  TC: 'Turks and Caicos Islands', CW: 'Curacao', PN: 'Pitcairn Islands',
 };
 
 /**
@@ -277,6 +277,10 @@ export const ALIAS_TO_ISO: Record<string, string> = {
   'kyrgyz republic': 'KG',
   'somaliland': 'SO',
   'turks and caicos': 'TC', 'turks and caicos islands': 'TC',
+  // Gaps observed in the v10 re-enrichment unresolved log
+  'curacao': 'CW',
+  'quebec': 'CA',
+  'pitcairn': 'PN', 'pitcairn island': 'PN', 'pitcairn islands': 'PN',
 };
 
 /** Normalise a free-text country string for alias lookup: lowercase, strip

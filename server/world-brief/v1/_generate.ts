@@ -550,9 +550,18 @@ async function buildSection(
     timeoutMs: 60_000,
   });
 
-  const result = await callSection();
+  let result = await callSection();
   if (!result) {
-    console.warn(`[world-brief] mode=${mode} Gemini call failed`);
+    // Transient upstream failures (502s, rate-limit bursts when the regions
+    // + global crons overlap) recover within seconds. One delayed retry —
+    // without it, a section with no last-known-good yet (politics, first
+    // generation, June 2026) ships empty for an hour.
+    console.warn(`[world-brief] mode=${mode} Gemini call failed — retrying in 4s`);
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    result = await callSection();
+  }
+  if (!result) {
+    console.warn(`[world-brief] mode=${mode} Gemini call failed after retry — section falls back to LKG`);
     return null;
   }
 
