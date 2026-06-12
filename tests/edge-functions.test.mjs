@@ -127,3 +127,32 @@ describe('Edge Function module isolation', () => {
     });
   }
 });
+
+describe('Node-runtime api/ functions use explicit .js on relative imports', () => {
+  // Node-runtime functions (no `runtime: 'edge'`) are NOT esbuild-bundled —
+  // Vercel resolves their relative imports at runtime via Node's ESM loader,
+  // which requires explicit .js extensions. An extensionless import passes
+  // typecheck and edge bundling but crashes in prod with ERR_MODULE_NOT_FOUND
+  // (took down the intel-news refresh cron, June 2026).
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = join(dir, e.name);
+    return e.isDirectory() ? walk(p) : p.endsWith('.ts') ? [p] : [];
+  });
+  const nodeRuntimeFiles = walk(apiDir).filter((p) => {
+    const src = readFileSync(p, 'utf-8');
+    return !src.includes("runtime: 'edge'") && !src.includes('runtime: "edge"');
+  });
+  for (const path of nodeRuntimeFiles) {
+    it(`${path.slice(path.indexOf('api/'))} relative imports carry .js`, () => {
+      const src = readFileSync(path, 'utf-8');
+      const bad = [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g)]
+        .map((m) => m[1])
+        .filter((spec) => !spec.endsWith('.js') && !spec.endsWith('.json'));
+      assert.deepStrictEqual(
+        bad,
+        [],
+        `extensionless relative import(s) in a Node-runtime function — add .js: ${bad.join(', ')}`,
+      );
+    });
+  }
+});

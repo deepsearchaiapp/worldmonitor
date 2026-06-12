@@ -49,7 +49,10 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import AdmZip from 'adm-zip';
-import { clampFutureMs } from '../../../server/_shared/time';
+// Node runtime — relative imports resolve at runtime via Node's ESM loader
+// and MUST carry the .js extension (see the geo-regions import in enrich.ts;
+// extensionless throws ERR_MODULE_NOT_FOUND in prod).
+import { clampFutureMs } from '../../../server/_shared/time.js';
 
 export const config = {
   // 300 s = Pro-plan ceiling. Cron normally uses ~1 s for a single batch;
