@@ -15,6 +15,7 @@
 
 import { getCachedJson } from '../../_shared/redis';
 import { isCategoryCorroborated, type ClusteredItem } from '../../live-news/v6/_cluster';
+import { MAX_SECTION_TOPICS } from '../../world-brief/v1/_generate';
 import { categoryMaxPerTopicForVersion } from '../../_shared/feed-limits';
 
 const DIGEST_KEY = 'live-news:v6:digest';
@@ -96,13 +97,16 @@ export async function listIntelNewsV6(category: string | null, av?: string | nul
   const wantTopics: string[] | null =
     category === 'security' ? ['cyber', 'intelligence'] : category ? [category] : null;
 
+  // Same membership rule as the briefs: only a cluster's first
+  // MAX_SECTION_TOPICS topics grant feed membership (mega-clusters span many
+  // topics; the tail is context, not subject).
   const filtered = all
     .filter(
       (c) =>
         c &&
         Array.isArray(c.topics) &&
         c.topics.length > 0 &&
-        (!wantTopics || c.topics.some((t) => wantTopics.includes(t))) &&
+        (!wantTopics || c.topics.slice(0, MAX_SECTION_TOPICS).some((t) => wantTopics.includes(t))) &&
         isCategoryCorroborated(c),
     )
     .sort((a, b) => b.publishedAt - a.publishedAt);
@@ -119,7 +123,7 @@ export async function listIntelNewsV6(category: string | null, av?: string | nul
       let n = 0;
       for (const c of filtered) {
         if (n >= perTopic) break;
-        if ((c.topics ?? []).includes(t)) { keep.add(c.id); n++; }
+        if ((c.topics ?? []).slice(0, MAX_SECTION_TOPICS).includes(t)) { keep.add(c.id); n++; }
       }
     }
     capped = filtered.filter((c) => keep.has(c.id));

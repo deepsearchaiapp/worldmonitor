@@ -418,13 +418,15 @@ export interface ClusteredItem {
 
 /**
  * Corroboration gate for the GDELT-category feeds (cyber / military /
- * nuclear / …). Default rule: a category cluster surfaces when ≥2 distinct
- * outlets carry the story and at least one is a trusted RSS feed.
+ * nuclear / …): a category cluster surfaces when ≥2 distinct outlets carry
+ * the story and at least one is a trusted RSS feed.
  *
- * Exception for sparse categories: `cyber`, `maritime`, `nuclear`,
- * `sanctions`, `intelligence` may pass with a single RSS source so
- * region-split category briefs do not go empty while inflow is still
- * growing. (`intelligence` is the most starved of all — included here too.)
+ * There used to be a single-RSS exception for sparse categories (cyber /
+ * maritime / nuclear / sanctions / intelligence), but a June 2026 quality
+ * pass showed it was the feed's main noise source: the feed sorts by
+ * recency, so a single-source cluster with one stretched LLM topic (a
+ * sports-"sanctions" story, a uranium *stock* in nuclear) floats straight
+ * to the top. Two independent outlets is the floor everywhere now.
  *
  * The RSS-presence half is structurally always true (GDELT-only clusters
  * are dropped at cluster time, so every cluster has ≥1 RSS member); it's
@@ -434,16 +436,10 @@ export interface ClusteredItem {
  * The conflict + live-news feeds run their own (stricter, RSS-only) gates
  * via separate endpoints and are unaffected by this one.
  */
-const SINGLE_RSS_CATEGORY_TOPICS = new Set(['cyber', 'maritime', 'nuclear', 'sanctions', 'intelligence']);
-
 export function isCategoryCorroborated(c: ClusteredItem): boolean {
   const sources = Array.isArray(c.sources) ? c.sources : [];
   const hasRss = sources.some((s) => s.origin === 'rss');
-  if (!hasRss) return false;
-  if (sources.length >= 2) return true;
-
-  const topics = Array.isArray(c.topics) ? c.topics : [];
-  return topics.some((topic) => SINGLE_RSS_CATEGORY_TOPICS.has(topic));
+  return hasRss && sources.length >= 2;
 }
 
 /**

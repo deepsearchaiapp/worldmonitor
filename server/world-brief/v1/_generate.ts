@@ -125,6 +125,14 @@ export const MERGED_CATEGORY_TOPICS: Partial<Record<CategoryId, readonly string[
   security: ['cyber', 'intelligence'],
 };
 
+/** Only a cluster's FIRST TWO topics grant section membership. Mega-clusters
+ *  legitimately span many topics (June 2026: a 65-source Iran-settlement
+ *  cluster tagged military+nuclear+sanctions+maritime+intelligence) and,
+ *  ranked by source count, would top every section they touch. The enrich
+ *  prompt lists topics most-central-first, so the first two are the story's
+ *  real subjects; the tail is context. */
+export const MAX_SECTION_TOPICS = 2;
+
 export type BriefThreatLevel = 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'MODERATE';
 const THREAT_ORDER: BriefThreatLevel[] = ['MODERATE', 'ELEVATED', 'HIGH', 'CRITICAL'];
 
@@ -228,6 +236,38 @@ function sharesDuplicateSources(a: Set<string>, b: Set<string>): boolean {
   return false;
 }
 
+/** Meaningful tokens of a canonical cluster title (lowercased, ≥4 chars —
+ *  drops the/and/for noise without a stopword list; trailing "s" stripped so
+ *  "tariffs"/"tariff" and "allows"/"allow" compare equal). */
+function titleTokens(title: string): Set<string> {
+  return new Set(
+    title
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 4)
+      .map((w) => w.replace(/s$/, '')),
+  );
+}
+
+/** Second same-event signal: overlap coefficient ≥ 0.6 between canonical
+ *  titles. Catches embedder-split clusters that share few exact URLs but
+ *  obviously describe one event ("Toronto Police Officer Killed During
+ *  Raid…" vs "Toronto officer shot during national security raid…" — both
+ *  shipped in one brief section, June 2026). Overlap coefficient
+ *  (common / smaller set) over Jaccard: headline variants differ mostly by
+ *  added detail, which Jaccard punishes. */
+function titlesDescribeSameEvent(a: Set<string>, b: Set<string>): boolean {
+  const minSize = Math.min(a.size, b.size);
+  if (minSize < 4) return false; // too little signal to call it a duplicate
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let common = 0;
+  for (const t of small) {
+    if (large.has(t)) common++;
+  }
+  return common / minSize >= 0.6;
+}
+
 /** Build the capped, URL-deduped "all sources" list for a cluster. */
 function buildSourceRefs(c: ClusteredItem): WorldBriefSourceRef[] {
   const seen = new Set<string>();
@@ -276,10 +316,13 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
       // 70-source Iran cluster carried 6 keyword categories vs the LLM's 1)
       // — ~75% of miscategorized brief stories came from the keyword path.
       // Keywords remain what they were built for: GDELT candidate selection.
-      // Merged sections (security) match the union of their topics.
+      // Merged sections (security) match the union of their topics. Only the
+      // first MAX_SECTION_TOPICS topics count — see MAX_SECTION_TOPICS.
       const wantTopics = MERGED_CATEGORY_TOPICS[mode] ?? [mode];
-      const inCategory =
-        Array.isArray(c.topics) && c.topics.some((t) => wantTopics.includes(t));
+      const sectionTopics = Array.isArray(c.topics)
+        ? c.topics.slice(0, MAX_SECTION_TOPICS)
+        : [];
+      const inCategory = sectionTopics.some((t) => wantTopics.includes(t));
       return inCategory && c.sources.length >= CATEGORY_BRIEF_MIN_TOTAL;
     })
     .map((c) => ({
@@ -287,19 +330,25 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
       // Rank every section by total source count — "most sourced" first.
       score: c.sources.length,
       urls: clusterUrlSet(c),
+      titleTok: titleTokens(c.title || ''),
     }))
     .sort((a, b) => b.score - a.score || b.cluster.publishedAt - a.cluster.publishedAt);
 
   const picked: PickedCluster[] = [];
-  const pickedUrlSets: Set<string>[] = [];
+  const pickedDups: Array<{ urls: Set<string>; titleTok: Set<string> }> = [];
   for (const r of ranked) {
-    if (pickedUrlSets.some((set) => sharesDuplicateSources(r.urls, set))) continue;
+    // Same event as an already-picked cluster (shared URLs OR near-identical
+    // canonical title) → the embedder split one story; skip the smaller one.
+    const isDup = pickedDups.some(
+      (p) => sharesDuplicateSources(r.urls, p.urls) || titlesDescribeSameEvent(r.titleTok, p.titleTok),
+    );
+    if (isDup) continue;
     picked.push({
       cluster: r.cluster,
       score: r.score,
       rssHeadlines: memberHeadlines(r.cluster),
     });
-    pickedUrlSets.push(r.urls);
+    pickedDups.push({ urls: r.urls, titleTok: r.titleTok });
     if (picked.length >= TOP_N) break;
   }
   return picked;
