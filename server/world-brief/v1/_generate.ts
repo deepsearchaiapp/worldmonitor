@@ -225,15 +225,15 @@ function clusterUrlSet(c: ClusteredItem): Set<string> {
   return set;
 }
 
-/** Two clusters cover the same event when they share more than one exact
- *  source URL — a guard for when the embedder fails to merge a story. */
-function sharesDuplicateSources(a: Set<string>, b: Set<string>): boolean {
+/** Shared exact source URLs between two clusters, counted up to 2 (all the
+ *  same-event decision needs). */
+function sharedUrlCount(a: Set<string>, b: Set<string>): number {
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
   let common = 0;
   for (const url of small) {
-    if (large.has(url) && ++common > 1) return true;
+    if (large.has(url) && ++common >= 2) return common;
   }
-  return false;
+  return common;
 }
 
 /** Meaningful tokens of a canonical cluster title (lowercased, ≥4 chars —
@@ -250,22 +250,41 @@ function titleTokens(title: string): Set<string> {
   );
 }
 
-/** Second same-event signal: overlap coefficient ≥ 0.6 between canonical
- *  titles. Catches embedder-split clusters that share few exact URLs but
- *  obviously describe one event ("Toronto Police Officer Killed During
- *  Raid…" vs "Toronto officer shot during national security raid…" — both
- *  shipped in one brief section, June 2026). Overlap coefficient
- *  (common / smaller set) over Jaccard: headline variants differ mostly by
- *  added detail, which Jaccard punishes. */
-function titlesDescribeSameEvent(a: Set<string>, b: Set<string>): boolean {
+/** Title-token overlap coefficient (common / smaller set; 0 when either
+ *  side has <4 meaningful tokens). Overlap coefficient over Jaccard:
+ *  headline variants differ mostly by added detail, which Jaccard punishes. */
+function titleOverlap(a: Set<string>, b: Set<string>): number {
   const minSize = Math.min(a.size, b.size);
-  if (minSize < 4) return false; // too little signal to call it a duplicate
+  if (minSize < 4) return 0; // too little signal to call anything a duplicate
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
   let common = 0;
   for (const t of small) {
     if (large.has(t)) common++;
   }
-  return common / minSize >= 0.6;
+  return common / minSize;
+}
+
+/**
+ * Same-event decision for two clusters the embedder failed to merge —
+ * evidence is compositional, so two weak signals together suffice:
+ *   • ≥2 shared exact source URLs (an article belongs to one event), or
+ *   • near-identical canonical titles (overlap ≥ 0.6 — "Toronto Police
+ *     Officer Killed During Raid…" vs "Toronto officer shot during national
+ *     security raid…", June 2026), or
+ *   • 1 shared URL AND moderately similar titles (≥ 0.3) — catches drifted
+ *     splits like the tariff-appeal pair (1 shared URL, 0.43 title overlap,
+ *     shipped twice in one section with the identical LLM headline) while a
+ *     lone roundup URL bridging two genuinely different events stays split.
+ */
+function isSameEvent(
+  a: { urls: Set<string>; titleTok: Set<string> },
+  b: { urls: Set<string>; titleTok: Set<string> },
+): boolean {
+  const urls = sharedUrlCount(a.urls, b.urls);
+  if (urls >= 2) return true;
+  const overlap = titleOverlap(a.titleTok, b.titleTok);
+  if (overlap >= 0.6) return true;
+  return urls === 1 && overlap >= 0.3;
 }
 
 /** Build the capped, URL-deduped "all sources" list for a cluster. */
@@ -337,12 +356,9 @@ function pickClusters(clusters: ClusteredItem[], mode: BriefMode): PickedCluster
   const picked: PickedCluster[] = [];
   const pickedDups: Array<{ urls: Set<string>; titleTok: Set<string> }> = [];
   for (const r of ranked) {
-    // Same event as an already-picked cluster (shared URLs OR near-identical
-    // canonical title) → the embedder split one story; skip the smaller one.
-    const isDup = pickedDups.some(
-      (p) => sharesDuplicateSources(r.urls, p.urls) || titlesDescribeSameEvent(r.titleTok, p.titleTok),
-    );
-    if (isDup) continue;
+    // Same event as an already-picked cluster → the embedder split one
+    // story; skip the smaller one (see isSameEvent for the evidence rules).
+    if (pickedDups.some((p) => isSameEvent(r, p))) continue;
     picked.push({
       cluster: r.cluster,
       score: r.score,
@@ -574,14 +590,30 @@ async function buildSection(
     };
   });
 
+  // Final user-visible dedup: when the pre-LLM same-event guards miss a
+  // split (cluster internals drifted), the LLM often betrays it by writing
+  // near-identical HEADLINES for both stories (it sees them side by side).
+  // Drop the lower-ranked one — a 7-story section beats a doubled row.
+  const dedupedClusters: WorldBriefCluster[] = [];
+  const seenHeadlines: Set<string>[] = [];
+  for (const bc of briefClusters) {
+    const tok = titleTokens(bc.headline);
+    if (seenHeadlines.some((s) => titleOverlap(tok, s) >= 0.8)) {
+      console.warn(`[world-brief] mode=${mode} near-duplicate headline dropped: ${JSON.stringify(bc.headline.slice(0, 80))}`);
+      continue;
+    }
+    dedupedClusters.push(bc);
+    seenHeadlines.push(tok);
+  }
+
   const sectionThreat = parsed.overallThreatLevel
     ? normalizeThreat(parsed.overallThreatLevel)
-    : maxThreat(briefClusters.map((c) => c.threatLevel));
+    : maxThreat(dedupedClusters.map((c) => c.threatLevel));
 
   return {
     overview: clampText(dropRefusal(parsed.overview)),
     threatLevel: sectionThreat,
-    clusters: briefClusters,
+    clusters: dedupedClusters,
   };
 }
 
