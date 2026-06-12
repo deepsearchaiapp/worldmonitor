@@ -14,6 +14,7 @@
 
 import { getCachedJson, setCachedJson } from '../../_shared/redis';
 import { sha256Hex } from '../../_shared/hash';
+import { clampFutureMs } from '../../_shared/time';
 import { V6_NEWS_SOURCES, type NewsSource, ITEMS_PER_FEED, MAX_AGE_MS } from './_sources';
 
 /** Per-feed cache TTL — 10 min, same as the legacy v1 pipeline. */
@@ -252,7 +253,10 @@ function extractImageCredit(item: string): string | null {
 function parseDate(s: string): number {
   if (!s) return 0;
   const t = Date.parse(s);
-  return Number.isFinite(t) ? t : 0;
+  if (!Number.isFinite(t)) return 0;
+  // Publisher clocks are untrusted (observed pubDates +2 weeks out) —
+  // a future date is stored as "now", the moment we first saw the item.
+  return clampFutureMs(t);
 }
 
 async function parseFeed(xml: string, src: NewsSource): Promise<RawRssItem[]> {

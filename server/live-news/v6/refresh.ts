@@ -241,9 +241,27 @@ function mergeItems(existing: ClusteredItem[], fresh: ClusteredItem[]): Clustere
       // the story.
     });
   }
+  // Future timestamps are clamped at parse time, but items stored before
+  // that rule (or with future-dated source members) repair here: a future
+  // publishedAt would pin the item to the top of every feed and let it
+  // outlive the rolling window by however far ahead the publisher's clock
+  // was.
+  const now = Date.now();
+  const repaired = Array.from(byId.values()).map((it) => {
+    const badSelf = it.publishedAt > now;
+    const badMember = Array.isArray(it.sources) && it.sources.some((s) => s.publishedAt > now);
+    if (!badSelf && !badMember) return it;
+    return {
+      ...it,
+      publishedAt: badSelf ? now : it.publishedAt,
+      sources: badMember
+        ? it.sources.map((s) => (s.publishedAt > now ? { ...s, publishedAt: now } : s))
+        : it.sources,
+    };
+  });
   // Drop items past the rolling window, sort newest-first, cap.
-  const cutoff = Date.now() - ROLLING_WINDOW_MS;
-  const inWindow = Array.from(byId.values())
+  const cutoff = now - ROLLING_WINDOW_MS;
+  const inWindow = repaired
     .filter((it) => it.publishedAt >= cutoff)
     .sort((a, b) => b.publishedAt - a.publishedAt);
   // Visibility: is the cap biting (i.e. are we losing the oldest part of the

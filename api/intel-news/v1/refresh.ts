@@ -49,6 +49,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import AdmZip from 'adm-zip';
+import { clampFutureMs } from '../../../server/_shared/time';
 
 export const config = {
   // 300 s = Pro-plan ceiling. Cron normally uses ~1 s for a single batch;
@@ -586,7 +587,10 @@ function parseGkgDate(s: string): number {
   const mm = s.slice(10, 12);
   const ss = s.slice(12, 14);
   const t = Date.parse(`${yr}-${mo}-${dy}T${hh}:${mm}:${ss}Z`);
-  return Number.isFinite(t) ? t : 0;
+  if (!Number.isFinite(t)) return 0;
+  // GKG batch timestamps are system-generated and shouldn't be future,
+  // but every stored timestamp follows the same rule: future → now.
+  return clampFutureMs(t);
 }
 
 function decodeHtmlEntities(s: string): string {
