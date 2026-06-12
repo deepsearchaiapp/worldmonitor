@@ -455,7 +455,7 @@ async function buildSection(
     return { overview: '', threatLevel: 'MODERATE', clusters: [] };
   }
 
-  const result = await callGemini({
+  const callSection = () => callGemini({
     system: systemPrompt(mode),
     prompt: userPrompt(picked),
     model: 'gemini-2.5-flash',
@@ -476,17 +476,28 @@ async function buildSection(
     timeoutMs: 60_000,
   });
 
+  const result = await callSection();
   if (!result) {
     console.warn(`[world-brief] mode=${mode} Gemini call failed`);
     return null;
   }
 
-  const parsed = parseLlmResponse(result.content);
+  let parsed = parseLlmResponse(result.content);
   if (!parsed) {
+    // ~2% of sections per regions run produce invalid JSON (June 2026 logs:
+    // 3 of 168). LKG masks it for established sections, but a FIRST-time
+    // section (e.g. `security` right after Phase 2) has no prior to fall
+    // back on and ships empty for an hour. One retry cuts the rate to noise
+    // at negligible cost (only runs on the failure path).
     console.warn(
-      `[world-brief] mode=${mode} unparseable LLM response ` +
+      `[world-brief] mode=${mode} unparseable LLM response — retrying once ` +
         `(len=${result.content.length} tail=${JSON.stringify(result.content.slice(-120))})`,
     );
+    const retry = await callSection();
+    parsed = retry ? parseLlmResponse(retry.content) : null;
+  }
+  if (!parsed) {
+    console.warn(`[world-brief] mode=${mode} unparseable after retry — section falls back to LKG`);
     return null;
   }
 
