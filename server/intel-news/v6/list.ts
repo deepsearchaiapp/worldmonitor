@@ -97,17 +97,30 @@ export async function listIntelNewsV6(category: string | null, av?: string | nul
   const wantTopics: string[] | null =
     category === 'security' ? ['cyber', 'intelligence'] : category ? [category] : null;
 
-  // Same membership rule as the briefs: only a cluster's first
-  // MAX_SECTION_TOPICS topics grant feed membership (mega-clusters span many
-  // topics; the tail is context, not subject).
+  /** Per-topic source floor. The feeds run dense (single-RSS items show —
+   *  product call, June 2026) EXCEPT business: the source list is full of
+   *  finance wires (SeekingAlpha, MarketWatch, Kitco, …) producing endless
+   *  single-outlet items — droppping its floor quadrupled the category
+   *  (294→1305 clusters). Business keeps ≥2 distinct outlets. */
+  const topicFloor = (t: string): number => (t === 'business' ? 2 : 1);
+
+  /** A cluster's feed-membership topics: its first MAX_SECTION_TOPICS topics
+   *  (same rule as the briefs — mega-cluster tail topics are context, not
+   *  subject), each gated by that topic's own source floor. */
+  const memberTopics = (c: ClusteredItem): string[] => {
+    const srcs = Array.isArray(c.sources) ? c.sources.length : 0;
+    return (Array.isArray(c.topics) ? c.topics : [])
+      .slice(0, MAX_SECTION_TOPICS)
+      .filter((t) => srcs >= topicFloor(t));
+  };
+
   const filtered = all
     .filter(
       (c) =>
         c &&
-        Array.isArray(c.topics) &&
-        c.topics.length > 0 &&
-        (!wantTopics || c.topics.slice(0, MAX_SECTION_TOPICS).some((t) => wantTopics.includes(t))) &&
-        isCategoryCorroborated(c),
+        isCategoryCorroborated(c) &&
+        memberTopics(c).length > 0 &&
+        (!wantTopics || memberTopics(c).some((t) => wantTopics.includes(t))),
     )
     .sort((a, b) => b.publishedAt - a.publishedAt);
 
@@ -117,13 +130,13 @@ export async function listIntelNewsV6(category: string | null, av?: string | nul
   const perTopic = categoryMaxPerTopicForVersion(av);
   let capped = filtered;
   if (Number.isFinite(perTopic)) {
-    const topics = wantTopics ?? [...new Set(filtered.flatMap((c) => c.topics ?? []))];
+    const topics = wantTopics ?? [...new Set(filtered.flatMap((c) => memberTopics(c)))];
     const keep = new Set<string>();
     for (const t of topics) {
       let n = 0;
       for (const c of filtered) {
         if (n >= perTopic) break;
-        if ((c.topics ?? []).slice(0, MAX_SECTION_TOPICS).includes(t)) { keep.add(c.id); n++; }
+        if (memberTopics(c).includes(t)) { keep.add(c.id); n++; }
       }
     }
     capped = filtered.filter((c) => keep.has(c.id));
