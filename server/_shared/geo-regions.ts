@@ -152,7 +152,10 @@ export const COUNTRY_TO_REGION: Record<string, RegionId> = {
   // ── Oceania ──
   AU: 'oceania', NZ: 'oceania', PG: 'oceania', FJ: 'oceania', SB: 'oceania',
   VU: 'oceania', WS: 'oceania', TO: 'oceania', KI: 'oceania', FM: 'oceania',
-  MH: 'oceania', PW: 'oceania', NR: 'oceania', TV: 'oceania',
+  MH: 'oceania', PW: 'oceania', NR: 'oceania', TV: 'oceania', TK: 'oceania',
+
+  // ── Territories the enrich LLM emits as countries (June 2026 cron logs) ──
+  TC: 'latin_america',
 };
 
 /**
@@ -213,7 +216,8 @@ export const COUNTRY_NAMES: Record<string, string> = {
   AU: 'Australia', NZ: 'New Zealand', PG: 'Papua New Guinea', FJ: 'Fiji',
   SB: 'Solomon Islands', VU: 'Vanuatu', WS: 'Samoa', TO: 'Tonga',
   KI: 'Kiribati', FM: 'Micronesia', MH: 'Marshall Islands', PW: 'Palau',
-  NR: 'Nauru', TV: 'Tuvalu',
+  NR: 'Nauru', TV: 'Tuvalu', TK: 'Tokelau',
+  TC: 'Turks and Caicos Islands',
 };
 
 /**
@@ -268,6 +272,11 @@ export const ALIAS_TO_ISO: Record<string, string> = {
   'gambia': 'GM', 'the gambia': 'GM',
   'bahamas': 'BS', 'the bahamas': 'BS',
   'greenland': 'GL',
+  // Gaps observed in the June 2026 v9 re-enrichment unresolved log
+  'republic of ireland': 'IE',
+  'kyrgyz republic': 'KG',
+  'somaliland': 'SO',
+  'turks and caicos': 'TC', 'turks and caicos islands': 'TC',
 };
 
 /** Normalise a free-text country string for alias lookup: lowercase, strip
@@ -315,7 +324,28 @@ export function regionForCountry(iso: string | null | undefined): RegionId | nul
   return COUNTRY_TO_REGION[iso.trim().toUpperCase()] ?? null;
 }
 
-/** One-shot: LLM country name/code → region, or null (→ global only). */
+/**
+ * Region-level names the enrich LLM legitimately emits for multi-country
+ * stories ("European Union", "Africa") — no ISO code exists, so they resolve
+ * straight to a region for brief reachability. Names spanning several of our
+ * regions (Asia, Middle East) are deliberately absent: an ambiguous tag is
+ * worse than a global-only story. Keys are normalizeName()-normalised.
+ */
+const REGION_NAME_TO_REGION: Record<string, RegionId> = {
+  'europe': 'europe', 'european union': 'europe', 'eu': 'europe',
+  'eurozone': 'europe', 'western europe': 'europe', 'eastern europe': 'europe',
+  'africa': 'africa', 'north africa': 'africa', 'west africa': 'africa',
+  'east africa': 'africa', 'sub saharan africa': 'africa', 'sahel': 'africa',
+  'latin america': 'latin_america', 'south america': 'latin_america',
+  'central america': 'latin_america', 'caribbean': 'latin_america',
+  'oceania': 'oceania', 'pacific islands': 'oceania', 'south pacific': 'oceania',
+};
+
+/** One-shot: LLM country name/code OR region-level name → region, or null
+ *  (→ global only). */
 export function resolveRegion(countryNameOrCode: string | null | undefined): RegionId | null {
-  return regionForCountry(canonicalIso(countryNameOrCode));
+  const viaCountry = regionForCountry(canonicalIso(countryNameOrCode));
+  if (viaCountry) return viaCountry;
+  if (!countryNameOrCode) return null;
+  return REGION_NAME_TO_REGION[normalizeName(countryNameOrCode)] ?? null;
 }

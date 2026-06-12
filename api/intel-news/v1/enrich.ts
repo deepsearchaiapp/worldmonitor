@@ -34,7 +34,7 @@ import { createHash } from 'crypto';
 // resolved by Node's ESM loader at runtime ("type":"module") and MUST carry
 // the explicit .js extension — extensionless throws ERR_MODULE_NOT_FOUND in
 // prod. (Edge functions like refresh.ts get esbuild-bundled, so they don't.)
-import { canonicalIso } from '../../../server/_shared/geo-regions.js';
+import { canonicalIso, resolveRegion } from '../../../server/_shared/geo-regions.js';
 
 export const config = {
   // Pro-plan ceiling. Cron normally only fires ~150 enrichments per call
@@ -714,11 +714,15 @@ function parseLocationOnlyJSON(raw: string | null): LocationOnlyPayload | null {
   const result: LocationOnlyPayload = { region, isConflict, topics };
 
   // Canonicalise to a clean ISO-2 via the deterministic geo tables — the
-  // regional briefs bucket on this (resolveRegion). null → omit.
+  // regional briefs bucket on this (resolveRegion). null → omit. A
+  // region-level name ("European Union") has no ISO code — the countries[]
+  // array below carries it raw for brief reachability instead.
   if (typeof obj.country === 'string') {
     const c = canonicalIso(obj.country);
     if (c) {
       result.country = c;
+      countryCanonStats.resolved++;
+    } else if (resolveRegion(obj.country)) {
       countryCanonStats.resolved++;
     } else {
       countryCanonStats.noteUnresolved(obj.country);
@@ -728,12 +732,15 @@ function parseLocationOnlyJSON(raw: string | null): LocationOnlyPayload | null {
   // Multi-country reachability — canonicalise + dedupe, cap at 3, primary
   // first. The regional briefs match a story to a region if ANY of these
   // resolve to it (so a cross-border story reaches each involved region).
+  // Region-level names that resolveRegion understands ("European Union",
+  // "Africa") are kept raw — the brief filter resolves them at read time.
   if (Array.isArray(obj.countries)) {
     const seen = new Set<string>();
     for (const raw of obj.countries as unknown[]) {
       if (typeof raw !== 'string') continue;
       const c = canonicalIso(raw);
       if (c) seen.add(c);
+      else if (resolveRegion(raw)) seen.add(raw.trim());
       else countryCanonStats.noteUnresolved(raw);
       if (seen.size >= 3) break;
     }
