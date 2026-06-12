@@ -15,7 +15,7 @@
 
 import { getCachedJson } from '../../_shared/redis';
 import { isCategoryCorroborated, type ClusteredItem } from '../../live-news/v6/_cluster';
-import { MAX_SECTION_TOPICS } from '../../world-brief/v1/_generate';
+import { MAX_SECTION_TOPICS, titleTokens, titleOverlap } from '../../world-brief/v1/_generate';
 import { categoryMaxPerTopicForVersion } from '../../_shared/feed-limits';
 
 const DIGEST_KEY = 'live-news:v6:digest';
@@ -129,10 +129,23 @@ export async function listIntelNewsV6(category: string | null, av?: string | nul
     capped = filtered.filter((c) => keep.has(c.id));
   }
 
-  const items = capped.map(toItem);
+  // Near-duplicate suppression (same rule as the briefs): embedder-split
+  // clusters surface back-to-back in a recency-sorted feed ("Israeli tech
+  // firm accused of targeting First Minister…" ×2, June 2026). Newest-first
+  // order means the first occurrence wins; later near-identical titles drop.
+  const seenTitles: Set<string>[] = [];
+  const deduped = capped.filter((c) => {
+    const tok = titleTokens(c.title || '');
+    if (seenTitles.some((s) => titleOverlap(tok, s) >= 0.6)) return false;
+    seenTitles.push(tok);
+    return true;
+  });
+
+  const items = deduped.map(toItem);
 
   console.log(
-    `[intel-news:v6:list] category=${category ?? 'all'} digest=${all.length} → ${items.length} items (perTopicCap=${perTopic})`,
+    `[intel-news:v6:list] category=${category ?? 'all'} digest=${all.length} → ${items.length} items ` +
+    `(perTopicCap=${perTopic}, dupsDropped=${capped.length - deduped.length})`,
   );
 
   return { category, items, generatedAt: new Date().toISOString() };

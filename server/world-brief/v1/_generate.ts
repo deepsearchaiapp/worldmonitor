@@ -239,7 +239,7 @@ function sharedUrlCount(a: Set<string>, b: Set<string>): number {
 /** Meaningful tokens of a canonical cluster title (lowercased, ≥4 chars —
  *  drops the/and/for noise without a stopword list; trailing "s" stripped so
  *  "tariffs"/"tariff" and "allows"/"allow" compare equal). */
-function titleTokens(title: string): Set<string> {
+export function titleTokens(title: string): Set<string> {
   return new Set(
     title
       .toLowerCase()
@@ -253,7 +253,7 @@ function titleTokens(title: string): Set<string> {
 /** Title-token overlap coefficient (common / smaller set; 0 when either
  *  side has <4 meaningful tokens). Overlap coefficient over Jaccard:
  *  headline variants differ mostly by added detail, which Jaccard punishes. */
-function titleOverlap(a: Set<string>, b: Set<string>): number {
+export function titleOverlap(a: Set<string>, b: Set<string>): number {
   const minSize = Math.min(a.size, b.size);
   if (minSize < 4) return 0; // too little signal to call anything a duplicate
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
