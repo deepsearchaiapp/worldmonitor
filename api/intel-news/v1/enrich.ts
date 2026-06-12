@@ -629,6 +629,13 @@ interface LocationOnlyPayload {
 const VALID_TOPICS = new Set([
   'cyber', 'military', 'nuclear', 'sanctions', 'intelligence',
   'maritime', 'business', 'scitech', 'entertainment',
+  // v10: diplomacy + politics — fine-grained labels served as ONE merged
+  // "politics" cell (diplomacy ∪ politics), same pattern as security =
+  // cyber ∪ intelligence. Giving these stories a correct label is what
+  // keeps them out of military/intelligence structurally (June 2026: the
+  // Iran peace talks — the digest's biggest story — had NO category, and
+  // defense-minister resignations stretched into "military").
+  'diplomacy', 'politics',
 ]);
 
 /** Bumped on any change to the location-only prompt. Drives both the
@@ -641,8 +648,11 @@ const VALID_TOPICS = new Set([
  * routing stories to the wrong regional brief. Names canonicalise
  * deterministically via NAME_TO_ISO. Also: military/intelligence rubric
  * exclusions (domestic crime ≠ military; ordinary criminal cases ≠
- * intelligence) from the June 2026 US-brief audit. */
-const LOCATION_PROMPT_VERSION = 9;
+ * intelligence) from the June 2026 US-brief audit.
+ * v10 (June 2026): diplomacy + politics topics added — served as one merged
+ * "politics" cell. Defense-policy debates and official nominations rehomed
+ * from military/intelligence to politics. */
+const LOCATION_PROMPT_VERSION = 10;
 
 const LOCATION_ONLY_CACHE_KEY = (link: string): string =>
   `enrichment-loc:v${LOCATION_PROMPT_VERSION}:${createHash('sha256').update(link).digest('hex')}`;
@@ -665,14 +675,16 @@ const LOCATION_ONLY_SYSTEM_PROMPT = `You classify a news article. Return ONE JSO
 
   - topics: an ARRAY of zero or more of these exact strings, ORDERED most-central-first, MAXIMUM 3. Tag a category when the story CENTERS ON it — it is the main subject, or a dedicated and substantial part of the story — not a passing mention, background context, or a downstream consequence. The FIRST topic must be the story's primary subject; only that order is used downstream, so do not pad the list with peripheral angles. Apply each category's specific rules below.
       "cyber"         — INCLUDE: a cyberattack, data breach, ransomware, hacking campaign, malware / exploit / disclosed vulnerability, or cyber-espionage; a cyber-defense or cyber-policy action. EXCLUDE: a routine IT outage with no attacker, or ordinary tech-product news (that is "scitech").
-      "military"      — INCLUDE: armed forces, defense, weapons, strikes, troop movements, or military operations / exercises / deployments. An armed conflict belongs HERE — a war is "military", NOT "nuclear" or "maritime", unless the story itself centers on the nuclear or naval dimension. EXCLUDE: domestic crime, street or school violence, stabbings, policing, arrests, criminal trials, and court rulings — even when counter-terrorism police investigate or the victim/perpetrator is political — unless armed forces are conducting the operation. Civil unrest and riots are isConflict=true but NOT "military" unless the military is deployed.
+      "military"      — INCLUDE: armed forces, defense, weapons, strikes, troop movements, or military operations / exercises / deployments. An armed conflict belongs HERE — a war is "military", NOT "nuclear" or "maritime", unless the story itself centers on the nuclear or naval dimension. EXCLUDE: domestic crime, street or school violence, stabbings, policing, arrests, criminal trials, and court rulings — even when counter-terrorism police investigate or the victim/perpetrator is political — unless armed forces are conducting the operation. Civil unrest and riots are isConflict=true but belong in "politics", NOT "military", unless the military is deployed. Defense-policy debates, budgets, and minister resignations are "politics", not "military".
       "nuclear"       — INCLUDE: a nuclear weapons program / test / arsenal, uranium or enrichment, a nuclear facility / reactor / power plant, fuel or waste, an IAEA action or inspection, a non-proliferation treaty or talks, or a radiation / nuclear-safety event. EXCLUDE: a broader armed conflict merely because a party possesses nuclear weapons; a stock, earnings, or market story whose company name merely contains "nuclear" or "uranium" (that is "business"); and uranium or other commodity price moves (also "business").
       "sanctions"     — INCLUDE: imposing / lifting / expanding sanctions, embargoes, export controls, asset freezes or seizures, designations (OFAC / entity list / Magnitsky), or tariffs and financial restrictions (e.g. SWIFT) used as a trade-restriction measure. EXCLUDE: general diplomacy or conflict not centered on a sanctions measure; ordinary trade or business news with no restriction; the WORD "sanctions" in its disciplinary sense — sports penalties, court or professional sanctions, school discipline — is NOT this category. Visa or immigration policy is NOT "sanctions".
-      "intelligence"  — INCLUDE: espionage or spying, a spy-agency operation (CIA / MI6 / Mossad / FSB / etc.), surveillance programs, covert operations, classified-document leaks, or counterintelligence arrests. EXCLUDE: ordinary diplomacy, politics, or military operations that are not about intelligence activity; ordinary criminal cases (fraud, trafficking, corruption, financial crime) merely because the FBI or another agency investigates or prosecutes — an investigation is "intelligence" ONLY when the subject matter is espionage, foreign agents, or state secrets.
+      "intelligence"  — INCLUDE: espionage or spying, a spy-agency operation (CIA / MI6 / Mossad / FSB / etc.), surveillance programs, covert operations, classified-document leaks, or counterintelligence arrests. EXCLUDE: ordinary diplomacy, politics, or military operations that are not about intelligence activity; ordinary criminal cases (fraud, trafficking, corruption, financial crime) merely because the FBI or another agency investigates or prosecutes — an investigation is "intelligence" ONLY when the subject matter is espionage, foreign agents, or state secrets. The NOMINATION or confirmation of an intelligence official is "politics", not "intelligence".
       "maritime"      — INCLUDE: naval forces or operations, a warship / submarine / carrier, a sea or strait incident (attack, seizure, collision, blockade), piracy, a port or shipping-lane disruption, or a freedom-of-navigation action. EXCLUDE: do NOT tag merely because a body of water or chokepoint is named (Red Sea, Strait of Hormuz, South China Sea, Suez, Panama Canal) — tag ONLY when a ship, naval force, port, or sea-based incident is the actual subject. An exchange of strikes, missiles, or shelling between forces is "military", NOT "maritime", even in a coastal or maritime region.
       "business"      — a company, a financial market, or an economic indicator is the LITERAL subject (earnings, IPOs, mergers, stock / bond markets, central-bank or monetary policy, corporate leadership)
       "scitech"       — science, technology, AI, space, medical research, innovation
       "entertainment" — film, TV, music, celebrities, gaming, awards, the sports business
+      "diplomacy"     — INCLUDE: state-to-state affairs — negotiations, peace talks, treaties and accords, summits, state visits, ambassadorial or consular actions, multilateral bodies acting (UN / G7 / EU / NATO as diplomatic actors), joint statements or condemnations between governments. EXCLUDE: domestic politics (that is "politics"); active military operations (that is "military"); a sanctions measure as the subject (that is "sanctions").
+      "politics"      — INCLUDE: domestic politics — elections and campaigns, government formation, resignations, cabinet appointments and nominations, legislation and parliamentary votes, political scandals, protests and civil movements. Defense-policy DEBATES (budgets, spending fights, minister resignations, nominations of security officials) are "politics", NOT "military" or "intelligence" — the arena is politics even when the subject is defense. EXCLUDE: state-to-state affairs (that is "diplomacy"); a policy measure whose own category fits better when the measure itself is the subject (a tariff package → "sanctions").
     A story may carry several topics when it genuinely spans them (e.g. a state-sponsored hack is "cyber" + "intelligence") — but never more than 3, most-central-first.
     Be especially strict with "business": NEVER tag it for elections, opinion polls, government budgets, fiscal-policy debates, diplomacy, legal trials, or political-personality stories — even when money or the economy comes up. "business" requires a company, a financial market, or an economic indicator as the literal subject.
     A stock / earnings / investment story is "business" ONLY — it never inherits the company's industry as a topic (a uranium miner's stock move is NOT "nuclear", a defense contractor's earnings are NOT "military", a shipping firm's results are NOT "maritime").

@@ -15,7 +15,13 @@
 
 import { getCachedJson } from '../../_shared/redis';
 import { isCategoryCorroborated, type ClusteredItem } from '../../live-news/v6/_cluster';
-import { MAX_SECTION_TOPICS, titleTokens, titleOverlap } from '../../world-brief/v1/_generate';
+import {
+  MAX_SECTION_TOPICS,
+  MERGED_CATEGORY_TOPICS,
+  titleTokens,
+  titleOverlap,
+  type CategoryId,
+} from '../../world-brief/v1/_generate';
 import { categoryMaxPerTopicForVersion } from '../../_shared/feed-limits';
 
 const DIGEST_KEY = 'live-news:v6:digest';
@@ -91,11 +97,13 @@ export async function listIntelNewsV6(category: string | null, av?: string | nul
   }
   const all = digest;
 
-  // Merged categories (category-migration Phase 2): `security` is served as
-  // the union of the cyber + intelligence LLM topics. Legacy single-topic
-  // ids filter unchanged, so old app builds keep working.
-  const wantTopics: string[] | null =
-    category === 'security' ? ['cyber', 'intelligence'] : category ? [category] : null;
+  // Merged categories (category migration): `security` = cyber ∪
+  // intelligence, `politics` = diplomacy ∪ politics — resolved via the same
+  // table the briefs use. Legacy single-topic ids filter unchanged, so old
+  // app builds keep working.
+  const wantTopics: string[] | null = category
+    ? [...(MERGED_CATEGORY_TOPICS[category as CategoryId] ?? [category])]
+    : null;
 
   /** Per-topic source floor. The feeds run dense (single-RSS items show —
    *  product call, June 2026) EXCEPT business: the source list is full of

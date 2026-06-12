@@ -100,8 +100,9 @@ const CATEGORY_BRIEF_MIN_TOTAL = Number(process.env.WM_CATEGORY_BRIEF_MIN_TOTAL)
 const TOP_N = 8;
 const MAX_MEMBER_HEADLINES = 10;
 const MAX_TEXT_LEN = 850;
-/** Parallel section builds — 11 sections, one Gemini call each. Capped so
- *  the burst stays within Gemini rate limits. */
+/** Parallel section builds — 13 sections (conflict + live-news + 11
+ *  categories), one Gemini call each. Capped so the burst stays within
+ *  Gemini rate limits. */
 const SECTION_CONCURRENCY = 4;
 
 /**
@@ -116,13 +117,20 @@ const SECTION_CONCURRENCY = 4;
 export const CATEGORY_IDS = [
   'cyber', 'military', 'nuclear', 'sanctions', 'intelligence',
   'maritime', 'business', 'scitech', 'entertainment', 'security',
+  'politics',
 ] as const;
 export type CategoryId = (typeof CATEGORY_IDS)[number];
 
 /** Merged sections → the enrich-LLM topics they union. Every other
- *  category id matches its own single topic. */
+ *  category id matches its own single topic.
+ *    security — cyber ∪ intelligence (Phase 2, June 2026)
+ *    politics — diplomacy ∪ politics: one short cell name, two precise
+ *               labels underneath (the Iran peace talks and a UK cabinet
+ *               resignation both read naturally as POLITICS, but the LLM
+ *               classifies them as separate narrow questions). */
 export const MERGED_CATEGORY_TOPICS: Partial<Record<CategoryId, readonly string[]>> = {
   security: ['cyber', 'intelligence'],
+  politics: ['diplomacy', 'politics'],
 };
 
 /** Only a cluster's FIRST TWO topics grant section membership. Mega-clusters
@@ -386,6 +394,7 @@ const DESK_LABEL: Record<BriefMode, string> = {
   'scitech': 'a science and technology desk',
   'entertainment': 'an entertainment and culture desk',
   'security': 'a security desk covering cyber operations and espionage affairs',
+  'politics': 'a political and diplomatic affairs desk',
 };
 
 function systemPrompt(mode: BriefMode): string {
