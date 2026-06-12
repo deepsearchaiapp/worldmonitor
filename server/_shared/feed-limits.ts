@@ -97,7 +97,7 @@ function effectiveLimits(av?: string | null): FeedLimits | undefined {
 
   const versions = Object.keys(LIMITS_BY_VERSION);
   if (versions.length === 0) return undefined;
-  let latest = versions[0];
+  let latest = versions[0]!;
   for (const k of versions) {
     if (compareVersions(k, latest) > 0) latest = k;
   }

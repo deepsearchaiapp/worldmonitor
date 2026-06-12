@@ -65,7 +65,7 @@ export async function refreshDueRegions(utcHour: number): Promise<DispatchResult
   let cursor = 0;
   async function worker(): Promise<void> {
     while (cursor < due.length) {
-      const region = due[cursor++];
+      const region = due[cursor++]!;
       try {
         results[region] = await refreshRegionalBrief(region);
       } catch (err) {
