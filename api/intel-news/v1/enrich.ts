@@ -1158,8 +1158,13 @@ async function runEnrichment(): Promise<EnrichResult> {
       // `enrichVersion` stamp. Re-queue any whose stamp is stale (never
       // classified, or classified under an older prompt) so a prompt-version
       // bump re-classifies the whole digest, not just newly-arriving clusters.
+      // Also re-queue items whose countries[] was wiped (the digest merge
+      // dropped the field before June 2026) — the location cache still holds
+      // it, so the re-fill is a cache hit, not an LLM call.
+      const it = item as { enrichVersion?: number; country?: string; countries?: string[] };
       const needsReEnrich = bucket.kind === 'live-news'
-        && (item as { enrichVersion?: number }).enrichVersion !== LOCATION_PROMPT_VERSION;
+        && (it.enrichVersion !== LOCATION_PROMPT_VERSION
+          || (!!it.country && !(it.countries && it.countries.length > 0)));
       const needsEnrichment = needsTitleSummary || needsRegion || needsLocationName
         || needsFullSummary || needsReEnrich;
 

@@ -228,10 +228,15 @@ function mergeItems(existing: ClusteredItem[], fresh: ClusteredItem[]): Clustere
     }
     byId.set(next.id, {
       ...next,
-      // Preserve enrichment from prior run.
+      // Preserve enrichment from prior run. EVERY enrich-set field must be
+      // listed: a fresh re-cluster wins the merge, and enrichVersion is
+      // preserved, so a field omitted here is wiped on the next refresh and
+      // never re-filled (countries[] silently decayed 98%→68% in 90 min
+      // before it was added, June 2026).
       location: prev.location ?? next.location,
       locationName: prev.locationName ?? next.locationName,
       country: prev.country ?? next.country,
+      countries: prev.countries ?? next.countries,
       region: prev.region ?? next.region,
       isConflict: prev.isConflict ?? next.isConflict,
       topics: prev.topics ?? next.topics,
