@@ -529,7 +529,12 @@ function parseEnrichmentJSON(raw: string | null): EnrichmentPayload | null {
   // "United States"→US …) via the deterministic geo tables. null → omit.
   if (typeof obj.country === 'string') {
     const c = canonicalIso(obj.country);
-    if (c) result.country = c;
+    if (c) {
+      result.country = c;
+      countryCanonStats.resolved++;
+    } else {
+      countryCanonStats.noteUnresolved(obj.country);
+    }
   }
 
   // locationName — short place string. Cap at 100 chars defensively in
@@ -712,7 +717,12 @@ function parseLocationOnlyJSON(raw: string | null): LocationOnlyPayload | null {
   // regional briefs bucket on this (resolveRegion). null → omit.
   if (typeof obj.country === 'string') {
     const c = canonicalIso(obj.country);
-    if (c) result.country = c;
+    if (c) {
+      result.country = c;
+      countryCanonStats.resolved++;
+    } else {
+      countryCanonStats.noteUnresolved(obj.country);
+    }
   }
 
   // Multi-country reachability — canonicalise + dedupe, cap at 3, primary
@@ -724,9 +734,13 @@ function parseLocationOnlyJSON(raw: string | null): LocationOnlyPayload | null {
       if (typeof raw !== 'string') continue;
       const c = canonicalIso(raw);
       if (c) seen.add(c);
+      else countryCanonStats.noteUnresolved(raw);
       if (seen.size >= 3) break;
     }
-    if (seen.size > 0) result.countries = [...seen];
+    if (seen.size > 0) {
+      result.countries = [...seen];
+      countryCanonStats.multiCountry++;
+    }
   }
 
   if (typeof obj.locationName === 'string') {
@@ -876,7 +890,34 @@ interface EnrichResult {
     skippedBudget: number;
   };
   perTopic: Record<string, PerTopicStats>;
+  /** Country canonicalisation outcomes for this run (names → ISO via
+   *  canonicalIso). In the response body so a manual cron run shows the
+   *  v9 names-not-codes prompt working from the terminal. `unresolved`
+   *  lists raw LLM values NAME_TO_ISO couldn't map — should stay ~empty;
+   *  anything recurring here is an alias-table gap. */
+  countryCanon: {
+    resolved: number;
+    multiCountry: number;
+    unresolved: Record<string, number>;
+  };
 }
+
+/** Per-run country canonicalisation tally — reset by runEnrichment, filled
+ *  by the parse paths, logged + returned in the run summary. */
+const countryCanonStats = {
+  resolved: 0,
+  multiCountry: 0,
+  unresolved: new Map<string, number>(),
+  reset(): void {
+    this.resolved = 0;
+    this.multiCountry = 0;
+    this.unresolved.clear();
+  },
+  noteUnresolved(raw: string): void {
+    const key = raw.trim().slice(0, 40);
+    if (key) this.unresolved.set(key, (this.unresolved.get(key) ?? 0) + 1);
+  },
+};
 
 // "Bucket" — a logical group of items the worker pool can process. Each
 // bucket has its own array of items + a Redis writeback key. Conflict
@@ -926,6 +967,7 @@ interface Bucket {
 
 async function runEnrichment(): Promise<EnrichResult> {
   const start = Date.now();
+  countryCanonStats.reset();
 
   // Load all buckets in parallel: 9 per-topic accumulators + 1 conflict-archive.
   const buckets: Bucket[] = await Promise.all([
@@ -1379,6 +1421,18 @@ async function runEnrichment(): Promise<EnrichResult> {
     `${succeeded} succeeded, ${failed} failed, ${skippedBudget} budget-skipped of ${queued}`,
   );
 
+  // Country canonicalisation summary — the v9 names-not-codes verification
+  // signal. resolved should track succeeded; unresolved should stay ~empty.
+  const unresolvedObj = Object.fromEntries(
+    [...countryCanonStats.unresolved.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15),
+  );
+  console.log(
+    `[intel-news:enrich] country-canon: resolved=${countryCanonStats.resolved} ` +
+    `multiCountry=${countryCanonStats.multiCountry} ` +
+    `unresolved=${countryCanonStats.unresolved.size}` +
+    (countryCanonStats.unresolved.size > 0 ? ` ${JSON.stringify(unresolvedObj)}` : ''),
+  );
+
   return {
     durationMs,
     totals: {
@@ -1389,6 +1443,11 @@ async function runEnrichment(): Promise<EnrichResult> {
       skippedBudget,
     },
     perTopic,
+    countryCanon: {
+      resolved: countryCanonStats.resolved,
+      multiCountry: countryCanonStats.multiCountry,
+      unresolved: unresolvedObj,
+    },
   };
 }
 

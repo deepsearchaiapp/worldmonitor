@@ -382,7 +382,12 @@ const REFUSAL_RE = /\b(?:no (?:factual |verifiable )?(?:content|information)|not
 
 function dropRefusal(value: unknown): string | undefined {
   const s = typeof value === 'string' ? value.trim() : '';
-  return !s || REFUSAL_RE.test(s) ? undefined : s;
+  if (!s) return undefined;
+  if (REFUSAL_RE.test(s)) {
+    console.warn(`[world-brief] LLM refusal text dropped, using fallback: ${JSON.stringify(s.slice(0, 80))}`);
+    return undefined;
+  }
+  return s;
 }
 
 function sanitizeTags(value: unknown): string[] {
