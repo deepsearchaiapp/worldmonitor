@@ -219,8 +219,10 @@ function memberHeadlines(c: ClusteredItem): string[] {
 }
 
 /** Light URL normalisation for exact-duplicate detection — drops the
- *  fragment and trailing slashes and lowercases. */
-function normalizeUrl(url: string): string {
+ *  fragment and trailing slashes and lowercases, but keeps the full path +
+ *  query (NOT reduced to the domain). Two articles sharing a normalised URL
+ *  are the same story. Exported for the weekly-digest cross-day dedup. */
+export function normalizeUrl(url: string): string {
   return url.trim().toLowerCase().replace(/#.*$/, '').replace(/\/+$/, '');
 }
 
