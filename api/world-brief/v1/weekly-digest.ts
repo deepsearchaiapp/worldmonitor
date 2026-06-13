@@ -87,10 +87,13 @@ export default async function handler(req: Request): Promise<Response> {
           status: 200,
           headers: {
             ...jsonHeaders,
-            // Result only changes when a new hourly snapshot lands; a long
-            // stale-if-error keeps the CDN serving the last good rollup
-            // through an origin/Redis blip (never-cache-empty).
-            'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=120, stale-if-error=86400',
+            // A 7-day rollup moves very little hour-to-hour (one new hourly
+            // snapshot barely shifts a top-15), so it caches MORE aggressively
+            // than get-region (300s): 15-min edge cache collapses the ~182
+            // (region × category) URLs to a handful of origin reads even under
+            // heavy use, and each origin read is 7 snapshot GETs. Long
+            // stale-if-error rides out a Redis blip (never-cache-empty).
+            'Cache-Control': 'public, s-maxage=900, stale-while-revalidate=600, stale-if-error=86400',
           },
         });
       case 'empty':

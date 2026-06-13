@@ -47,8 +47,12 @@ const WORLD_BRIEF_TTL_S = 7 * 24 * 60 * 60;
 // slot). An index (JSON array of available hour buckets) lets the reader
 // resolve nearest-before without scanning. Both retained ~7 days.
 
-/** 7-day retention for hourly snapshots + their index. */
-const REGION_SNAPSHOT_TTL_S = 7 * 24 * 60 * 60;
+/** 7.25-day retention for hourly snapshots + their index. The weekly digest
+ *  looks back exactly 7 days; the extra 6h of headroom means the oldest day's
+ *  snapshot can't expire in the seconds between a digest resolving its bucket
+ *  and reading it (TTL == lookback would occasionally drop the 7th day at the
+ *  read boundary). 0.25d is exact in seconds (21600). */
+const REGION_SNAPSHOT_TTL_S = 7.25 * 24 * 60 * 60;
 
 /** UTC hour bucket "YYYYMMDDHH" — the snapshot granularity. */
 export function regionBriefHourBucket(d: Date): string {
